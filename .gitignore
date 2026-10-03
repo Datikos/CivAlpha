@@ -1,0 +1,14 @@
+# secrets
+.env
+*.env.local
+# build
+backend/target/
+frontend/node_modules/
+frontend/dist/
+frontend/.angular/
+ml/.venv/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+# local runtime data
+var/
