@@ -54,7 +54,6 @@ function row<T>(
         }
         <p class="small muted">
           Evaluation #{{ e.id }} run {{ e.runAt | utc }} · data cutoff {{ e.dataCutoff ?? '—' }}
-          <app-demo-badge [show]="e.isDemo" />
           · horizon {{ e.config.horizon }} trading days · sample every {{ e.config.sampleEvery }} days · embargo
           {{ e.config.embargo }} days · fold length {{ e.config.foldLength }} days · min. training
           {{ e.config.minTrainDays }} days · costs {{ e.config.costBpsPerSide }} bps per side
@@ -236,8 +235,7 @@ function row<T>(
         }
       } @else {
         <div class="empty-box">
-          No evaluation has been run yet. Run it from <a routerLink="/admin">Data &amp; pipeline</a> (Evaluate, or
-          load the demo dataset).
+          No evaluation has been run yet. Run it from <a routerLink="/admin">Data &amp; pipeline</a> (Evaluate models).
         </div>
       }
 

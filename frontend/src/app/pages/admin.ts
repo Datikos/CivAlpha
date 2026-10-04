@@ -1,161 +1,311 @@
 import { httpResource } from '@angular/common/http';
 import { Component, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { RouterLink } from '@angular/router';
 import { Observable } from 'rxjs';
 import { getAdminToken, setAdminToken } from '../core/admin-token';
 import { ApiService, apiUrl, errorMessage, valueOf } from '../core/api';
 import { FORMAT_PIPES } from '../core/format';
 import { MetaService } from '../core/meta.service';
 import { CompanySummary, Job } from '../core/models';
+import { Icon } from '../shared/icon';
 import { UI } from '../shared/ui';
 
 const ACTIVE = new Set(['RUNNING', 'PENDING', 'QUEUED', 'STARTED']);
+const JOBS_SHOWN = 10;
 
+/**
+ * One primary action (run the whole pipeline) and a status strip; every single step is behind "Advanced".
+ */
 @Component({
   selector: 'app-admin',
-  imports: [FormsModule, ...UI, ...FORMAT_PIPES],
+  imports: [FormsModule, RouterLink, Icon, ...UI, ...FORMAT_PIPES],
   template: `
     <div class="page-head">
       <div>
         <h1>Data &amp; pipeline</h1>
-        <p class="muted">Load data, run the pipeline, evaluate models and issue forecasts. Jobs run in the background.</p>
+        <p class="muted">
+          Keep the data fresh and the forecasts current. Everything runs as a background job.
+        </p>
       </div>
     </div>
 
     @if (meta.meta()?.adminTokenRequired) {
-      <div class="card" style="margin-bottom: 1rem">
+      <div class="card">
         <h3>Admin token</h3>
-        <p class="small muted">This server requires a token for admin and write actions. It is kept for this browser tab only.</p>
-        <form class="actions" (submit)="saveToken(); $event.preventDefault()">
+        <p class="small muted">
+          This server requires a token for admin and write actions. It is kept for this browser tab
+          only.
+        </p>
+        <form class="inline-form" (submit)="saveToken(); $event.preventDefault()">
           <label class="sr-only" for="admin-token">Admin token</label>
-          <input id="admin-token" type="password" autocomplete="off" [ngModel]="token()" (ngModelChange)="token.set($event)" name="token" />
-          <button type="submit" class="btn">{{ hasToken() ? 'Update token' : 'Save token' }}</button>
+          <input
+            id="admin-token"
+            type="password"
+            autocomplete="off"
+            [ngModel]="token()"
+            (ngModelChange)="token.set($event)"
+            name="token"
+          />
+          <button type="submit" class="btn">
+            {{ hasToken() ? 'Update token' : 'Save token' }}
+          </button>
         </form>
-      </div>
-    }
-
-    @if (meta.meta()?.missingBenchmarks?.length; as count) {
-      <div class="alert" role="note">
-        @if (meta.meta()?.dataCutoff) {
-          No prices yet for benchmark ETF{{ count > 1 ? 's' : '' }} {{ meta.meta()?.missingBenchmarks?.join(', ') }}:
-          companies measured against {{ count > 1 ? 'them' : 'it' }} are left out of evaluation and forecasts.
-        } @else {
-          No price data yet. Use <strong>Update prices</strong> (automatic provider), load the demo dataset, or import a
-          prices CSV that includes the stocks and the benchmark ETFs ({{ meta.meta()?.missingBenchmarks?.join(', ') }}),
-          before evaluating or issuing forecasts.
-        }
       </div>
     }
 
     @if (notice(); as n) {
-      <div class="alert" [class.alert-ok]="n.ok" [class.alert-error]="!n.ok" role="status">{{ n.text }}</div>
+      <div class="alert" [class.alert-ok]="n.ok" [class.alert-error]="!n.ok" role="status">
+        {{ n.text }}
+      </div>
     }
 
-    <div class="grid-3">
-      <div class="card">
-        <h3>Pipeline</h3>
-        <div class="actions">
-          <button type="button" class="btn btn-primary" [disabled]="busy()" (click)="run('Demo load', api.loadDemo())">
-            Load demo dataset
-          </button>
-          <p class="small muted">Synthetic prices, filings and events + full pipeline. Everything it creates is badged DEMO.</p>
-          <button type="button" class="btn" [disabled]="busy()" (click)="run('Pipeline run', api.runPipeline())">Run pipeline</button>
-          <p class="small muted">Ingest configured sources ({{ meta.meta()?.secMode ?? '…' }} SEC mode), evaluate, issue forecasts.</p>
-          <button type="button" class="btn" [disabled]="busy()" (click)="run('Evaluation', api.evaluate())">Evaluate models</button>
-          <p class="small muted">Walk-forward evaluation of BASELINE vs AUGMENTED.</p>
-          <button type="button" class="btn" [disabled]="busy()" (click)="run('Strategy backtest', api.backtestStrategies())">
-            Run strategy backtest
-          </button>
-          <button type="button" class="btn" [disabled]="busy()" (click)="run('AI decisions', api.decide())">AI decisions</button>
-          <p class="small muted">Backtest every classic rule and the AI on one window, then record today's AI decisions.</p>
-          <button type="button" class="btn" [disabled]="busy()" (click)="run('Outcome resolution', api.resolveOutcomes())">
-            Resolve outcomes
-          </button>
-          <p class="small muted">Score forecasts whose 21-trading-day window has closed.</p>
+    @if (meta.meta(); as m) {
+      <div class="stats">
+        <div class="stat">
+          <div class="stat-label">Data cutoff</div>
+          <div class="stat-value">{{ m.dataCutoff ?? '—' }}</div>
+          <div class="small muted">latest price date</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Prices</div>
+          <div class="stat-value">{{ priceProvider() ? m.priceProvider : 'manual' }}</div>
+          <div class="small muted">
+            {{ priceProvider() ? 'automatic provider' : 'CSV import only' }}
+          </div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">SEC EDGAR</div>
+          <div class="stat-value">{{ m.secConfigured ? 'ready' : 'off' }}</div>
+          <div class="small muted">
+            {{ m.secConfigured ? 'filings & fundamentals' : 'set SEC_USER_AGENT in .env' }}
+          </div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Last pipeline run</div>
+          @if (lastPipeline(); as j) {
+            <div class="stat-value">
+              <span
+                class="badge"
+                [class.badge-ok]="j.status === 'SUCCEEDED'"
+                [class.badge-fail]="j.status === 'FAILED'"
+                [class.badge-run]="isActive(j)"
+                >{{ j.status }}</span
+              >
+            </div>
+            <div class="small muted">{{ j.finishedAt ?? j.startedAt | utc }}</div>
+          } @else {
+            <div class="stat-value">never</div>
+            <div class="small muted">run it below</div>
+          }
         </div>
       </div>
+    }
 
-      <div class="card">
-        <h3>Issue forecasts</h3>
-        <label class="field">
-          As-of date (optional — defaults to latest data)
-          <input type="date" [ngModel]="issueDate()" (ngModelChange)="issueDate.set($event ?? '')" />
-        </label>
-        <button
-          type="button"
-          class="btn"
-          style="margin-top: 0.6rem"
-          [disabled]="busy()"
-          (click)="run('Forecast issue', api.issueForecasts(issueDate() || null))"
-        >
-          Issue forecasts
-        </button>
-        <p class="small muted" style="margin-top: 0.5rem">
-          Forecasts for a past as-of date are published as REPLAY (after the data cutoff).
+    <div class="card hero">
+      <div class="hero-text">
+        <h2 style="margin: 0 0 0.3rem">Update everything</h2>
+        <p class="muted" style="margin: 0">
+          One run downloads prices, ingests new SEC filings, refreshes macro and policy data,
+          re-evaluates both models, issues today's forecasts, scores closed windows and updates the
+          strategy lab. Safe to run any time; nothing already loaded is repeated.
         </p>
-
-        <h3 style="margin-top: 1.25rem">SEC ingest</h3>
-        <form class="inline-form" (ngSubmit)="ingest()">
-          <input
-            name="sym"
-            list="admin-symbols"
-            [ngModel]="secSymbol()"
-            (ngModelChange)="secSymbol.set($event)"
-            placeholder="Symbol, e.g. AAPL"
-            required
-            style="width: 12rem"
-          />
-          <datalist id="admin-symbols">
-            @for (c of companies(); track c.symbol) {
-              <option [value]="c.symbol">{{ c.name }}</option>
-            }
-          </datalist>
-          <button type="submit" class="btn" [disabled]="busy() || !secSymbol().trim()">Ingest filings</button>
-        </form>
-      </div>
-
-      <div class="card">
-        <h3>Automatic prices</h3>
-        @if (meta.meta()?.priceProvider && meta.meta()?.priceProvider !== 'none') {
-          <p class="small muted">
-            Provider: <strong>{{ meta.meta()?.priceProvider }}</strong>. Downloads daily bars, dividends and splits for
-            every active stock and benchmark ETF. Also runs with every pipeline run.
-          </p>
-          <button type="button" class="btn btn-primary" [disabled]="busy()" (click)="run('Price update', api.syncPrices())">
-            Update prices
-          </button>
-        } @else {
-          <p class="small">
-            No provider configured. Add one line to <span class="mono">.env</span> and restart
-            (<span class="mono">docker compose up -d</span>):
-          </p>
-          <p class="small mono">CIVALPHA_PRICE_PROVIDER=yahoo</p>
-          <p class="small muted">
-            Yahoo needs no key but is unofficial (personal research only). For a keyed provider use
-            <span class="mono">CIVALPHA_PRICE_PROVIDER=tiingo</span> plus <span class="mono">TIINGO_API_KEY=…</span>
-            (free account at tiingo.com).
+        @if (meta.meta()?.missingBenchmarks?.length; as count) {
+          <div class="alert alert-warn small" style="margin: 0.75rem 0 0">
+            No prices yet for benchmark ETF{{ count > 1 ? 's' : '' }}
+            {{ meta.meta()?.missingBenchmarks?.join(', ') }}; companies measured against
+            {{ count > 1 ? 'them' : 'it' }} are skipped until prices arrive.
+          </div>
+        }
+        @if (!priceProvider()) {
+          <p class="small muted" style="margin: 0.75rem 0 0">
+            No automatic price provider: add
+            <span class="mono">CIVALPHA_PRICE_PROVIDER=yahoo</span> (no key, unofficial) or
+            <span class="mono">CIVALPHA_PRICE_PROVIDER=tiingo</span> +
+            <span class="mono">TIINGO_API_KEY</span> to <span class="mono">.env</span> and restart —
+            or import a CSV under Advanced.
           </p>
         }
-
-        <h3 style="margin-top: 1.25rem">Import prices (CSV)</h3>
-        <p class="small muted">
-          Columns: <span class="mono">symbol,date,open,high,low,close,volume</span>. Imported prices are treated as
-          recorded facts.
-        </p>
-        <input type="file" accept=".csv,text/csv" (change)="pickFile($event)" />
-        <div style="margin-top: 0.6rem">
-          <button type="button" class="btn" [disabled]="busy() || !file()" (click)="importCsv()">
-            Upload {{ file()?.name ?? '' }}
+      </div>
+      <div class="hero-action">
+        @if (runningPipeline(); as j) {
+          <button type="button" class="btn btn-primary btn-lg" disabled>
+            <span class="spinner" aria-hidden="true"></span> Running… job #{{ j.id }}
           </button>
-        </div>
+        } @else {
+          <button
+            type="button"
+            class="btn btn-primary btn-lg"
+            [disabled]="busy()"
+            (click)="run('Pipeline run', api.runPipeline())"
+          >
+            <app-icon name="pulse" [size]="18" /> Run pipeline
+          </button>
+        }
       </div>
     </div>
 
-    <div class="page-head" style="margin-top: 2rem">
+    <details class="collapsible">
+      <summary>Advanced: run a single step</summary>
+      <div class="steps">
+        @if (priceProvider()) {
+          <div class="step">
+            <div>
+              <strong>Update prices</strong>
+              <div class="small muted">
+                Daily bars, dividends and splits for every active stock and benchmark ETF from
+                {{ meta.meta()?.priceProvider }}.
+              </div>
+            </div>
+            <button
+              type="button"
+              class="btn"
+              [disabled]="busy()"
+              (click)="run('Price update', api.syncPrices())"
+            >
+              Update
+            </button>
+          </div>
+        }
+        <div class="step">
+          <div>
+            <strong>Import prices from CSV</strong>
+            <div class="small muted">
+              Columns <span class="mono">symbol,date,open,high,low,close,volume</span>; imported
+              prices are recorded facts.
+            </div>
+          </div>
+          <div class="inline-form">
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              (change)="pickFile($event)"
+              aria-label="Prices CSV"
+            />
+            <button type="button" class="btn" [disabled]="busy() || !file()" (click)="importCsv()">
+              Upload
+            </button>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <strong>Ingest SEC filings for one stock</strong>
+            <div class="small muted">
+              10-K, 10-Q and relevant 8-K filings, XBRL fundamentals and policy-exposure passages.
+            </div>
+          </div>
+          <form class="inline-form" (ngSubmit)="ingest()">
+            <input
+              name="sym"
+              list="admin-symbols"
+              [ngModel]="secSymbol()"
+              (ngModelChange)="secSymbol.set($event)"
+              placeholder="Ticker"
+              required
+              style="width: 8rem"
+              aria-label="Ticker"
+            />
+            <datalist id="admin-symbols">
+              @for (c of companies(); track c.symbol) {
+                <option [value]="c.symbol">{{ c.name }}</option>
+              }
+            </datalist>
+            <button type="submit" class="btn" [disabled]="busy() || !secSymbol().trim()">
+              Ingest
+            </button>
+          </form>
+        </div>
+        <div class="step">
+          <div>
+            <strong>Issue forecasts</strong>
+            <div class="small muted">
+              For the latest data, or for a past as-of date (then published as REPLAY).
+            </div>
+          </div>
+          <div class="inline-form">
+            <input
+              type="date"
+              [ngModel]="issueDate()"
+              (ngModelChange)="issueDate.set($event ?? '')"
+              aria-label="As-of date"
+            />
+            <button
+              type="button"
+              class="btn"
+              [disabled]="busy()"
+              (click)="run('Forecast issue', api.issueForecasts(issueDate() || null))"
+            >
+              Issue
+            </button>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <strong>Evaluate models</strong>
+            <div class="small muted">Walk-forward evaluation of BASELINE vs AUGMENTED.</div>
+          </div>
+          <button
+            type="button"
+            class="btn"
+            [disabled]="busy()"
+            (click)="run('Evaluation', api.evaluate())"
+          >
+            Evaluate
+          </button>
+        </div>
+        <div class="step">
+          <div>
+            <strong>Resolve outcomes</strong>
+            <div class="small muted">Score forecasts whose 21-trading-day window has closed.</div>
+          </div>
+          <button
+            type="button"
+            class="btn"
+            [disabled]="busy()"
+            (click)="run('Outcome resolution', api.resolveOutcomes())"
+          >
+            Resolve
+          </button>
+        </div>
+        <div class="step">
+          <div>
+            <strong>Strategy lab</strong>
+            <div class="small muted">
+              Backtest every classic rule and the AI on one window, then record today's AI
+              decisions.
+            </div>
+          </div>
+          <div class="inline-form">
+            <button
+              type="button"
+              class="btn"
+              [disabled]="busy()"
+              (click)="run('Strategy backtest', api.backtestStrategies())"
+            >
+              Backtest
+            </button>
+            <button
+              type="button"
+              class="btn"
+              [disabled]="busy()"
+              (click)="run('AI decisions', api.decide())"
+            >
+              AI decisions
+            </button>
+          </div>
+        </div>
+      </div>
+      <p class="small muted" style="margin: 0.75rem 0 0">
+        New stocks are added on the <a routerLink="/universe">Universe</a> page, which can start
+        their data load right away.
+      </p>
+    </details>
+
+    <div class="page-head" style="margin-top: 1.5rem">
       <h2 style="margin: 0">Jobs</h2>
-      <div class="small muted">
+      <div class="small muted inline-form" style="align-items: center">
         @if (anyActive()) {
-          <span class="badge badge-run">auto-refreshing every 3 s</span>
+          <span class="badge badge-run">auto-refreshing</span>
         }
         <button type="button" class="btn btn-sm" (click)="jobs.reload()">Refresh</button>
       </div>
@@ -168,10 +318,18 @@ const ACTIVE = new Set(['RUNNING', 'PENDING', 'QUEUED', 'STARTED']);
         <div class="table-wrap">
           <table class="table compact">
             <thead>
-              <tr><th>#</th><th>Type</th><th>Status</th><th>Started</th><th>Finished</th><th class="num">Duration</th><th></th></tr>
+              <tr>
+                <th>#</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th>Started</th>
+                <th>Finished</th>
+                <th class="num">Duration</th>
+                <th></th>
+              </tr>
             </thead>
             <tbody>
-              @for (j of sortedJobs(); track j.id) {
+              @for (j of shownJobs(); track j.id) {
                 <tr [class.row-current]="selected()?.id === j.id">
                   <td>{{ j.id }}</td>
                   <td>{{ j.jobType | human }}</td>
@@ -188,7 +346,12 @@ const ACTIVE = new Set(['RUNNING', 'PENDING', 'QUEUED', 'STARTED']);
                   <td class="nowrap">{{ j.finishedAt | utc }}</td>
                   <td class="num">{{ duration(j) }}</td>
                   <td>
-                    <button type="button" class="btn btn-sm" (click)="selectedId.set(j.id)" [attr.aria-pressed]="selected()?.id === j.id">
+                    <button
+                      type="button"
+                      class="btn btn-sm"
+                      (click)="selectedId.set(j.id)"
+                      [attr.aria-pressed]="selected()?.id === j.id"
+                    >
                       Log
                     </button>
                   </td>
@@ -197,17 +360,82 @@ const ACTIVE = new Set(['RUNNING', 'PENDING', 'QUEUED', 'STARTED']);
             </tbody>
           </table>
         </div>
+        @if (sortedJobs().length > JOBS_SHOWN) {
+          <p class="small" style="margin: 0.5rem 0 0">
+            <button type="button" class="btn btn-sm" (click)="showAllJobs.set(!showAllJobs())">
+              {{ showAllJobs() ? 'Show recent only' : 'Show all ' + sortedJobs().length + ' jobs' }}
+            </button>
+          </p>
+        }
         @if (selected(); as j) {
-          <h3 style="margin-top: 1rem">Job #{{ j.id }} log — {{ j.jobType | human }} ({{ j.status }})</h3>
+          <h3 style="margin-top: 1rem">
+            Job #{{ j.id }} log — {{ j.jobType | human }} ({{ j.status }})
+          </h3>
           <pre class="log">{{ j.log || '(no output yet)' }}</pre>
         }
       }
     }
   `,
   styles: `
-    .actions .btn { margin-top: 0.25rem; }
-    .actions p { margin: 0.2rem 0 0.6rem; }
-    .inline-form { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    .inline-form {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .stat .small {
+      margin-top: 0.1rem;
+    }
+    .hero {
+      display: flex;
+      gap: 1.5rem;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      border-left: 4px solid var(--accent);
+    }
+    .hero-text {
+      flex: 1 1 420px;
+      min-width: 0;
+    }
+    .hero-action {
+      flex: none;
+    }
+    .btn-lg {
+      font-size: 1rem;
+      padding: 0.7rem 1.3rem;
+      border-radius: 10px;
+    }
+    .spinner {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 2px solid currentColor;
+      border-right-color: transparent;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+    .steps {
+      display: flex;
+      flex-direction: column;
+    }
+    .step {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+      padding: 0.75rem 0;
+      border-top: 1px solid var(--grid);
+    }
+    .step > div:first-child {
+      flex: 1 1 320px;
+      min-width: 0;
+    }
   `,
 })
 export class AdminPage {
@@ -217,6 +445,10 @@ export class AdminPage {
   protected readonly jobs = httpResource<Job[]>(() => apiUrl.jobs());
   private readonly companiesRes = httpResource<CompanySummary[]>(() => apiUrl.companies());
   protected readonly companies = computed(() => valueOf(this.companiesRes) ?? []);
+  protected readonly priceProvider = computed(() => {
+    const p = this.meta.meta()?.priceProvider;
+    return !!p && p !== 'none';
+  });
 
   protected readonly token = signal(getAdminToken());
   protected readonly hasToken = signal(!!getAdminToken());
@@ -227,8 +459,22 @@ export class AdminPage {
   protected readonly file = signal<File | null>(null);
   protected readonly selectedId = signal<number | null>(null);
 
-  protected readonly sortedJobs = computed(() => [...(valueOf(this.jobs) ?? [])].sort((a, b) => b.id - a.id));
+  protected readonly sortedJobs = computed(() =>
+    [...(valueOf(this.jobs) ?? [])].sort((a, b) => b.id - a.id),
+  );
   protected readonly anyActive = computed(() => this.sortedJobs().some((j) => this.isActive(j)));
+  protected readonly JOBS_SHOWN = JOBS_SHOWN;
+  protected readonly showAllJobs = signal(false);
+  protected readonly shownJobs = computed(() =>
+    this.showAllJobs() ? this.sortedJobs() : this.sortedJobs().slice(0, JOBS_SHOWN),
+  );
+  protected readonly lastPipeline = computed(
+    () => this.sortedJobs().find((j) => j.jobType === 'PIPELINE_RUN') ?? null,
+  );
+  protected readonly runningPipeline = computed(() => {
+    const j = this.lastPipeline();
+    return j && this.isActive(j) ? j : null;
+  });
   protected readonly selected = computed(() => {
     const list = this.sortedJobs();
     const id = this.selectedId();
@@ -242,7 +488,7 @@ export class AdminPage {
       const t = setInterval(() => this.jobs.reload(), 3000);
       onCleanup(() => clearInterval(t));
     });
-    // When jobs finish, refresh global metadata (e.g. the demo-data flag after a demo load).
+    // When jobs finish, refresh global metadata (e.g. the data cutoff after a price update).
     let wasActive = false;
     effect(() => {
       const active = this.anyActive();
@@ -254,7 +500,10 @@ export class AdminPage {
   protected saveToken(): void {
     setAdminToken(this.token().trim());
     this.hasToken.set(!!this.token().trim());
-    this.notice.set({ ok: true, text: this.hasToken() ? 'Admin token saved for this tab.' : 'Admin token cleared.' });
+    this.notice.set({
+      ok: true,
+      text: this.hasToken() ? 'Admin token saved for this tab.' : 'Admin token cleared.',
+    });
     this.jobs.reload();
   }
 
@@ -276,7 +525,10 @@ export class AdminPage {
     call.subscribe({
       next: (job) => {
         this.busy.set(false);
-        this.notice.set({ ok: true, text: `${label} started as job #${job?.id ?? '?'} (${job?.status ?? 'submitted'}).` });
+        this.notice.set({
+          ok: true,
+          text: `${label} started as job #${job?.id ?? '?'} (${job?.status ?? 'submitted'}).`,
+        });
         if (job?.id !== undefined) this.selectedId.set(job.id);
         this.jobs.reload();
       },

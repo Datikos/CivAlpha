@@ -42,7 +42,7 @@ import { UI } from './ui';
               <td class="nowrap">{{ r.f.horizonTradingDays }} d</td>
               <td class="nowrap">{{ r.f.asOfDate }}</td>
               <td class="nowrap">{{ r.f.issuedAt | utc }}</td>
-              <td><app-issue-mode [mode]="r.f.issueMode" /> <app-demo-badge [show]="r.f.isDemo" /></td>
+              <td><app-issue-mode [mode]="r.f.issueMode" /></td>
               <td class="nowrap">
                 v{{ r.f.version }}
                 @if (r.superseded) {

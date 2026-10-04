@@ -60,7 +60,6 @@ interface Col {
         <div class="verdict" role="note"><strong>Verdict.</strong> {{ r.summary }}</div>
         <p class="small muted">
           Backtest #{{ r.id }} run {{ r.runAt | utc }} · scored {{ r.oosStart }} to {{ r.dataCutoff }}
-          <app-demo-badge [show]="r.isDemo" />
           · costs {{ r.config.costBpsPerSide }} bp per side on traded amount · {{ r.config.execution }}
         </p>
 

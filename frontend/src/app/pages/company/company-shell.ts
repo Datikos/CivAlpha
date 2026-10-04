@@ -13,7 +13,6 @@ import { CompanyContext } from './company-context';
         @if (ctx.detail(); as c) {
           <h1>
             {{ c.name }} <span class="muted">({{ c.symbol }})</span>
-            <app-demo-badge [show]="c.isDemo" />
           </h1>
           <p class="muted">
             {{ c.sector }} · benchmark <strong>{{ c.benchmarkSymbol }}</strong>

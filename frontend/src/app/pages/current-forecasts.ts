@@ -43,7 +43,7 @@ import { UI } from '../shared/ui';
     @if (res.hasValue()) {
       @if (!rows().length) {
         <div class="empty-box">
-          No forecasts have been issued yet. Load the demo dataset or run the pipeline on the
+          No forecasts have been issued yet. Run the pipeline on the
           <a routerLink="/admin">Data &amp; pipeline</a> page.
         </div>
       } @else {
@@ -79,7 +79,7 @@ import { UI } from '../shared/ui';
                       <td class="nowrap">{{ f.horizonTradingDays }} d</td>
                       <td class="nowrap">{{ f.asOfDate }}</td>
                       <td class="nowrap">{{ f.issuedAt | utc }}</td>
-                      <td><app-issue-mode [mode]="f.issueMode" /> <app-demo-badge [show]="f.isDemo" /></td>
+                      <td><app-issue-mode [mode]="f.issueMode" /></td>
                       <td class="num">v{{ f.version }}</td>
                       <td><a [routerLink]="['/forecasts', f.id]">Details</a></td>
                     } @else {

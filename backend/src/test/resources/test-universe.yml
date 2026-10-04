@@ -1,8 +1,0 @@
-universe: test
-start_date: 2019-01-02
-benchmarks:
-  XLC: comm services
-companies:
-  - {symbol: META, name: "Meta Platforms, Inc.", cik: "0001326801", sector: Communication Services, industry: INTERNET, benchmark: XLC,
-     ticker_history: [{symbol: FB, valid_from: 2012-05-18, valid_to: 2022-06-09}, {symbol: META, valid_from: 2022-06-09}]}
-  - {symbol: INTC, name: "Intel Corporation", cik: "0000050863", sector: Technology, industry: SEMICONDUCTORS, benchmark: XLC}

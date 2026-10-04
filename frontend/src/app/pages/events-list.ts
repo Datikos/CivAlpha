@@ -78,7 +78,6 @@ import { EventForm } from './event-form';
                   <td class="nowrap">{{ e.eventDate ?? '—' }}</td>
                   <td style="min-width: 260px">
                     <a [routerLink]="['/events', e.id]"><strong>{{ e.title }}</strong></a>
-                    <app-demo-badge [show]="e.isDemo" />
                     <div class="small muted">
                       {{ e.eventType | human }}{{ e.actorName ? ' · ' + e.actorName : '' }}
                       @if (e.version > 1) {

@@ -1,0 +1,6 @@
+# Build context of the Python image is the repository root: send only what the image needs.
+*
+!backend/requirements.txt
+!backend/civalpha
+!db/migration
+**/__pycache__

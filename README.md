@@ -8,99 +8,84 @@ sources, the uncertainty, and how accurate the forecasts turned out to be.
 return of its sector benchmark ETF, measured from the close of the as-of date `t` to the close of `t+21`.
 
 This is research software. It has no brokerage connection and places no orders. It claims no
-profitability unless the cost-adjusted walk-forward evidence supports it, and on the demo data it does not.
+profitability unless the cost-adjusted walk-forward evidence supports it. It works on real data only.
 
 ## Quick start
 
 Requires Docker with Compose v2. The stack uses about 0.8 GB of RAM while idle and needs no GPU.
 
-```bash
-cp .env.example .env            # optional; everything works with defaults
-docker compose up -d --build    # postgres, ml, backend, frontend
-open http://localhost:8088      # or browse to it
-```
+1. Configure the sources in `.env`:
+   ```bash
+   cp .env.example .env
+   ```
+   * **SEC filings:** `SEC_USER_AGENT="Your Name you@example.com"`. The SEC requires you to identify yourself;
+     no key is needed.
+   * **Daily prices:** `CIVALPHA_PRICE_PROVIDER=tiingo` plus `TIINGO_API_KEY` (free key at tiingo.com).
+     `CIVALPHA_PRICE_PROVIDER=yahoo` needs no key but uses an unofficial API, so personal research only.
+   * **Optional:**
+     * `FRED_API_KEY` (free) for macro series;
+     * `EVENTS_FEDERAL_REGISTER_ENABLED=true` and `EVENTS_FED_RSS_ENABLED=true` for official trade and rate events;
+     * `EVENTS_NEWS_FEEDS` for news discovery;
+     * `CIVALPHA_LLM_PROVIDER=anthropic` with `ANTHROPIC_API_KEY`.
+2. Start the stack:
+   ```bash
+   docker compose up -d --build    # postgres, api, worker, frontend
+   open http://localhost:8088
+   ```
+3. On the **Universe** page, add the stocks to track. **Look up on SEC** fills in the CIK and name; then pick a
+   sector, an industry and the sector benchmark ETF (for example `XLK` for technology).
+4. On **Data & pipeline**, click **Run pipeline**. That one job:
+   * downloads prices, dividends and splits for every stock and benchmark ETF;
+   * ingests SEC filings (XBRL facts, passages, exposures);
+   * fetches macro data and policy events;
+   * evaluates the models, issues forecasts, runs the strategy lab and records the AI's decisions.
 
-To run the full demo, either click **Data & pipeline → Load demo dataset** in the UI, or call:
-
-```bash
-curl -X POST http://localhost:8088/api/admin/demo/load
-```
-
-`scripts/demo.sh` does all of the above in one step. The demo takes about 40 seconds and runs these steps:
-
-1. Generates the synthetic dataset.
-2. Loads the universe and imports prices and corporate actions through the CSV importer.
-3. Loads macro data with vintages.
-4. Ingests SEC-format filings for 24 companies through the same parser that live mode uses.
-5. Extracts passages and derives exposures.
-6. Ingests events and deduplicates the news reports.
-7. Runs a walk-forward evaluation.
-8. Replays 12 monthly forecast dates.
-9. Issues live forecasts.
-10. Resolves outcomes.
+   Later runs, from the button or the optional schedule, only fetch what is new.
 
 Other commands:
 
 ```bash
-docker compose logs -f backend ml   # follow logs
+docker compose logs -f api worker   # follow logs
 docker compose down                 # stop (data is kept in volumes)
 docker compose down -v              # stop and delete the database and stored documents
 ```
-
-### Real data instead of the demo
-
-1. Start from an empty database. The demo and real data are never mixed. If you loaded the demo before, run
-   `docker compose down -v`.
-2. In `.env`, set a price provider. `CIVALPHA_PRICE_PROVIDER=yahoo` needs no key but uses an unofficial API, so
-   personal research only. Alternatively set `CIVALPHA_PRICE_PROVIDER=tiingo` plus `TIINGO_API_KEY`. For SEC
-   filings, also set `CIVALPHA_SEC_MODE=live` and `SEC_USER_AGENT="Your Name you@example.com"`.
-3. Run `docker compose up -d`, then click **Data & pipeline → Run pipeline**. That one job:
-   * seeds the universe from `config/universe.yml`;
-   * downloads prices, dividends and splits for every stock and benchmark ETF;
-   * ingests SEC filings;
-   * evaluates the models and issues forecasts.
-
-   Later runs, whether from the button or the optional schedule, only download new bars.
-
-Manage which stocks are tracked on the **Universe** page (see below).
-
-> **Demo data is synthetic.** Company names and CIKs are real public identifiers. All prices, filings, XBRL
-> values, events (titled `[DEMO]`) and macro values are generated. The generator plants two effects on purpose:
-> post-tariff drift for exposed companies, and leverage-dependent drift after rate changes. These let you check
-> that the pipeline works end to end. Accuracy on demo data says nothing about real markets. Every demo row
-> has `is_demo = true`, and the UI shows a banner and badges for it.
 
 ## Architecture
 
 ```
             ┌──────────── nginx + Angular (frontend :8088) ────────────┐
             │  pages: forecasts, companies, filings, exposure, events, │
-            │         forecast detail/history, accuracy, admin         │
+            │  strategies, AI decisions, time machine, accuracy, admin │
             └───────────────────────────┬──────────────────────────────┘
                                         │ /api
 ┌───────────────────────────────────────▼──────────────────────────────┐
-│ backend — Java 21 / Spring Boot 4 (ingestion, API, orchestration)    │
-│  SEC client (live: UA + ≤10 rps, or fixtures) · XBRL/companyfacts    │
-│  parsers · passage extraction · exposure derivation · CSV prices ·   │
-│  FRED/ALFRED · Federal Register / Fed RSS / news RSS · event dedup · │
-│  immutable forecast store · jobs · optional LLM provider             │
-└──────────────┬───────────────────────────────────────┬───────────────┘
-               │ JDBC (Flyway owns schema)             │ HTTP (internal)
-┌──────────────▼──────────────┐      ┌─────────────────▼───────────────┐
-│ PostgreSQL 16               │◄─────┤ ml — Python (FastAPI, pandas,   │
-│ structured data             │ SQL  │ scikit-learn): point-in-time    │
-└─────────────────────────────┘      │ features, logistic models,      │
-  volume civdata:/data               │ walk-forward evaluation         │
-    documents/  original sources (content-addressed)  ◄─ backend writes
-    demo/       generated demo inputs                  ◄─ ml writes
+│ api — Python (FastAPI): REST API, admin token, queues jobs;          │
+│       applies pending database migrations on start                   │
+└───────────────────────────────────────┬──────────────────────────────┘
+                                        │ pipeline_job table (queue + log)
+┌───────────────────────────────────────▼──────────────────────────────┐
+│ worker — Python, same image: runs jobs one at a time + schedules     │
+│  ingestion: SEC EDGAR client (UA + ≤10 rps) · XBRL /                 │
+│  companyfacts parsers · passages · exposures · prices (CSV, Tiingo,  │
+│  Yahoo) · FRED/ALFRED · Federal Register / Fed RSS / news · dedup    │
+│  models: point-in-time features · logistic models · walk-forward     │
+│  evaluation · strategy lab · time machine · optional LLM (Claude)    │
+└───────────────────────────────────────┬──────────────────────────────┘
+                                        │ SQL
+                         ┌──────────────▼──────────────┐
+                         │ PostgreSQL 16               │
+                         └─────────────────────────────┘
+  volume civdata:/data
+    documents/  original sources (content-addressed)
     imports/    CSV drop folder (prices*.csv, corporate_actions*.csv)
+    uploads/    CSV uploads waiting for the worker
 ```
 
-There are four services and no Kafka, Redis, graph database or Kubernetes. Long steps run as background jobs
-with a log stored in Postgres. The ML service writes model versions, evaluations and outcomes. Only the backend
-writes forecasts.
+One Python codebase (`backend/civalpha`) runs as two processes from one image: `api` answers requests and queues
+work; `worker` runs the queued jobs (ingestion, training, backtests) so long steps never slow the API down. There is
+no Kafka, Redis, graph database or Kubernetes. Forecasts and AI decisions are append-only (database triggers).
 
-## Data model (PostgreSQL, `backend/src/main/resources/db/migration`)
+## Data model (PostgreSQL, `db/migration`)
 
 | Area | Tables | Notes |
 |---|---|---|
@@ -112,7 +97,7 @@ writes forecasts.
 | Events | `policy_event`, `event_source`, `event_target`, `policy_actor`, `actor_record` | Every event links to stored evidence. `evidence_status` is `OFFICIAL` or `NEWS_ONLY`. Actor profiles hold documented actions and votes only. |
 | Exposure | `company_exposure` | Each exposure records a target (country, product or interest rate), a channel and a share. `basis` is `DIRECTLY_REPORTED` or `ESTIMATED`, with a confidence and a method (`XBRL_DIMENSION`, `XBRL_RATIO`, `RULE_KEYWORD`, `SECTOR_MAP`, `LLM`). Each one links to a filing plus a passage or fact, and becomes available at `available_at` (the filing's acceptance time). |
 | Models | `model_version`, `forecast`, `forecast_outcome`, `model_evaluation`, `backtest_prediction` | A database trigger rejects `UPDATE` and `DELETE` on `forecast`. Outcomes are stored in a separate table. |
-| Strategies | `strategy_run`, `strategy_result`, `strategy_trade`, `strategy_decision`, `decision_explanation` | Backtest runs are written by the ML service. The AI's daily decisions are written by the backend and are append-only (trigger); language-model explanations live in their own table. |
+| Strategies | `strategy_run`, `strategy_result`, `strategy_trade`, `strategy_decision`, `decision_explanation` | Backtest runs, decisions and explanations are written by the worker; decisions are append-only (trigger); language-model explanations live in their own table. |
 
 How an event is linked to a company:
 **event → target (country, sector, product or cost) → company exposure → supporting filing passage or XBRL fact**.
@@ -131,7 +116,7 @@ How an event is linked to a company:
     its sources.
   * The interval is the 10th–90th percentile across 30 date-block bootstrap refits. It reflects estimation
     uncertainty only.
-* **No look-ahead.** All inputs for as-of time `T` are read point-in-time (`ml/civalpha_ml/pit.py`):
+* **No look-ahead.** All inputs for as-of time `T` are read point-in-time (`backend/civalpha/pit.py`):
   * prices for dates ≤ T;
   * facts and exposures accepted ≤ T, with the latest acceptance winning, so an amendment counts only after it
     is accepted;
@@ -163,13 +148,13 @@ strategies on the same data, the same out-of-sample window and the same costs. T
 | Benchmark | Equal-weight buy & hold (the reference every verdict compares against); sector ETF basket |
 | Trend / momentum | 50/200-day golden cross (with and without a 10% trailing stop); 12-1 month momentum, top 5 monthly; Donchian 55/20 breakout |
 | Mean reversion | RSI(2) pullback above the 200-day average; Bollinger band (20, 2σ) bounce; weekly 5-day reversal, bottom 5 |
-| Fundamental / event | Quality & growth screen on as-filed XBRL data; post-earnings-announcement drift (earnings surprise ≥ 1, hold 60 days); value (top 5 earnings yield); gross profitability (top 5 gross profit / assets); stepping aside from tariff/rate shocks using SEC-filing exposures |
-| AI | Gradient-boosted trees that combine every rule's indicator with the financial-report profile, event shocks and macro (with and without a 10% trailing stop); the same model on the financial-report profile alone (`AI_FUND`) |
+| Fundamental / event | Quality & growth screen on as-filed XBRL data; post-earnings-announcement drift (earnings surprise ≥ 1, hold 60 days); value (top 5 earnings yield); gross profitability (top 5 gross profit / assets); dividend yield (top 5); stepping aside from tariff/rate shocks using SEC-filing exposures |
+| AI | Gradient-boosted trees that combine every rule's indicator with the financial-report profile, event shocks and macro (with and without a 10% trailing stop); the same model on the financial-report profile alone (`AI_FUND`); the same model plus dividend signals (`AI_DIV`), compared with it on the same out-of-sample forecasts |
 
 * **The AI decides.** The model estimates the probability that a stock beats its sector ETF over the next 10 trading days.
   It enters when p ≥ 0.55 and the stock ranks in the top 8, and exits when p < 0.48. It is retrained every 63 trading days,
   walk-forward, only on outcomes known before each refit.
-* **Financial reports.** `ml/civalpha_ml/fundamentals.py` turns the XBRL facts of every 10-Q/10-K into a profile:
+* **Financial reports.** `backend/civalpha/fundamentals.py` turns the XBRL facts of every 10-Q/10-K into a profile:
   * **Growth:** revenue growth acceleration.
   * **Surprise:** earnings surprise and revenue surprise, standardized against the same quarter a year earlier. This
     is a seasonal random walk with no analyst estimates (Bernard & Thomas).
@@ -195,7 +180,7 @@ strategies on the same data, the same out-of-sample window and the same costs. T
   With `CIVALPHA_LLM_PROVIDER=anthropic`, Claude writes a short plain-language explanation for ENTER/EXIT actions. The
   explanation is stored separately and never changes the decision.
 
-Code: `ml/civalpha_ml/strategies/` (`rules.py`, `ai.py`, `backtest.py`, `stats.py`). `ml/tests/test_strategies.py` covers:
+Code: `backend/civalpha/strategies/` (`rules.py`, `ai.py`, `backtest.py`, `stats.py`). `backend/tests/test_strategies.py` covers:
 * look-ahead, for every strategy;
 * the AI's training purge;
 * cost accounting;
@@ -217,25 +202,23 @@ It then compares these with what actually happened:
 * how many actual returns fell inside the band, against a naive band.
 
 A chart shows the real price path inside the forecast band. One date is one draw, so use the walk-forward accuracy and the
-strategy lab for evidence. The code is `ml/civalpha_ml/timemachine.py`; `ml/tests/test_timemachine.py` checks that
+strategy lab for evidence. The code is `backend/civalpha/timemachine.py`; `backend/tests/test_timemachine.py` checks that
 changing every later price leaves the predictions untouched.
 
 ## Sources and credentials
 
 | Source | Default | To enable | Notes |
 |---|---|---|---|
-| SEC EDGAR (submissions, companyfacts, filing documents, XBRL instances) | `fixture` (demo files) | `CIVALPHA_SEC_MODE=live`, `SEC_USER_AGENT="Your Name you@example.com"` | No key needed. The client refuses to start without a User-Agent that includes an e-mail and caps requests at ≤10/s (default 5), with gzip and backoff on 429/503. Fetches the last `SEC_LOOKBACK_YEARS` years. |
-| Daily prices and corporate actions (automatic) | off | `CIVALPHA_PRICE_PROVIDER=yahoo` (no key; unofficial, personal research only) or `tiingo` + `TIINGO_API_KEY` (free key) | Runs with every pipeline run and on **Update prices**. Downloads are incremental, re-checking the last week of bars so corrections are versioned. Bars are stored under the ticker valid on each date. Never runs against the demo database. |
-| Daily prices and corporate actions | CSV importer | Upload in Admin, or drop `prices*.csv` / `corporate_actions*.csv` into the `civdata` volume under `/data/imports` and run the pipeline | Columns: `symbol,date,open,high,low,close,volume` and `symbol,ex_date,action_type(SPLIT\|CASH_DIVIDEND),value,announced_at`. Use raw (unadjusted) prices. Vendor adapters implement `market/PriceProvider`. |
+| SEC EDGAR (submissions, companyfacts, filing documents, XBRL instances) | off until configured | `SEC_USER_AGENT="Your Name you@example.com"` | No key needed. The client refuses to start without a User-Agent that includes an e-mail and caps requests at ≤10/s (default 5), with gzip and backoff on 429/503. Fetches the last `SEC_LOOKBACK_YEARS` years. |
+| Daily prices and corporate actions (automatic) | off | `CIVALPHA_PRICE_PROVIDER=yahoo` (no key; unofficial, personal research only) or `tiingo` + `TIINGO_API_KEY` (free key) | Runs with every pipeline run and on **Update prices**. Downloads are incremental, re-checking the last week of bars so corrections are versioned. Bars are stored under the ticker valid on each date. |
+| Daily prices and corporate actions | CSV importer | Upload in Admin, or drop `prices*.csv` / `corporate_actions*.csv` into the `civdata` volume under `/data/imports` and run the pipeline | Columns: `symbol,date,open,high,low,close,volume` and `symbol,ex_date,action_type(SPLIT\|CASH_DIVIDEND),value,announced_at`. Use raw (unadjusted) prices. Vendor adapters implement `PriceProvider` (`backend/civalpha/platform/market/providers.py`). |
 | FRED / ALFRED | off | `FRED_API_KEY` (free) | Fetches every vintage of `FEDFUNDS` and `CPIAUCSL`. |
 | Federal Register API (official trade notices) | off | `EVENTS_FEDERAL_REGISTER_ENABLED=true` | No key needed. Event targets are extracted with deterministic rules. |
 | Federal Reserve monetary press RSS (FOMC statements) | off | `EVENTS_FED_RSS_ENABLED=true` | Parses the rate change from the statement text. |
 | News RSS (discovery only) | off | `EVENTS_NEWS_FEEDS=url1,url2` | Stays `NEWS_ONLY` and is excluded from features until an official document is linked. |
 | LLM-assisted exposure extraction | off | `CIVALPHA_LLM_PROVIDER=anthropic`, `ANTHROPIC_API_KEY` (model `CIVALPHA_LLM_MODEL`, default `claude-opus-5-5`) | Optional. Output is schema-constrained and stored as `ESTIMATED` with confidence no higher than MEDIUM. Any failure means no hints, never a failed ingest. |
 
-With live sources configured, run **Data & pipeline → Run configured pipeline**
-(`POST /api/admin/pipeline/run`). Use a separate database for live data and for the demo
-(`docker compose down -v` between them). The demo loader refuses to run if non-demo companies exist.
+With the sources configured, run **Data & pipeline → Run pipeline** (`POST /api/admin/pipeline/run`).
 
 **Licensing.** Being able to reach a market-data API does not give you the right to train models on its data or
 display it publicly. Check your vendor licence before connecting a provider or publishing derived output. Keep
@@ -243,13 +226,12 @@ keys in `.env`, which git ignores, and never in source control.
 
 ## Managing the universe
 
-The database is the source of truth for which stocks are tracked. `config/universe.yml` only seeds companies whose
-CIK is not in the database yet; a pipeline run never re-adds a stock you removed or undoes an edit.
+The database is the source of truth for which stocks are tracked, and the **Universe** page is how you change it.
 
 The **Universe** page (`/api/admin/universe`) supports these actions:
 
 * **Add** a stock by ticker. **Look up on SEC** fills in the CIK and registrant name from SEC's
-  `company_tickers.json` (live SEC mode). You then pick a sector, an optional industry, a sector benchmark ETF and
+  `company_tickers.json`. You then pick a sector, an optional industry, a sector benchmark ETF and
   a *member since* date.
   * The *member since* date defaults to today. An earlier date puts the stock into backtests for periods when it
     wasn't actually selected, which biases results toward stocks already known to have done well.
@@ -271,56 +253,64 @@ If you choose a benchmark ETF that is new to the universe, its prices are downlo
   `Authorization: Bearer <token>`. Read-only pages stay public. The **Data & pipeline** page asks for the token
   and keeps it for the browser tab only. Without a token everything is open, which is why the UI binds to
   `127.0.0.1` by default (`CIVALPHA_BIND`).
-* **Schedule.** `CIVALPHA_PIPELINE_CRON` and `CIVALPHA_OUTCOMES_CRON` take Spring cron expressions
-  (`sec min hour day month weekday`), evaluated in `CIVALPHA_SCHEDULE_ZONE` (default `America/New_York`). `-` turns
-  a schedule off, which is the default. Example: `0 30 22 * * MON-FRI` runs the pipeline after the US close.
-  Scheduled runs are logged like manual jobs and are skipped while a job of the same type is still running.
+* **Schedule.** `CIVALPHA_PIPELINE_CRON` and `CIVALPHA_OUTCOMES_CRON` take cron expressions evaluated by the worker
+  in `CIVALPHA_SCHEDULE_ZONE` (default `America/New_York`). Six fields mean seconds first
+  (`sec min hour day month weekday`); five fields are standard cron. `-` turns a schedule off, which is the default.
+  Example: `0 30 22 * * MON-FRI` runs the pipeline after the US close. Scheduled runs are logged like manual jobs
+  and are skipped while a job of the same type is queued or running.
 
 ## Environment variables
 
 All variables are listed with comments in `.env.example`. The main ones are `CIVALPHA_PORT` (8088),
 `CIVALPHA_BIND`, `CIVALPHA_ADMIN_TOKEN`, `CIVALPHA_PIPELINE_CRON`, `CIVALPHA_OUTCOMES_CRON`, `POSTGRES_PASSWORD`,
-`CIVALPHA_SEC_MODE`, `SEC_USER_AGENT`, `SEC_MAX_RPS`, `SEC_LOOKBACK_YEARS`, `FRED_API_KEY`, `EVENTS_*`,
-`CIVALPHA_LLM_PROVIDER`, `CIVALPHA_LLM_MODEL` and `ANTHROPIC_API_KEY`. The universe (24 stocks with
-sector benchmarks and ticker history) is set in `config/universe.yml`. Edit it to cover 20–50 symbols.
+`SEC_USER_AGENT`, `SEC_MAX_RPS`, `SEC_LOOKBACK_YEARS`, `CIVALPHA_PRICE_PROVIDER`, `TIINGO_API_KEY`, `FRED_API_KEY`,
+`EVENTS_*`, `CIVALPHA_LLM_PROVIDER`, `CIVALPHA_LLM_MODEL` and `ANTHROPIC_API_KEY`. The stocks themselves are managed
+on the Universe page; 20–50 symbols is a sensible size.
 
 ## Troubleshooting
 
 * **"No benchmark ETF prices are loaded"**
   * Evaluation and forecasts compare each stock with its sector benchmark ETF (`XLK`, `XLY`, `XLP`, `XLC`, `XLV`,
-    `XLI` in the default universe).
-  * Fix: load the demo, or import a prices CSV that includes those ETFs alongside the stocks.
+    `XLI` for a typical Nasdaq universe).
+  * Fix: run **Update prices** (with a price provider configured), or import a prices CSV that includes those ETFs.
   * The Data & pipeline page lists any benchmarks that are still missing.
-* **"This database already holds real (non-demo) data"**
-  * The synthetic demo is never mixed with imported data.
-  * Fix: start from an empty database with `docker compose down -v && docker compose up -d`. This also deletes
-    stored documents.
+* **"The universe is empty"**
+  * Add companies on the Universe page before running the pipeline or importing prices.
+* **"price sync failed" / "request limit reached"**
+  * The provider refused the requests (for example Tiingo's free plan allows 50 requests an hour). The pipeline
+    continues with the prices already stored; try again later.
 
 ## Tests
 
 ```bash
-# Python: point-in-time joins, revisions, vintages, leakage, returns, walk-forward and costs
-cd ml && python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements-dev.txt && pytest
-
-# Java: SEC parsers (incl. XXE), passage rules, dedup, FOMC parsing, ticker resolution, plus a
-# Testcontainers suite (needs Docker) covering ticker changes, revised filings, forecast immutability and
-# versioning, and API smoke tests
-cd backend && mvn test
+cd backend && python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements-dev.txt && pytest
 ```
 
+The suite covers:
+* the models: point-in-time joins, revisions, vintages, leakage, returns, walk-forward and costs, strategies,
+  fundamentals and the time machine;
+* the platform: SEC parsers (incl. XXE), passage rules, dedup, FOMC parsing, ticker resolution, price providers
+  and sync;
+* a Testcontainers PostgreSQL suite (needs Docker) for migrations, ticker changes, revised filings, price
+  versioning, forecast and decision immutability, and API smoke tests.
+
 GitHub Actions (`.github/workflows/ci.yml`) runs on every pull request and every push to `main`. It runs the
-Python tests, the backend tests (and fails if the Testcontainers suite was skipped), the Angular production
-build, and a `docker compose config` check.
+Python tests (and fails if the database tests could not run), the Angular production build, and a
+`docker compose config` check.
+
+## Database migrations
+
+`db/migration/V<n>__<name>.sql` files are applied in order by `python -m civalpha.platform.migrate`, which the `api`
+service runs on start. It uses Flyway's history table and checksums, so databases created before the move to
+Python continue without any manual step. Never edit an applied migration; add the next `V<n+1>` file.
 
 ## Layout
 
 ```
-backend/   Spring Boot service (Flyway schema in src/main/resources/db/migration)
-ml/        Python ML service (civalpha_ml/pit.py, features.py, model.py, evaluation.py, demo/generate.py)
+backend/   Python: civalpha/ (models, strategies, time machine) and civalpha/platform/ (API, worker, ingestion)
+db/        migration/ (SQL schema migrations)
 frontend/  Angular UI (served by nginx, proxies /api)
-config/    universe.yml
 docs/      api.md (REST contract)
-scripts/   demo.sh
 ```
 
 ## Known limitations / next steps
@@ -346,4 +336,4 @@ scripts/   demo.sh
   * Live, real-data accuracy can only build up over time.
 * **Operations.**
   * Admin protection is a single shared token. Real multi-user access needs proper authentication and roles.
-  * The scheduler runs inside the backend, so a missed run while the stack is down is not caught up.
+  * The scheduler runs inside the worker, so a missed run while the stack is down is not caught up.

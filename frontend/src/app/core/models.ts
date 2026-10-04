@@ -4,9 +4,9 @@ export type ModelKind = 'BASELINE' | 'AUGMENTED';
 export const MODEL_KINDS: readonly ModelKind[] = ['BASELINE', 'AUGMENTED'];
 
 export interface Meta {
-  demoDataPresent: boolean;
   llmEnabled: boolean;
-  secMode: string;
+  /** True when SEC_USER_AGENT is set on the backend (SEC EDGAR access is always live). */
+  secConfigured: boolean;
   /** True when the backend requires X-Admin-Token for admin and write requests. */
   adminTokenRequired?: boolean;
   /** Configured sector benchmark ETFs with no prices yet; evaluation and forecasts need them. */
@@ -33,10 +33,63 @@ export interface CompanySummary {
   sector: string;
   benchmarkSymbol: string;
   cik: string | null;
-  isDemo: boolean;
   latestClose: number | null;
   latestCloseDate: string | null;
   latestForecasts?: Partial<Record<ModelKind, LatestForecastRef>> | null;
+  dividend?: DividendSummary | null;
+}
+
+/** NONE: no dividend recorded; SUSPENDED: the next regular payment is overdue. */
+export type DividendStatus = 'REGULAR' | 'IRREGULAR' | 'SUSPENDED' | 'NONE';
+export type DividendFrequency = 'MONTHLY' | 'QUARTERLY' | 'SEMIANNUAL' | 'ANNUAL';
+
+export interface DividendSummary {
+  status: DividendStatus;
+  frequency: DividendFrequency | null;
+  trailingYield: number | null;
+  indicatedYield: number | null;
+  lastExDate: string | null;
+  yearsPaid: number;
+}
+
+export interface DividendPayment {
+  exDate: string;
+  amount: number;
+  special: boolean;
+}
+
+export interface DividendPayout {
+  /** Latest filed 12-month period: a fiscal year, or trailing twelve months from a 10-Q. */
+  periodStart: string | null;
+  periodEnd: string;
+  netIncome: number;
+  dividendsPaid: number | null;
+  buybacks: number | null;
+  payoutRatio: number | null;
+  totalPayoutRatio: number | null;
+  formType: string | null;
+  filedDate: string | null;
+  accessionNo: string | null;
+  sourceUrl: string | null;
+}
+
+export interface DividendProfile extends DividendSummary {
+  symbol: string;
+  asOf: string;
+  price: number | null;
+  priceDate: string | null;
+  paymentsPerYear: number | null;
+  lastAmount: number | null;
+  nextExpected: string | null;
+  ttmDividends: number;
+  ttmPayments: number;
+  ttmSpecial: number;
+  indicatedAnnual: number | null;
+  yearsRaised: number;
+  firstExDate: string | null;
+  annual: { year: number; total: number; payments: number }[];
+  payments: DividendPayment[];
+  payout: DividendPayout | null;
 }
 
 export interface TickerHistoryEntry {
@@ -75,7 +128,6 @@ export interface CompanyDetail {
   benchmarkSymbol: string;
   exchange: string | null;
   cik?: string | null;
-  isDemo: boolean;
   tickerHistory: TickerHistoryEntry[];
   cikHistory: CikHistoryEntry[];
   keyFacts: KeyFact[];
@@ -97,7 +149,6 @@ export interface CorporateAction {
 export interface PriceSeries {
   symbol: string;
   benchmarkSymbol: string;
-  isDemo: boolean;
   bars: PriceBar[];
   corporateActions: CorporateAction[];
 }
@@ -141,7 +192,6 @@ export interface Filing {
   amendsAccession: string | null;
   passageCount: number | null;
   factCount: number | null;
-  isDemo: boolean;
 }
 
 export interface Passage {
@@ -192,7 +242,6 @@ export interface Exposure {
     value: number;
     dimensions: Record<string, string> | null;
   } | null;
-  isDemo: boolean;
 }
 
 export interface ExposurePath {
@@ -241,7 +290,6 @@ export interface PolicyEvent {
   sourceCount: number;
   affectedCompanyCount: number;
   version: number;
-  isDemo: boolean;
 }
 
 export interface ActorRecord {
@@ -274,7 +322,6 @@ export interface EventSource {
   version: number | null;
   contentSha256: string | null;
   documentUrl: string | null;
-  isDemo: boolean;
 }
 
 export interface AffectedPath {
@@ -349,7 +396,6 @@ export interface ForecastSummary {
   version: number;
   supersedesId: number | null;
   reason: string | null;
-  isDemo: boolean;
   outcome: ForecastOutcome | null;
 }
 
@@ -457,7 +503,6 @@ export interface Evaluation {
   id: number;
   runAt: string;
   dataCutoff: string | null;
-  isDemo: boolean;
   config: {
     horizon: number;
     sampleEvery: number;
@@ -496,12 +541,15 @@ export interface AccuracyResponse {
   /** LIVE-issued forecasts only (published before their outcome window opened). */
   issued: Partial<Record<ModelKind, IssuedAccuracy>> | null;
   /** Same statistics split by issue mode; REPLAY = published after its data cutoff. */
-  issuedByMode?: Partial<Record<'LIVE' | 'REPLAY', Partial<Record<ModelKind, IssuedAccuracy>>>> | null;
+  issuedByMode?: Partial<
+    Record<'LIVE' | 'REPLAY', Partial<Record<ModelKind, IssuedAccuracy>>>
+  > | null;
 }
 
 // ---------- Strategy lab ----------
 
-export type StrategyFamily = 'BENCHMARK' | 'TREND' | 'MEAN_REVERSION' | 'FUNDAMENTAL' | 'EVENT' | 'AI';
+export type StrategyFamily =
+  'BENCHMARK' | 'TREND' | 'MEAN_REVERSION' | 'FUNDAMENTAL' | 'EVENT' | 'AI';
 
 export interface StrategyMetrics {
   start: string;
@@ -544,7 +592,13 @@ export interface StrategyResult {
   strategyKey: string;
   family: StrategyFamily;
   name: string;
-  description: { entry: string; exit: string; origin: string; sizing: string; trailingStop?: number };
+  description: {
+    entry: string;
+    exit: string;
+    origin: string;
+    sizing: string;
+    trailingStop?: number;
+  };
   params: Record<string, unknown>;
   metrics: StrategyMetrics;
   equity: EquityPoint[];
@@ -568,7 +622,6 @@ export interface StrategyRun {
     ai: Record<string, unknown>;
   };
   summary: string;
-  isDemo: boolean;
 }
 
 export interface StrategiesResponse {
@@ -623,9 +676,14 @@ export interface AiDecision {
   rank: number;
   factors: DecisionFactor[];
   ruleVotes: Record<string, boolean>;
-  model: { algorithm: string; trainedThrough: string; nTrain: number; horizon: number; codeVersion: string };
+  model: {
+    algorithm: string;
+    trainedThrough: string;
+    nTrain: number;
+    horizon: number;
+    codeVersion: string;
+  };
   issuedAt: string;
-  isDemo: boolean;
   explanation: string | null;
   explanationModel: string | null;
 }
@@ -667,7 +725,13 @@ export interface TmStock {
   /** horizon -> model kind -> P(beat the sector ETF) */
   odds?: Record<string, Partial<Record<ModelKind, number>>>;
   range?: Record<string, TmRange>;
-  ai?: { action: 'ENTER' | 'STAY_OUT'; probability: number; rank: number; weight: number; factors: DecisionFactor[] };
+  ai?: {
+    action: 'ENTER' | 'STAY_OUT';
+    probability: number;
+    rank: number;
+    weight: number;
+    factors: DecisionFactor[];
+  };
   /** horizon -> outcome, null while it is not known yet */
   actual: Record<string, TmActual | null>;
   path: { date: string; stock: number; benchmark: number | null }[];
@@ -676,9 +740,36 @@ export interface TmStock {
 export interface TmHorizonSummary {
   resolved: number;
   endDate: string | null;
-  odds?: Partial<Record<ModelKind, { n: number; hitRate: number; brier: number; brierBaseRate: number; auc: number | null; topMinusBottomExcess: number | null }>>;
-  range?: { n: number; coverage: number; naiveCoverage: number; target: number; medianAbsError: number; naiveMedianAbsError: number; avgWidth: number; naiveWidth: number };
-  ai?: { universeReturn: number; picks: string[]; picksReturn?: number; excessVsUniverse?: number; picksBeatSector?: number };
+  odds?: Partial<
+    Record<
+      ModelKind,
+      {
+        n: number;
+        hitRate: number;
+        brier: number;
+        brierBaseRate: number;
+        auc: number | null;
+        topMinusBottomExcess: number | null;
+      }
+    >
+  >;
+  range?: {
+    n: number;
+    coverage: number;
+    naiveCoverage: number;
+    target: number;
+    medianAbsError: number;
+    naiveMedianAbsError: number;
+    avgWidth: number;
+    naiveWidth: number;
+  };
+  ai?: {
+    universeReturn: number;
+    picks: string[];
+    picksReturn?: number;
+    excessVsUniverse?: number;
+    picksBeatSector?: number;
+  };
 }
 
 export interface TimeMachineRunSummary {
@@ -687,7 +778,6 @@ export interface TimeMachineRunSummary {
   runAt: string;
   dataCutoff: string;
   headline: string;
-  isDemo: boolean;
 }
 
 export interface TimeMachineRun extends TimeMachineRunSummary {
@@ -724,7 +814,6 @@ export interface UniverseCompany {
   sector: string;
   industry: string | null;
   benchmarkSymbol: string;
-  isDemo: boolean;
   active: boolean;
   memberSince: string | null;
   removedOn: string | null;
@@ -744,11 +833,39 @@ export interface UniverseResponse {
   productIndustries: string[];
 }
 
+/** @deprecated the Universe page uses CompanyProfile (GET /universe/enrich). */
 export interface SecMatch {
   symbol: string;
   cik: string;
   name: string;
   source: string;
+}
+
+/** Everything the backend could find out about a ticker from SEC EDGAR, to prefill a new universe member. */
+export interface CompanyProfile {
+  symbol: string;
+  cik: string | null;
+  name: string | null;
+  source: string | null;
+  exchange: string | null;
+  sic: string | null;
+  sicDescription: string | null;
+  formerNames: string[];
+  /** Suggested from the SIC code; null when unknown. */
+  sector: string | null;
+  benchmarkSymbol: string | null;
+  industry: string | null;
+  sectorConfidence: 'high' | 'review' | null;
+  sectorNote: string | null;
+  /** Candidate sectors when the SIC code is ambiguous (suggestion first); empty when it is clear. */
+  sectorAlternatives: { sector: string; benchmarkSymbol: string }[];
+  /** Every sector the platform knows, with its benchmark ETF. */
+  sectorBenchmarks: Record<string, string>;
+  /** Set when this CIK or ticker is already a company in the database. */
+  existing: { companyId: number; symbol: string; active: boolean } | null;
+  warnings: string[];
+  /** Whether a price provider is configured (so a price download can be started on add). */
+  priceProviderEnabled: boolean;
 }
 
 export interface AddCompanyRequest {
@@ -760,11 +877,12 @@ export interface AddCompanyRequest {
   benchmarkSymbol: string;
   memberSince: string | null;
   ingestSec: boolean;
+  syncPrices?: boolean;
 }
 
 export interface AddCompanyResponse {
   id: number;
   symbol: string;
   nextSteps: string[];
-  job?: Job;
+  jobs: Job[];
 }

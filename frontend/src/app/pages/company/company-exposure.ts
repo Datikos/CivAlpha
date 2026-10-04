@@ -51,7 +51,6 @@ import { CompanyContext } from './company-context';
                 <tr [id]="'exposure-' + e.id">
                   <td class="nowrap">
                     <span class="chip">{{ e.targetType | human }}</span> <strong>{{ e.targetCode }}</strong>
-                    <app-demo-badge [show]="e.isDemo" />
                   </td>
                   <td>{{ e.channel | human }}</td>
                   <td class="num">

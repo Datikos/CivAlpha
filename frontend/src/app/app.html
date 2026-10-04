@@ -1,0 +1,175 @@
+<a class="skip" href="#main">Skip to content</a>
+
+<!-- Narrow screens: top bar with menu + search -->
+<header class="topbar">
+  <button
+    type="button"
+    class="icon-btn"
+    (click)="drawer.set(true)"
+    aria-label="Open menu"
+    aria-controls="sidebar"
+    [attr.aria-expanded]="drawer()"
+  >
+    <app-icon name="menu" [size]="20" />
+  </button>
+  <a routerLink="/" class="brand" aria-label="CivAlpha home">
+    <span class="brand-mark"
+      ><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
+        <path
+          d="M3 18 L9 11 L13 14 L21 5"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.4"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+        <circle cx="21" cy="5" r="2.2" fill="currentColor" /></svg
+    ></span>
+    <span class="brand-text">CivAlpha</span>
+  </a>
+  <button type="button" class="icon-btn" (click)="palette.set(true)" aria-label="Search">
+    <app-icon name="search" [size]="20" />
+  </button>
+</header>
+
+<div class="scrim" (click)="drawer.set(false)" aria-hidden="true"></div>
+
+<aside id="sidebar" class="sidebar" aria-label="Main">
+  <div class="side-head">
+    <a routerLink="/" class="brand" aria-label="CivAlpha home" title="CivAlpha">
+      <span class="brand-mark"
+        ><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            d="M3 18 L9 11 L13 14 L21 5"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.4"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+          <circle cx="21" cy="5" r="2.2" fill="currentColor" /></svg
+      ></span>
+      <span class="brand-text">CivAlpha</span>
+    </a>
+    <button
+      type="button"
+      class="icon-btn only-mobile"
+      (click)="drawer.set(false)"
+      aria-label="Close menu"
+    >
+      <app-icon name="close" [size]="20" />
+    </button>
+  </div>
+
+  <button
+    type="button"
+    class="search-btn"
+    (click)="palette.set(true)"
+    title="Search pages and companies"
+  >
+    <app-icon name="search" [size]="17" />
+    <span class="search-text">Search…</span>
+    <kbd class="search-kbd">{{ isMac ? '⌘' : 'Ctrl' }} K</kbd>
+  </button>
+
+  <nav class="nav">
+    @for (g of groups; track g.label) {
+      <div class="nav-group">
+        <div class="nav-group-label">{{ g.label }}</div>
+        @for (l of g.links; track l.path) {
+          <a
+            class="nav-link"
+            [routerLink]="l.path"
+            routerLinkActive="active"
+            [routerLinkActiveOptions]="{ exact: l.exact }"
+            [title]="l.label"
+          >
+            <app-icon [name]="l.icon" />
+            <span class="nav-text">{{ l.label }}</span>
+          </a>
+        }
+      </div>
+    }
+  </nav>
+
+  <div class="side-foot">
+    <div class="theme" role="group" aria-label="Theme">
+      <button
+        type="button"
+        [class.on]="theme.pref() === 'light'"
+        (click)="setTheme('light')"
+        title="Light theme"
+        aria-label="Light theme"
+      >
+        <app-icon name="sun" [size]="16" />
+      </button>
+      <button
+        type="button"
+        [class.on]="theme.pref() === 'system'"
+        (click)="setTheme('system')"
+        title="Follow the system theme"
+        aria-label="System theme"
+      >
+        <app-icon name="monitor" [size]="16" />
+      </button>
+      <button
+        type="button"
+        [class.on]="theme.pref() === 'dark'"
+        (click)="setTheme('dark')"
+        title="Dark theme"
+        aria-label="Dark theme"
+      >
+        <app-icon name="moon" [size]="16" />
+      </button>
+    </div>
+    <button
+      type="button"
+      class="icon-btn only-desktop rail-btn"
+      (click)="toggleRail()"
+      [title]="collapsed() ? 'Expand sidebar' : 'Collapse sidebar'"
+      [attr.aria-label]="collapsed() ? 'Expand sidebar' : 'Collapse sidebar'"
+      [attr.aria-pressed]="collapsed()"
+    >
+      <app-icon name="arrow" [size]="17" />
+    </button>
+  </div>
+</aside>
+
+<div class="content">
+  @if (meta.resource.error()) {
+    <div class="api-down" role="alert">
+      The CivAlpha API is not reachable right now. Pages will show errors until the backend is
+      available.
+    </div>
+  }
+
+  <main id="main" class="main">
+    <router-outlet />
+  </main>
+
+  <footer class="footer">
+    @if (meta.meta(); as m) {
+      <ul class="disclaimers">
+        @for (d of m.disclaimers; track $index) {
+          <li>{{ d }}</li>
+        }
+      </ul>
+      <p class="muted small">
+        Data cutoff {{ m.dataCutoff ?? '—' }} · SEC EDGAR
+        {{ m.secConfigured ? 'configured' : 'not configured' }} · LLM extraction
+        {{ m.llmEnabled ? 'enabled' : 'disabled' }}
+      </p>
+    } @else {
+      <ul class="disclaimers">
+        <li>Research software. Not investment advice.</li>
+      </ul>
+    }
+    <p class="muted small">
+      Recorded facts are shown neutrally; model estimates carry an
+      <span class="badge badge-estimated">ESTIMATED</span> badge; forecasts are shown as
+      <span class="prob">probabilities</span> with horizon, interval and publication time.
+    </p>
+  </footer>
+</div>
+
+<app-command-palette [(open)]="palette" />

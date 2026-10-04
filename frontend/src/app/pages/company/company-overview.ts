@@ -6,7 +6,7 @@ import { dateMs, isoDay } from '../../charts/chart-utils';
 import { apiUrl, valueOf } from '../../core/api';
 import { FORMAT_PIPES, fmtSignedPct } from '../../core/format';
 import { latestByModel } from '../../core/forecast-utils';
-import { ForecastSummary, MODEL_KINDS, PriceSeries } from '../../core/models';
+import { DividendProfile, ForecastSummary, MODEL_KINDS, PriceSeries } from '../../core/models';
 import { UI } from '../../shared/ui';
 import { CompanyContext } from './company-context';
 
@@ -28,7 +28,7 @@ const RANGE_DAYS: Record<Range, number> = { '6M': 183, '1Y': 365, '3Y': 3 * 365,
                 <div style="display: flex; justify-content: space-between; gap: 0.5rem; flex-wrap: wrap">
                   <app-model-tag [kind]="cell.kind" />
                   @if (cell.f; as f) {
-                    <span><app-issue-mode [mode]="f.issueMode" /> <app-demo-badge [show]="f.isDemo" /></span>
+                    <span><app-issue-mode [mode]="f.issueMode" /></span>
                   }
                 </div>
                 @if (cell.f; as f) {
@@ -90,6 +90,98 @@ const RANGE_DAYS: Record<Range, number> = { '6M': 183, '1Y': 365, '3Y': 3 * 365,
                   <tbody>
                     @for (a of actions(); track $index) {
                       <tr><td>{{ a.exDate }}</td><td>{{ a.type | human }}</td><td class="num">{{ a.value ?? '—' }}</td></tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          }
+        }
+      </div>
+
+      <div class="card">
+        <div class="filters" style="justify-content: space-between; margin-bottom: 0.5rem">
+          <h3 style="margin: 0">Dividends</h3>
+          @if (dv(); as d) {
+            <app-dividend-badge [d]="d" />
+          }
+        </div>
+        <app-status [res]="div" what="dividends" />
+        @if (dv(); as d) {
+          @if (d.status === 'NONE') {
+            <p class="muted">No cash dividend recorded in the price history.</p>
+          } @else {
+            <div class="stats">
+              <div class="stat" title="Cash dividends with an ex-date in the last 12 months / last close">
+                <div class="stat-label">Trailing 12-month yield</div>
+                <div class="stat-value">{{ d.trailingYield | pct: 2 }}</div>
+                <div class="small muted">
+                  {{ d.ttmDividends | usd }} in {{ d.ttmPayments }} payment{{ d.ttmPayments === 1 ? '' : 's' }}
+                  @if (d.ttmSpecial) { (incl. {{ d.ttmSpecial | usd }} special) }
+                </div>
+              </div>
+              <div class="stat" title="Latest regular payment × payments per year / last close (estimate)">
+                <div class="stat-label">Indicated yield <span class="badge badge-estimated">EST</span></div>
+                <div class="stat-value">{{ d.indicatedYield | pct: 2 }}</div>
+                <div class="small muted">{{ d.indicatedAnnual | usd }} a year</div>
+              </div>
+              <div class="stat">
+                <div class="stat-label">Last ex-date</div>
+                <div class="stat-value">{{ d.lastExDate }}</div>
+                <div class="small muted">
+                  {{ d.lastAmount | usd }} per share
+                  @if (d.nextExpected) { · next ~{{ d.nextExpected }} }
+                </div>
+              </div>
+              <div class="stat" title="Consecutive calendar years with a dividend / with a higher last regular payment than the year before">
+                <div class="stat-label">Years paid / raised</div>
+                <div class="stat-value">{{ d.yearsPaid }} / {{ d.yearsRaised }}</div>
+                <div class="small muted">recorded since {{ d.firstExDate }}</div>
+              </div>
+            </div>
+          }
+
+          @if (d.payout; as po) {
+            <div class="fact-block">
+              <p class="small" style="margin: 0 0 0.4rem">
+                <span class="badge badge-fact">FILED</span>
+                12 months {{ po.periodStart }} → {{ po.periodEnd }} ({{ po.formType ?? '—' }} filed {{ po.filedDate ?? '—' }})
+                @if (po.sourceUrl) {
+                  · <a [href]="po.sourceUrl" target="_blank" rel="noopener noreferrer">source ↗</a>
+                }
+              </p>
+              <dl class="kv">
+                <dt>Net income</dt><dd>{{ po.netIncome | usd }}</dd>
+                <dt>Dividends paid</dt><dd>{{ po.dividendsPaid | usd }}</dd>
+                <dt>Share buybacks</dt><dd>{{ po.buybacks | usd }}</dd>
+                <dt title="Dividends paid / net income">Payout ratio</dt>
+                <dd>{{ po.payoutRatio | pct }} @if (po.netIncome <= 0 && po.dividendsPaid) { <span class="small muted">not meaningful with a loss</span> }</dd>
+                <dt title="(Dividends + buybacks) / net income">Total payout ratio</dt><dd>{{ po.totalPayoutRatio | pct }}</dd>
+              </dl>
+            </div>
+          }
+
+          @if (d.payments.length) {
+            <details class="chart-table">
+              <summary>Payment history ({{ d.payments.length }}, per current share)</summary>
+              <div class="table-wrap">
+                <table class="table compact">
+                  <thead><tr><th>Year</th><th class="num">Payments</th><th class="num">Total per share</th></tr></thead>
+                  <tbody>
+                    @for (y of annualDesc(); track y.year) {
+                      <tr><td>{{ y.year }}</td><td class="num">{{ y.payments }}</td><td class="num">{{ y.total | fixed: 4 }}</td></tr>
+                    }
+                  </tbody>
+                </table>
+                <table class="table compact">
+                  <thead><tr><th>Ex-date</th><th class="num">Amount</th><th></th></tr></thead>
+                  <tbody>
+                    @for (p of d.payments; track p.exDate) {
+                      <tr>
+                        <td>{{ p.exDate }}</td>
+                        <td class="num">{{ p.amount | fixed: 4 }}</td>
+                        <td>@if (p.special) { <span class="badge">special</span> }</td>
+                      </tr>
                     }
                   </tbody>
                 </table>
@@ -194,6 +286,14 @@ export class CompanyOverview {
     const l = latestByModel(valueOf(this.fc) ?? []);
     return MODEL_KINDS.map((kind) => ({ kind, f: l[kind] ?? null }));
   });
+
+  protected readonly div = httpResource<DividendProfile>(() => {
+    const s = this.ctx.apiSymbol();
+    return s ? apiUrl.dividends(s) : undefined;
+  });
+
+  protected readonly dv = computed(() => valueOf(this.div));
+  protected readonly annualDesc = computed(() => [...(this.dv()?.annual ?? [])].reverse());
 
   protected readonly actions = computed(() => valueOf(this.prices)?.corporateActions ?? []);
 

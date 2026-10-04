@@ -1,18 +1,7 @@
 import { Component, computed, input } from '@angular/core';
 import { errorMessage } from '../core/api';
 import { fmtPct, fmtUtc, humanize } from '../core/format';
-import { ForecastSummary, ModelKind } from '../core/models';
-
-/** Small "DEMO" badge for any record with isDemo=true. */
-@Component({
-  selector: 'app-demo-badge',
-  template: `@if (show()) {
-    <span class="badge badge-demo" title="Synthetic demonstration data — not real market data">DEMO</span>
-  }`,
-})
-export class DemoBadge {
-  readonly show = input<boolean | null | undefined>(false);
-}
+import { DividendSummary, ForecastSummary, ModelKind } from '../core/models';
 
 /** LIVE vs REPLAY issue mode. */
 @Component({
@@ -57,6 +46,32 @@ export class BasisBadge {
 })
 export class EvidenceBadge {
   readonly status = input<string | null | undefined>(null);
+}
+
+/** Dividend payer status from the recorded cash dividends: frequency when regular. */
+@Component({
+  selector: 'app-dividend-badge',
+  template: `@switch (d()?.status) {
+      @case ('REGULAR') {
+        <span class="badge badge-ok" [title]="'Pays ' + freq() + ' dividends; last ex-date ' + d()!.lastExDate">{{ freq() }}</span>
+      }
+      @case ('IRREGULAR') {
+        <span class="badge" title="Paid a dividend in the last 12 months, but not on a steady schedule">irregular</span>
+      }
+      @case ('SUSPENDED') {
+        <span class="badge badge-fail" [title]="'The next payment is overdue; last ex-date ' + d()!.lastExDate">suspended</span>
+      }
+      @case ('NONE') {
+        <span class="muted small" title="No cash dividend recorded in the price history">none</span>
+      }
+      @default {
+        <span class="muted">—</span>
+      }
+    }`,
+})
+export class DividendBadge {
+  readonly d = input<DividendSummary | null | undefined>(null);
+  protected readonly freq = computed(() => humanize(this.d()?.frequency).toLowerCase());
 }
 
 /** Model identity: a line key in the series color + name (text never wears the series color). */
@@ -167,7 +182,6 @@ export class ForecastProb {
 }
 
 export const UI = [
-  DemoBadge,
   IssueModeBadge,
   BasisBadge,
   EvidenceBadge,
@@ -175,4 +189,5 @@ export const UI = [
   StatusMessage,
   IntervalBar,
   ForecastProb,
+  DividendBadge,
 ] as const;

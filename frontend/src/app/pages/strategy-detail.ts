@@ -22,7 +22,7 @@ import { FAMILY_LABEL, REFERENCE_KEY, equityFormat, equitySeries, supported } fr
       <div class="page-head">
         <div>
           <h1>{{ s.name }}</h1>
-          <p class="muted">{{ familyLabel[s.family] ?? s.family }} · {{ s.description.origin }} <app-demo-badge [show]="d.run.isDemo" /></p>
+          <p class="muted">{{ familyLabel[s.family] ?? s.family }} · {{ s.description.origin }}</p>
         </div>
       </div>
 

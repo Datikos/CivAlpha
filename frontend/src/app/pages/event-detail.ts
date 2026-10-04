@@ -15,7 +15,7 @@ import { UI } from '../shared/ui';
     @if (e(); as e) {
       <div class="page-head">
         <div>
-          <h1>{{ e.title }} <app-demo-badge [show]="e.isDemo" /></h1>
+          <h1>{{ e.title }}</h1>
           <p class="muted">
             {{ e.category | human }} · {{ e.eventType | human }}{{ e.actorName ? ' · ' + e.actorName : '' }} ·
             <app-evidence-badge [status]="e.evidenceStatus" />
@@ -132,7 +132,6 @@ import { UI } from '../shared/ui';
                     } @else {
                       {{ s.title || '—' }}
                     }
-                    <app-demo-badge [show]="s.isDemo" />
                     @if (s.accessionNo) {
                       <div class="small mono">{{ s.accessionNo }}</div>
                     }

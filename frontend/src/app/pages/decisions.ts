@@ -61,7 +61,6 @@ const RULE_LABEL: Record<string, string> = {
             }
             <span class="chip">Invested: {{ invested() | pct: 0 }}</span>
           </span>
-          <app-demo-badge [show]="decisions()[0].isDemo" />
         </div>
         <p class="small muted">
           Enter when p ≥ {{ decisions()[0].entryP | pct: 0 }} and the stock ranks in the top {{ maxPositions() }}; exit when
