@@ -206,7 +206,7 @@ out-of-sample window after costs. Results are sorted by Sharpe.
      "verdict": "Beats buy-and-hold after costs: NOT supported"}
   ] }
 ```
-Families: `BENCHMARK`, `TREND`, `MEAN_REVERSION`, `FUNDAMENTAL`, `EVENT`, `AI`. `excess*` compare daily net returns with
+Families: `BENCHMARK`, `TREND`, `MEAN_REVERSION`, `FUNDAMENTAL`, `EVENT`, `AI`. Report-based strategies are `QUALITY_GROWTH`, `PEAD_SUE`, `VALUE_EY`, `GROSS_PROFIT` and `AI_FUND` (the AI on the financial-report profile only); decision factors of kind `FUNDAMENTAL` come from that profile. `excess*` compare daily net returns with
 `EW_BUY_HOLD` (annualized, 95% stationary block-bootstrap CI). `deflatedSharpe` is the Deflated Sharpe Ratio of that excess,
 deflated for `nCandidates` strategies. A verdict says SUPPORTED only with at least 3 years out of sample, an excess CI above
 0 and DSR ≥ 0.95. `equity` is sampled weekly. `run` is null and `results` empty before the first backtest.

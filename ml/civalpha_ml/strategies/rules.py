@@ -83,6 +83,31 @@ def _quality_growth(p: MarketPanel) -> pd.DataFrame:
     return out
 
 
+def _pead(p: MarketPanel, threshold: float = 1.0, hold: int = 60) -> pd.DataFrame:
+    """Post-earnings-announcement drift: buy on the day a report with a large positive earnings surprise
+    becomes public, hold for `hold` trading days."""
+    f = p.fundamentals()
+    enter = f["new_filing"] & (f["sue"] >= threshold)
+    never = pd.DataFrame(False, index=enter.index, columns=enter.columns)
+    return state_machine(enter, never, max_hold=hold)
+
+
+def _top_by(p: MarketPanel, score: pd.DataFrame, top: int, require_positive: bool = False) -> pd.DataFrame:
+    s = score.where(p.member)
+    if require_positive:
+        s = s.where(s > 0)
+    ranks = s.rank(axis=1, ascending=False, method="first")
+    return hold_between_rebalances(ranks <= top, period_starts(p.calendar, "M"))
+
+
+def _value_ey(p: MarketPanel, top: int = 5) -> pd.DataFrame:
+    return _top_by(p, p.fundamentals()["earnings_yield"], top, require_positive=True)
+
+
+def _gross_profitability(p: MarketPanel, top: int = 5) -> pd.DataFrame:
+    return _top_by(p, p.fundamentals()["gp_assets"], top)
+
+
 def _event_avoid(p: MarketPanel, trade_threshold: float = 0.03, rate_threshold: float = 0.01) -> pd.DataFrame:
     """Hold every member, except while a recent official tariff or rate decision hurts it more than a threshold.
 
@@ -131,6 +156,18 @@ def rule_strategies() -> list[Strategy]:
         Strategy("QUALITY_GROWTH", "FUNDAMENTAL", "Quality & growth filter (SEC filings)",
                  "Latest filing shows revenue growth > 0, gross margin not down year over year, leverage ≤ universe median",
                  "A newer filing fails the filter", "Quality/growth screens using as-filed XBRL data", "EQUAL", _quality_growth),
+        Strategy("PEAD_SUE", "FUNDAMENTAL", "Post-earnings drift (earnings surprise)",
+                 "The day a quarterly/annual report becomes public with a standardized earnings surprise ≥ 1 "
+                 "(EPS vs the same quarter last year, scaled by its usual variation)", "After 60 trading days",
+                 "Post-earnings-announcement drift (Bernard & Thomas 1989)", "SLEEVE", _pead, {"sueThreshold": 1.0, "holdDays": 60}),
+        Strategy("VALUE_EY", "FUNDAMENTAL", "Value: highest earnings yield (top 5)",
+                 "Monthly: buy the 5 stocks with the highest positive earnings yield (net income of the last 4 reported "
+                 "quarters / market cap)", "Sold at the next monthly rebalance if no longer in the top 5",
+                 "Value investing (Basu 1977; Fama & French 1992)", "EQUAL", _value_ey, {"top": 5, "rebalance": "monthly"}),
+        Strategy("GROSS_PROFIT", "FUNDAMENTAL", "Profitability: gross profit / assets (top 5)",
+                 "Monthly: buy the 5 stocks with the highest gross profit (last 4 quarters) per dollar of assets",
+                 "Sold at the next monthly rebalance if no longer in the top 5",
+                 "Gross profitability premium (Novy-Marx 2013)", "EQUAL", _gross_profitability, {"top": 5, "rebalance": "monthly"}),
         Strategy("EVENT_AVOID", "EVENT", "Avoid tariff / rate-shock stocks",
                  "Own every member", "Step aside while a recent official tariff or rate decision hits the company "
                  "(trade shock < −0.03 or rate shock < −0.01); return once it fades",

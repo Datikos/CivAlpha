@@ -10,7 +10,7 @@ import pandas as pd
 from .. import db, pit
 from ..features import DataBundle
 from . import backtest, stats
-from .ai import (AI_FEATURES, AI_KEY, ALGORITHM, CODE_VERSION, AiConfig, ai_strategies, dataset, decide_positions, explain,
+from .ai import (AI_FEATURES, AI_KEY, FUND_MODEL_FEATURES, ALGORITHM, CODE_VERSION, AiConfig, ai_strategies, dataset, decide_positions, explain,
                  new_model, walk_forward_probabilities)
 from .base import Strategy
 from .panel import MarketPanel
@@ -41,10 +41,13 @@ def _is_demo(bundle: DataBundle) -> bool:
 def run_lab(bundle: DataBundle, cfg: LabConfig) -> dict:
     panel = MarketPanel.from_bundle(bundle)
     ai_cfg = cfg.ai()
-    wf = walk_forward_probabilities(panel, ai_cfg)
+    data = dataset(panel, ai_cfg)
+    wf = walk_forward_probabilities(panel, ai_cfg, data)
     oos = wf["oos_start_idx"]
     ai_w, _ = decide_positions(wf["prob"], panel.member, ai_cfg, start_idx=oos)
-    strategies = rule_strategies() + ai_strategies(ai_cfg, ai_w)
+    wf_fund = walk_forward_probabilities(panel, ai_cfg, data, features=FUND_MODEL_FEATURES)
+    fund_w, _ = decide_positions(wf_fund["prob"], panel.member, ai_cfg, start_idx=oos)
+    strategies = rule_strategies() + ai_strategies(ai_cfg, ai_w, fund_w)
     start = oos + 1  # first decision is at close(oos), first trade at close(oos + 1)
     if start >= len(panel.calendar) - 1:
         raise ValueError("not enough out-of-sample history to backtest strategies")
