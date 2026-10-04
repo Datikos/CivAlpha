@@ -137,6 +137,14 @@ def insert_strategy_run(engine: Engine, lab: dict, is_demo: bool) -> int:
     return rid
 
 
+def insert_time_machine(engine: Engine, res: dict, is_demo: bool) -> int:
+    with engine.begin() as c:
+        return int(c.execute(text("""
+            INSERT INTO time_machine_run (as_of_date, data_cutoff, headline, result, is_demo)
+            VALUES (:d, :dc, :h, CAST(:r AS jsonb), :demo) RETURNING id"""),
+            dict(d=res["asOfDate"], dc=res["dataCutoff"], h=res["headline"], r=json.dumps(_clean(res)), demo=is_demo)).scalar_one())
+
+
 def previous_ai_holdings(engine: Engine, strategy_key: str, before) -> set[int]:
     """Companies the AI held after its latest decision dated before `before` (ENTER or HOLD)."""
     df = _q(engine, """SELECT DISTINCT ON (company_id) company_id, action FROM strategy_decision

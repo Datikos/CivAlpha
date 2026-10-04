@@ -234,6 +234,38 @@ in probability compared with the feature at its training median. `explanation` i
 ENTER/EXIT when `CIVALPHA_LLM_PROVIDER=anthropic`; it is null otherwise and never changes the decision. Decision rows are
 append-only (UPDATE/DELETE are rejected by the database).
 
+## Time machine
+
+`GET /api/timemachine` — latest 50 runs: `id`, `asOfDate`, `runAt`, `dataCutoff`, `headline`, `isDemo`.
+
+`GET /api/timemachine/{id}` — one run. Everything under `result.stocks[]` except `actual` and `path` was decided at the
+close of `asOfDate` with only the data known then; `actual` and `path` are the facts that followed.
+```json
+{ "id": 4, "asOfDate": "2025-06-30", "runAt": "2026-10-04T06:38:48Z", "dataCutoff": "2026-10-02", "headline": "...", "isDemo": false,
+  "result": {
+    "horizons": [5, 10, 21, 63],
+    "stocks": [
+      {"companyId": 1, "symbol": "AAPL", "name": "Apple Inc.", "benchmarkSymbol": "XLK", "closeAsOf": 205.17,
+       "odds": {"21": {"BASELINE": 0.48, "AUGMENTED": 0.46}},
+       "range": {"21": {"q10": -0.07, "q50": 0.01, "q90": 0.09, "naiveQ10": -0.08, "naiveQ50": 0.01, "naiveQ90": 0.11}},
+       "ai": {"action": "ENTER", "probability": 0.57, "rank": 2, "weight": 0.125, "factors": ["..."]},
+       "actual": {"21": {"stockReturn": 0.05, "benchmarkReturn": 0.03, "excess": 0.02, "beat": true,
+                         "execReturn": 0.04, "execBenchmarkReturn": 0.03, "endDate": "2025-07-30"}, "63": null},
+       "path": [{"date": "2025-06-30", "stock": 0.0, "benchmark": 0.0}]}
+    ],
+    "summary": {"21": {"resolved": 24, "endDate": "2025-07-30",
+                       "odds": {"AUGMENTED": {"n": 24, "hitRate": 0.54, "brier": 0.26, "brierBaseRate": 0.262, "auc": 0.55, "topMinusBottomExcess": 0.01}},
+                       "range": {"n": 24, "coverage": 0.92, "naiveCoverage": 0.96, "target": 0.8, "medianAbsError": 0.04,
+                                 "naiveMedianAbsError": 0.05, "avgWidth": 0.15, "naiveWidth": 0.19},
+                       "ai": {"universeReturn": 0.051, "picks": ["AAPL", "QCOM"], "picksReturn": 0.039, "excessVsUniverse": -0.012, "picksBeatSector": 1}}},
+    "models": {"odds21": {"nTrain": 1650, "baseRate": 0.49, "trainedThrough": "2025-05-30"}, "...": "..."} } }
+```
+* `odds`: the BASELINE and AUGMENTED logistic models, refitted per horizon on labels resolved by the as-of close.
+* `ai`: the AI strategy's decision that day, starting with no holdings. Returns are measured from the next close (`execReturn`).
+* `range`: 10/50/90% quantiles of the total return (quantile gradient boosting); `naive*` are the unconditional
+  training quantiles.
+* `actual[h]` is `null` while that horizon has not passed.
+
 ## Admin / pipeline
 When the server sets `CIVALPHA_ADMIN_TOKEN`, every `/api/admin/**` request and every non-GET `/api` request
 (e.g. `POST /api/events`) must send `X-Admin-Token: <token>` (or `Authorization: Bearer <token>`); otherwise the
@@ -245,6 +277,8 @@ response is `401`. `GET /api/meta` reports `adminTokenRequired`.
 * `POST /api/admin/forecasts/issue` body `{"asOfDate": "2026-09-30"}` (optional) → job
 * `POST /api/admin/evaluate` → job
 * `POST /api/admin/outcomes/resolve` → job
+* `POST /api/admin/timemachine` body `{"asOfDate": "2025-06-30"}` → job — forecast as of that past close with only the
+  data known then, then score it against what followed (400 for today or a future date)
 * `POST /api/admin/strategies/backtest` → job — backtest every strategy and store a new run (also part of every pipeline run)
 * `POST /api/admin/strategies/decide` body `{"asOfDate": "2026-09-30"}` (optional) → job — store the AI's decisions for
   that trading day and explain ENTER/EXIT actions when a language model is configured

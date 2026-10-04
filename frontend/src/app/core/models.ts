@@ -636,6 +636,72 @@ export interface DecisionsResponse {
   decisions: AiDecision[];
 }
 
+// ---------- Time machine ----------
+
+export interface TmActual {
+  stockReturn: number;
+  benchmarkReturn: number;
+  excess: number;
+  beat: boolean;
+  /** entered at the next close, as a trade would be */
+  execReturn: number | null;
+  execBenchmarkReturn: number | null;
+  endDate: string;
+}
+
+export interface TmRange {
+  q10: number;
+  q50: number;
+  q90: number;
+  naiveQ10: number;
+  naiveQ50: number;
+  naiveQ90: number;
+}
+
+export interface TmStock {
+  companyId: number;
+  symbol: string;
+  name: string;
+  benchmarkSymbol: string;
+  closeAsOf: number | null;
+  /** horizon -> model kind -> P(beat the sector ETF) */
+  odds?: Record<string, Partial<Record<ModelKind, number>>>;
+  range?: Record<string, TmRange>;
+  ai?: { action: 'ENTER' | 'STAY_OUT'; probability: number; rank: number; weight: number; factors: DecisionFactor[] };
+  /** horizon -> outcome, null while it is not known yet */
+  actual: Record<string, TmActual | null>;
+  path: { date: string; stock: number; benchmark: number | null }[];
+}
+
+export interface TmHorizonSummary {
+  resolved: number;
+  endDate: string | null;
+  odds?: Partial<Record<ModelKind, { n: number; hitRate: number; brier: number; brierBaseRate: number; auc: number | null; topMinusBottomExcess: number | null }>>;
+  range?: { n: number; coverage: number; naiveCoverage: number; target: number; medianAbsError: number; naiveMedianAbsError: number; avgWidth: number; naiveWidth: number };
+  ai?: { universeReturn: number; picks: string[]; picksReturn?: number; excessVsUniverse?: number; picksBeatSector?: number };
+}
+
+export interface TimeMachineRunSummary {
+  id: number;
+  asOfDate: string;
+  runAt: string;
+  dataCutoff: string;
+  headline: string;
+  isDemo: boolean;
+}
+
+export interface TimeMachineRun extends TimeMachineRunSummary {
+  result: {
+    asOfDate: string;
+    horizons: number[];
+    stocks: TmStock[];
+    summary: Record<string, TmHorizonSummary>;
+    models: Record<string, Record<string, unknown>>;
+    headline: string;
+    dataCutoff: string;
+  };
+}
+
 // ---------- Admin ----------
 
 export interface Job {

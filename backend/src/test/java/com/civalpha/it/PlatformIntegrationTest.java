@@ -76,7 +76,7 @@ class PlatformIntegrationTest {
                 "/api/companies/META/filings", "/api/companies/META/financials", "/api/companies/META/exposures",
                 "/api/events", "/api/events?category=TRADE_TARIFF", "/api/forecasts/current", "/api/forecasts/history",
                 "/api/forecasts/history?symbol=META&modelKind=AUGMENTED", "/api/accuracy", "/api/admin/jobs",
-                "/api/strategies", "/api/decisions", "/api/decisions?date=2026-01-02")) {
+                "/api/strategies", "/api/decisions", "/api/decisions?date=2026-01-02", "/api/timemachine")) {
             mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(url))
                     .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
         }
@@ -84,6 +84,12 @@ class PlatformIntegrationTest {
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isNotFound());
         mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/strategies/NOPE"))
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isNotFound());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/timemachine/999999"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isNotFound());
+        // the time machine only looks back: a future date is rejected before any work starts
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/admin/timemachine")
+                        .contentType("application/json").content("{\"asOfDate\":\"2999-01-01\"}"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isBadRequest());
         // an event without original evidence is rejected
         mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/events")
                         .contentType("application/json").content("{\"category\":\"TRADE_TARIFF\",\"title\":\"x\",\"eventDate\":\"2026-01-01\",\"publishedAt\":\"2026-01-01T00:00:00Z\"}"))
