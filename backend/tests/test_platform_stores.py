@@ -74,8 +74,7 @@ class StubLlm(LlmProvider):
 def decision(tdb, date, action):
     return {"companyId": meta(tdb), "symbol": "META", "name": "Meta Platforms, Inc.", "asOfDate": date, "strategyKey": "AI_GBM",
             "action": action, "probability": 0.61, "entryP": 0.55, "exitP": 0.48, "weight": 0.125, "rank": 1, "maxPositions": 8,
-            "factors": [{"feature": "mom_12_1", "contribution": 0.04}], "ruleVotes": {"SMA_50_200": True}, "model": {"horizon": 10},
-            "isDemo": False}
+            "factors": [{"feature": "mom_12_1", "contribution": 0.04}], "ruleVotes": {"SMA_50_200": True}, "model": {"horizon": 10}}
 
 
 def test_ai_decisions_are_append_only_and_explanations_never_block_them(universe, tdb):

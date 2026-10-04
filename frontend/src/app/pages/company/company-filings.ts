@@ -125,7 +125,6 @@ interface SeriesView {
                 <tr [class.row-dim]="afterAsOf(f)">
                   <td class="nowrap">
                     <a [routerLink]="['/filings', f.id]"><strong>{{ f.formType }}</strong></a>
-                    <app-demo-badge [show]="f.isDemo" />
                     @if (f.amendsAccession) {
                       <div class="small muted">amends {{ f.amendsAccession }}</div>
                     }

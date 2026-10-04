@@ -63,7 +63,7 @@ function isoDaysAgo(n: number): string {
     @if (run.hasValue() && data(); as r) {
       <div class="verdict" role="note"><strong>As of {{ r.asOfDate }}.</strong> {{ r.headline }}</div>
       <p class="small muted">
-        Run {{ r.runAt | utc }} with data through {{ r.dataCutoff }} <app-demo-badge [show]="r.isDemo" />
+        Run {{ r.runAt | utc }} with data through {{ r.dataCutoff }}
       </p>
 
       <div class="chips horizon" role="group" aria-label="Horizon">

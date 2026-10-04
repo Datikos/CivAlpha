@@ -31,10 +31,6 @@ def _benchmarks(log: Log) -> None:
         log(warning)
 
 
-def demo_load(params: dict, log: Log) -> None:
-    Pipeline().load_demo(log)
-
-
 def pipeline_run(params: dict, log: Log) -> None:
     Pipeline().run_configured(log)
 
@@ -68,10 +64,13 @@ def issue_forecasts(params: dict, log: Log) -> None:
     log(f"{r.created} created, {r.unchanged} unchanged")
 
 
+def _require_universe() -> None:
+    if not UniverseService().any_companies():
+        raise Problem("The universe is empty. Add companies on the Universe page first.")
+
+
 def price_sync(params: dict, log: Log) -> None:
-    u = UniverseService()
-    if not u.any_companies():
-        log(f"universe: {u.load(False)} companies created from config/universe.yml")
+    _require_universe()
     PriceSyncService().sync(log)
 
 
@@ -83,18 +82,15 @@ def sec_ingest(params: dict, log: Log) -> None:
     cid = params.get("companyId") or TickerResolver().company_ever(params["symbol"])
     if cid is None:
         raise Problem(f"unknown symbol {params.get('symbol')}")
-    FilingIngestionService().ingest(SecClientFactory().configured(), int(cid), False, log)
+    FilingIngestionService().ingest(SecClientFactory().configured(), int(cid), log)
 
 
 def price_import(params: dict, log: Log) -> None:
     path = Path(params["path"])
     try:
-        u = UniverseService()
-        if not u.any_companies():
-            # symbols resolve through the configured universe; on a fresh database load it first
-            log(f"universe: {u.load(False)} companies created from config/universe.yml")
+        _require_universe()    # symbols resolve through the universe's ticker history
         market = MarketDataService()
-        r = market.import_prices(path.read_bytes(), params.get("file") or "upload.csv", params.get("provider") or "CSV upload", False)
+        r = market.import_prices(path.read_bytes(), params.get("file") or "upload.csv", params.get("provider") or "CSV upload")
         log(f"{r.rows} rows, {r.inserted} inserted, {r.unchanged} unchanged, {r.revised} corrected (previous values archived), "
             f"unknown symbols {java_set(r.unknown_symbols)}")
         missing = market.missing_benchmarks()
@@ -108,7 +104,6 @@ def price_import(params: dict, log: Log) -> None:
 
 
 TASKS = {
-    "DEMO_LOAD": demo_load,
     "PIPELINE_RUN": pipeline_run,
     "EVALUATE": evaluate,
     "STRATEGY_BACKTEST": strategy_backtest,

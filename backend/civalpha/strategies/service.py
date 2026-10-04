@@ -33,10 +33,6 @@ class LabConfig:
         return AiConfig(entry_p=self.entry_p, exit_p=self.exit_p, max_positions=self.max_positions)
 
 
-def _is_demo(bundle: DataBundle) -> bool:
-    return bool(bundle.companies["is_demo"].any()) if "is_demo" in bundle.companies else False
-
-
 # --------------------------------------------------------------------------- backtest
 def run_lab(bundle: DataBundle, cfg: LabConfig) -> dict:
     panel = MarketPanel.from_bundle(bundle)
@@ -125,7 +121,7 @@ def backtest_strategies(engine, cfg: LabConfig | None = None) -> dict:
     cfg = cfg or LabConfig()
     bundle = db.load_bundle(engine)
     lab = run_lab(bundle, cfg)
-    run_id = db.insert_strategy_run(engine, lab, _is_demo(bundle))
+    run_id = db.insert_strategy_run(engine, lab)
     return {"runId": run_id, "summary": lab["summary"],
             "results": [{"key": r["key"], "verdict": r["verdict"], **{k: db._clean(r["metrics"].get(k)) for k in ("cagr", "sharpe", "maxDrawdown")}}
                         for r in lab["results"]]}
@@ -141,10 +137,10 @@ def decide(engine, as_of: str | None = None, cfg: LabConfig | None = None) -> di
     if d is None:
         raise ValueError("no trading day at or before the requested date")
     held = db.previous_ai_holdings(engine, AI_KEY, d.date())
-    return {"decisions": decisions_at(bundle, int(bundle.calendar.get_loc(d)), cfg, held, _is_demo(bundle))}
+    return {"decisions": decisions_at(bundle, int(bundle.calendar.get_loc(d)), cfg, held)}
 
 
-def decisions_at(bundle: DataBundle, idx: int, cfg: LabConfig, held: set[int], is_demo: bool = False,
+def decisions_at(bundle: DataBundle, idx: int, cfg: LabConfig, held: set[int],
                  panel: MarketPanel | None = None, data: pd.DataFrame | None = None) -> list[dict]:
     ai_cfg = cfg.ai()
     panel = MarketPanel.from_bundle(bundle) if panel is None else panel
@@ -177,6 +173,5 @@ def decisions_at(bundle: DataBundle, idx: int, cfg: LabConfig, held: set[int], i
             "maxPositions": ai_cfg.max_positions, "factors": explain(model, X[i], medians), "ruleVotes": votes.get(cid, {}),
             "model": {"algorithm": ALGORITHM, "codeVersion": CODE_VERSION, "trainedThrough": str(trained_through),
                       "nTrain": int(len(train)), "horizon": ai_cfg.horizon, "params": ai_cfg.params()},
-            "isDemo": is_demo,
         }))
     return out

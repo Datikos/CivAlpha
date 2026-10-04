@@ -25,8 +25,7 @@ def test_ticker_change_resolves_to_one_company(universe, tdb):
     assert t.current_symbol(meta) == "META"
 
 
-def test_universe_seed_is_idempotent_and_management_rules_hold(universe, tdb):
-    assert universe.load(False) == 0
+def test_universe_management_rules_hold(universe, tdb):
     n = len(universe.companies())
     cid = universe.add("ZZZT", "Test Co", "1234567", "Technology", None, "XLK", None)
     assert len(universe.companies()) == n + 1
@@ -67,10 +66,9 @@ def test_universe_can_be_managed_and_seeding_never_undoes_it(universe, tdb):
         universe.add("BDSY", "x", "1439725", "Health Care", None, "XLV", None)
     with pytest.raises(BadRequest, match="already the current ticker"):
         universe.add("BDSX", "x", "999", "Health Care", None, "XLV", None)
-    # remove: membership closes today, history kept; seeding from config does not re-add it
+    # remove: membership closes today, history kept
     universe.remove(cid, None)
     assert cid not in [c["id"] for c in universe.companies()]
-    universe.load(False)
     assert not universe.is_active(cid)
     universe.restore(cid, None)
     assert universe.is_active(cid)

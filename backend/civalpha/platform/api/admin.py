@@ -35,11 +35,6 @@ def jobs():
     return camel_all(Jobs().recent())
 
 
-@router.post("/demo/load")
-def demo_load():
-    return _submit("DEMO_LOAD")
-
-
 @router.post("/pipeline/run")
 def pipeline_run():
     return _submit("PIPELINE_RUN")

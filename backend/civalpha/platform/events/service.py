@@ -58,13 +58,13 @@ class EventService:
         self.db = database or db()
         self.docs = documents or DocumentStore(self.db)
 
-    def ingest(self, d: EventDraft, demo: bool = False) -> IngestResult:
+    def ingest(self, d: EventDraft) -> IngestResult:
         if d.source is None or d.source.url is None:
             raise BadRequest("an event needs a source URL (original evidence)")
         with self.db.transaction():
             s = d.source
             doc = self.docs.store(NewDocument("OFFICIAL_EVENT" if s.official else "NEWS", s.publisher, s.url, None, s.title,
-                                              s.published_at, s.content_type, s.content, demo or s.demo))
+                                              s.published_at, s.content_type, s.content))
             dup = dedup.find_duplicate(d, self._nearby(d.category, d.event_date))
             if dup is not None:
                 self._link_source(dup, doc.id, s.role)
@@ -76,21 +76,21 @@ class EventService:
                                attributes = attributes || CAST(:a AS jsonb) WHERE id = :id""",
                                     p=d.published_at, a=jsonb(d.attributes or {}), id=dup)
                     self._insert_targets(dup, d.targets)
-                    self._record_actor(dup, d, doc, demo)
+                    self._record_actor(dup, d, doc)
                     upgraded = True
                 return IngestResult(dup, True, upgraded, False)
             actor = None if d.actor_name is None else self.actor_id(d.actor_name)
             event_id = self.db.scalar("""
                 INSERT INTO policy_event (category, event_type, title, summary, actor_id, event_date, published_at, evidence_status,
-                                          attributes, dedup_key, is_demo)
-                VALUES (:c, :t, :title, :s, :actor, :d, :p, :status, CAST(:a AS jsonb), :key, :demo) RETURNING id""",
+                                          attributes, dedup_key)
+                VALUES (:c, :t, :title, :s, :actor, :d, :p, :status, CAST(:a AS jsonb), :key) RETURNING id""",
                 c=d.category, t=d.event_type, title=d.title, s=d.summary, actor=actor, d=d.event_date, p=d.published_at,
                 status="OFFICIAL" if s.official else "NEWS_ONLY", a=jsonb(d.attributes or {}),
-                key=f"{d.category}|{d.event_date.isoformat()}|{' '.join(dedup.tokens_java_order(d.title))}", demo=demo)
+                key=f"{d.category}|{d.event_date.isoformat()}|{' '.join(dedup.tokens_java_order(d.title))}")
             self._insert_targets(event_id, d.targets)
             self._link_source(event_id, doc.id, s.role)
             if s.official:
-                self._record_actor(event_id, d, doc, demo)
+                self._record_actor(event_id, d, doc)
             return IngestResult(event_id, False, False, True)
 
     def _nearby(self, category: str, day: date) -> list[dedup.Existing]:
@@ -119,17 +119,17 @@ class EventService:
         self.db.execute("INSERT INTO event_source (event_id, source_document_id, role) VALUES (:e, :d, :r) ON CONFLICT DO NOTHING",
                         e=event_id, d=doc_id, r=role)
 
-    def _record_actor(self, event_id: int, d: EventDraft, doc: SourceDocument, demo: bool) -> None:
+    def _record_actor(self, event_id: int, d: EventDraft, doc: SourceDocument) -> None:
         """Public decision profile: documented actions only (the official document itself), never inferred traits."""
         if d.actor_name is None:
             return
         actor = self.actor_id(d.actor_name)
         self.db.execute("UPDATE policy_event SET actor_id = :a WHERE id = :e AND actor_id IS NULL", a=actor, e=event_id)
         self.db.execute("""
-            INSERT INTO actor_record (actor_id, record_type, occurred_at, summary, source_document_id, is_demo)
-            VALUES (:a, :t, :at, :s, :d, :demo)""",
+            INSERT INTO actor_record (actor_id, record_type, occurred_at, summary, source_document_id)
+            VALUES (:a, :t, :at, :s, :d)""",
                         a=actor, t="VOTE" if d.category == "MONETARY_POLICY" else "ACTION", at=d.published_at,
-                        s=d.title + _votes(d.attributes), d=doc.id, demo=demo)
+                        s=d.title + _votes(d.attributes), d=doc.id)
 
     def actor_id(self, name: str) -> int:
         existing = self.db.scalar("SELECT id FROM policy_actor WHERE name = :n", n=name)

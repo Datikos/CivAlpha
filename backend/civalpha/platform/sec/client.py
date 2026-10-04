@@ -1,4 +1,4 @@
-"""Fetching SEC EDGAR resources by their canonical URL: live HTTPS (rate-limited) or a local fixture directory."""
+"""Fetching SEC EDGAR resources by their canonical URL: live HTTPS (rate-limited); a local directory client for tests."""
 from __future__ import annotations
 
 import logging
@@ -107,7 +107,7 @@ class FixtureSecClient:
     """Serves SEC URLs from a local directory laid out like the SEC hosts:
     data.sec.gov/submissions/... -> submissions/..., data.sec.gov/api/xbrl/companyfacts/... -> companyfacts/...,
     www.sec.gov/Archives/... -> Archives/..., www.sec.gov/files/... -> files/...
-    Used for the demo dataset and for offline tests; parsing code is identical to live mode."""
+    Used by the offline tests; parsing code is identical to live mode."""
 
     def __init__(self, root: str | os.PathLike):
         self.root = Path(root)
@@ -145,14 +145,9 @@ class SecClientFactory:
         self._lock = threading.Lock()
 
     def configured(self) -> SecClient:
-        """The configured client: live EDGAR (requires SEC_USER_AGENT) or fixtures."""
-        if self.sec.live:
-            if self._live is None:
-                with self._lock:
-                    if self._live is None:
-                        self._live = LiveSecClient(self.sec.user_agent, self.sec.max_requests_per_second, self.client)
-            return self._live
-        return self.fixture(self.sec.fixture_dir)
-
-    def fixture(self, directory: str | os.PathLike) -> SecClient:
-        return FixtureSecClient(directory)
+        """Live EDGAR (requires SEC_USER_AGENT, which must name you and give a contact e-mail)."""
+        if self._live is None:
+            with self._lock:
+                if self._live is None:
+                    self._live = LiveSecClient(self.sec.user_agent, self.sec.max_requests_per_second, self.client)
+        return self._live

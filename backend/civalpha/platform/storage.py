@@ -29,7 +29,6 @@ class SourceDocument:
     content_type: str | None
     storage_path: str | None
     supersedes_id: int | None
-    demo: bool
 
 
 @dataclass(frozen=True)
@@ -42,7 +41,6 @@ class NewDocument:
     published_at: datetime | None
     content_type: str | None
     content: bytes | None
-    demo: bool
 
 
 def sha256(b: bytes) -> str:
@@ -64,8 +62,7 @@ def _map(r: dict | None) -> SourceDocument | None:
     return SourceDocument(id=r["id"], source_type=r["source_type"], publisher=r["publisher"], url=r["url"],
                           accession_no=r["accession_no"], title=r["title"], published_at=r["published_at"],
                           ingested_at=r["ingested_at"], version=r["version"], content_sha256=r["content_sha256"],
-                          content_type=r["content_type"], storage_path=r["storage_path"], supersedes_id=r["supersedes_id"],
-                          demo=bool(r["is_demo"]))
+                          content_type=r["content_type"], storage_path=r["storage_path"], supersedes_id=r["supersedes_id"])
 
 
 class DocumentStore:
@@ -90,11 +87,11 @@ class DocumentStore:
                     p.write_bytes(d.content)
             new_id = self.db.scalar("""
                 INSERT INTO source_document (source_type, publisher, url, accession_no, title, published_at, version,
-                                             content_sha256, content_type, storage_path, supersedes_id, is_demo)
-                VALUES (:t, :p, :u, :a, :title, :pub, :v, :sha, :ct, :path, :sup, :demo) RETURNING id""",
+                                             content_sha256, content_type, storage_path, supersedes_id)
+                VALUES (:t, :p, :u, :a, :title, :pub, :v, :sha, :ct, :path, :sup) RETURNING id""",
                 t=d.source_type, p=d.publisher, u=d.url, a=d.accession_no, title=d.title, pub=d.published_at,
                 v=(latest.version + 1) if latest else 1, sha=sha, ct=d.content_type, path=rel,
-                sup=latest.id if latest else None, demo=d.demo)
+                sup=latest.id if latest else None)
             return self.get(new_id)
 
     def get(self, doc_id: int) -> SourceDocument | None:

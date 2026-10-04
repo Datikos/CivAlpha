@@ -20,7 +20,7 @@ import { UI } from '../shared/ui';
       </div>
       <div class="page-head">
         <div>
-          <h1>{{ f.companySymbol }} {{ f.formType }} <span class="muted">· {{ f.periodOfReport ?? '' }}</span> <app-demo-badge [show]="f.isDemo" /></h1>
+          <h1>{{ f.companySymbol }} {{ f.formType }} <span class="muted">· {{ f.periodOfReport ?? '' }}</span></h1>
           <p class="muted mono">{{ f.accessionNo }}</p>
         </div>
         @if (f.url) {

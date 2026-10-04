@@ -7,8 +7,6 @@ from typing import Any
 
 
 def camel_key(k: str) -> str:
-    if k == "is_demo":
-        return "isDemo"
     out, up = [], False
     for ch in k:
         if ch == "_":

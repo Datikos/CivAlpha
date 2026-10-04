@@ -1,4 +1,4 @@
-"""SEC EDGAR ingestion: clients (live HTTPS / fixtures), parsers, passage extraction, ticker lookup, filing ingestion."""
+"""SEC EDGAR ingestion: clients (live HTTPS; a local-directory client for tests), parsers, passages, ticker lookup, filing ingestion."""
 from .client import (COMPANY_FACTS, COMPANY_TICKERS, SUBMISSIONS, FixtureSecClient, LiveSecClient, RateLimiter, SecClient,
                      SecClientFactory, archive_url, company_facts_url, submissions_url)
 from .ingestion import FilingIngestionService, Result

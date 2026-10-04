@@ -9,7 +9,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 MIGRATIONS = ROOT.parent / "db" / "migration"
-TEST_UNIVERSE = Path(__file__).resolve().parent / "resources" / "test-universe.yml"
 
 
 @pytest.fixture(scope="session")
@@ -46,13 +45,25 @@ def tdb(pg):
         yield d
 
 
+def seed_test_universe(u) -> None:
+    """Two members since 2019-01-02, added like the Universe page does: META (formerly FB) and INTC, benchmark XLC."""
+    from datetime import date
+
+    from civalpha.platform.universe import TickerSpan
+
+    since = date(2019, 1, 2)
+    u.add("META", "Meta Platforms, Inc.", "0001326801", "Communication Services", "INTERNET", "XLC", since,
+          former_tickers=[TickerSpan("FB", date(2012, 5, 18), date(2022, 6, 9))])
+    u.add("INTC", "Intel Corporation", "0000050863", "Technology", "SEMICONDUCTORS", "XLC", since)
+
+
 @pytest.fixture
 def universe(tdb):
-    """UniverseService on the test universe, already loaded."""
+    """UniverseService with the test universe added."""
     from civalpha.platform.universe import UniverseService
 
-    u = UniverseService(tdb, str(TEST_UNIVERSE))
-    u.load(False)
+    u = UniverseService(tdb)
+    seed_test_universe(u)
     return u
 
 
@@ -81,7 +92,6 @@ def api(api_db, monkeypatch):
 
     url, data = api_db
     monkeypatch.setenv("DATABASE_URL", url)
-    monkeypatch.setenv("CIVALPHA_UNIVERSE_FILE", str(TEST_UNIVERSE))
     monkeypatch.setenv("CIVALPHA_DOCUMENTS_DIR", str(data / "documents"))
     monkeypatch.setenv("CIVALPHA_ADMIN_TOKEN", "")
     for f in (settings.settings, sql.engine, sql.db, llm.provider):
@@ -89,7 +99,9 @@ def api(api_db, monkeypatch):
     from civalpha.platform.app import app
     from civalpha.platform.universe import UniverseService
 
-    UniverseService().load(False)
+    u = UniverseService()
+    if not u.any_companies():
+        seed_test_universe(u)
     yield TestClient(app)
     for f in (settings.settings, sql.engine, sql.db, llm.provider):
         f.cache_clear()

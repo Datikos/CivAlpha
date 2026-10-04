@@ -27,7 +27,7 @@ def list_universe():
                (SELECT string_agg(symbol, ', ' ORDER BY valid_from) FROM ticker_history t
                  WHERE t.company_id = c.id AND t.valid_to IS NOT NULL) AS former_symbols,
                (SELECT cik FROM cik_mapping m WHERE m.company_id = c.id AND m.valid_to IS NULL LIMIT 1) AS cik,
-               c.name, c.sector, c.industry, c.benchmark_symbol, c.is_demo,
+               c.name, c.sector, c.industry, c.benchmark_symbol,
                EXISTS (SELECT 1 FROM universe_membership m WHERE m.company_id = c.id AND m.valid_to IS NULL) AS active,
                (SELECT max(valid_from) FROM universe_membership m WHERE m.company_id = c.id) AS member_since,
                (SELECT max(valid_to) FROM universe_membership m WHERE m.company_id = c.id) AS removed_on,
@@ -56,8 +56,7 @@ def lookup(symbol: str):
     except Exception as e:  # noqa: BLE001
         raise Unavailable(f"SEC lookup unavailable: {e}") from e
     if m is None:
-        raise NotFound(f"{symbol.upper()} is not in SEC company_tickers.json (in fixture mode only the demo companies are known); "
-                       "enter the CIK manually")
+        raise NotFound(f"{symbol.upper()} is not in SEC company_tickers.json; enter the CIK manually")
     return {"symbol": m.symbol, "cik": m.cik, "name": m.name, "source": m.source}
 
 
@@ -135,7 +134,3 @@ def delete(company_id: int):
     UniverseService().delete(company_id)
     return {"id": company_id, "deleted": True}
 
-
-@router.post("/seed")
-def seed():
-    return {"created": UniverseService().load(False)}

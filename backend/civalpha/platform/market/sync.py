@@ -81,7 +81,7 @@ class PriceSyncService:
         if not self.enabled():
             raise Problem("No price provider is configured. Set CIVALPHA_PRICE_PROVIDER=yahoo (no key; unofficial, "
                           "personal research only) or CIVALPHA_PRICE_PROVIDER=tiingo with TIINGO_API_KEY in .env, then restart; "
-                          "or load the demo dataset / import a prices CSV.")
+                          "or import a prices CSV.")
         name = self.prices.provider.lower()
         if name == "yahoo":
             return YahooChartProvider(self.http)
@@ -98,9 +98,6 @@ class PriceSyncService:
     def sync(self, log: Log, provider: PriceProvider | None = None) -> Summary:
         """Syncs with `provider`, or with the configured one when None."""
         p = provider if provider is not None else self.provider()
-        if self.db.scalar("SELECT exists(SELECT 1 FROM company WHERE is_demo)"):
-            raise Problem("This database holds the synthetic demo; real prices are never mixed into it. "
-                          "Start from an empty database (docker compose down -v && docker compose up -d), then use Run pipeline or Update prices.")
         to = last_completed_session()
         start = (self.prices.history_start if self.prices is not None else None) or DEFAULT_HISTORY_START
         failed = inserted = corrected = current = 0
@@ -123,15 +120,15 @@ class PriceSyncService:
                     s = p.fetch(t.symbol, start, to)
                 bars = [b for b in s.bars if not b.date > to and b.close is not None]
                 d = self.docs.store(NewDocument("PRICE_FILE", p.name, s.locator, None, f"{t.symbol} daily prices {from_}..{to}", None,
-                                                s.content_type, s.raw, False))
+                                                s.content_type, s.raw))
                 # store each bar under the ticker valid on its date (vendors report renamed stocks under today's symbol)
                 spans = [] if t.company_id is None else [sp for sp in self.tickers.all_spans() if sp.company_id == t.company_id]
                 resolved = [Resolved(t.company_id, b if not spans else replace(b, symbol=symbol_on(spans, b.date, b.symbol)))
                             for b in bars]
-                r = self.market.store(resolved, p.name, d.id, False)
+                r = self.market.store(resolved, p.name, d.id)
                 actions = [ActionRow(a.symbol, a.ex_date, "SPLIT_INFO", a.value, a.announced_at)
                            if p.split_adjusted and a.type == "SPLIT" else a for a in s.actions]
-                acts = self.market.store_actions(t.company_id, actions, p.name, d.id, False)
+                acts = self.market.store_actions(t.company_id, actions, p.name, d.id)
                 inserted += r.inserted
                 corrected += r.revised
                 log(f"{t.symbol}: {r.inserted} new bars, {r.revised} corrected, {acts} corporate actions")

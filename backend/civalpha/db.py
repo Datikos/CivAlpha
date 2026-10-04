@@ -34,7 +34,7 @@ def _utc(df: pd.DataFrame, cols) -> pd.DataFrame:
 
 def load_bundle(engine: Engine) -> DataBundle:
     companies = _q(engine, """
-        SELECT c.id, c.name, c.sector, c.industry, c.benchmark_symbol, c.is_demo,
+        SELECT c.id, c.name, c.sector, c.industry, c.benchmark_symbol,
                (SELECT th.symbol FROM ticker_history th WHERE th.company_id = c.id ORDER BY th.valid_from DESC LIMIT 1) AS symbol
         FROM company c ORDER BY c.id""")
     stock = _q(engine, "SELECT company_id, symbol, trade_date, close::float8 AS close FROM price_bar WHERE company_id IS NOT NULL")
@@ -53,14 +53,14 @@ def load_bundle(engine: Engine) -> DataBundle:
     membership = _dates(_q(engine, "SELECT company_id, valid_from, valid_to FROM universe_membership"), ["valid_from", "valid_to"])
     filings = _utc(_q(engine, "SELECT id, company_id, accession_no, form_type, accepted_at, source_document_id FROM filing"), ["accepted_at"])
     if bench.empty:
-        raise ValueError("No benchmark ETF prices are loaded. Load the demo dataset, or import a prices CSV that includes "
-                         "the sector benchmark ETFs listed in config/universe.yml, before evaluating or issuing forecasts.")
+        raise ValueError("No benchmark ETF prices are loaded. Update prices, or import a prices CSV that includes "
+                         "the sector benchmark ETFs of your companies, before evaluating or issuing forecasts.")
     return DataBundle.build(companies, stock, bench, actions, facts, expo, events, targets, macro, membership, filings)
 
 
 def load_event_sources(engine: Engine) -> pd.DataFrame:
     return _utc(_q(engine, """SELECT es.event_id, es.role, sd.id AS document_id, sd.url, sd.publisher, sd.title,
-                                     sd.published_at, sd.is_demo
+                                     sd.published_at
                               FROM event_source es JOIN source_document sd ON sd.id = es.source_document_id"""), ["published_at"])
 
 
@@ -76,27 +76,26 @@ def price_providers(engine: Engine) -> list[str]:
 
 
 def insert_model_version(engine: Engine, kind: str, algorithm: str, features: list[str], trained_through, training_cutoff,
-                         n_samples: int, params: dict, code_version: str, is_demo: bool) -> int:
+                         n_samples: int, params: dict, code_version: str) -> int:
     with engine.begin() as c:
         return int(c.execute(text("""
             INSERT INTO model_version (model_kind, algorithm, feature_names, trained_through, training_cutoff, n_samples,
-                                       params, code_version, is_demo)
-            VALUES (:k, :a, CAST(:f AS jsonb), :tt, :tc, :n, CAST(:p AS jsonb), :cv, :demo) RETURNING id"""),
+                                       params, code_version)
+            VALUES (:k, :a, CAST(:f AS jsonb), :tt, :tc, :n, CAST(:p AS jsonb), :cv) RETURNING id"""),
             dict(k=kind, a=algorithm, f=json.dumps(features), tt=trained_through, tc=training_cutoff, n=n_samples,
-                 p=json.dumps(params), cv=code_version, demo=is_demo)).scalar_one())
+                 p=json.dumps(params), cv=code_version)).scalar_one())
 
 
-def insert_evaluation(engine: Engine, result: dict, data_cutoff, is_demo: bool, company_ids_by_row=None) -> int:
+def insert_evaluation(engine: Engine, result: dict, data_cutoff) -> int:
     P = result["predictions"]
     with engine.begin() as c:
         eid = int(c.execute(text("""
-            INSERT INTO model_evaluation (data_cutoff, config, metrics, comparison, calibration, trading, folds, verdict, is_demo)
+            INSERT INTO model_evaluation (data_cutoff, config, metrics, comparison, calibration, trading, folds, verdict)
             VALUES (:dc, CAST(:cfg AS jsonb), CAST(:m AS jsonb), CAST(:cmp AS jsonb), CAST(:cal AS jsonb), CAST(:tr AS jsonb),
-                    CAST(:folds AS jsonb), :v, :demo) RETURNING id"""),
+                    CAST(:folds AS jsonb), :v) RETURNING id"""),
             dict(dc=data_cutoff, cfg=json.dumps(result["config"]), m=json.dumps(_clean(result["metrics"])),
                  cmp=json.dumps(_clean(result["comparison"])), cal=json.dumps(_clean(result["calibration"])),
-                 tr=json.dumps(_clean(result["trading"])), folds=json.dumps(_clean(result["folds"])), v=result["verdict"],
-                 demo=is_demo)).scalar_one())
+                 tr=json.dumps(_clean(result["trading"])), folds=json.dumps(_clean(result["folds"])), v=result["verdict"])).scalar_one())
         rows = [dict(e=eid, c=int(r.company_id), d=pd.Timestamp(r.as_of_date).date(), k=r.model_kind, f=int(r.fold),
                      p=float(r.probability), o=bool(r.outcome), x=float(r.excess_return)) for r in P.itertuples(index=False)]
         if rows:
@@ -105,13 +104,12 @@ def insert_evaluation(engine: Engine, result: dict, data_cutoff, is_demo: bool, 
     return eid
 
 
-def insert_strategy_run(engine: Engine, lab: dict, is_demo: bool) -> int:
+def insert_strategy_run(engine: Engine, lab: dict) -> int:
     with engine.begin() as c:
         rid = int(c.execute(text("""
-            INSERT INTO strategy_run (data_cutoff, oos_start, config, summary, is_demo)
-            VALUES (:dc, :oos, CAST(:cfg AS jsonb), :s, :demo) RETURNING id"""),
-            dict(dc=lab["dataCutoff"], oos=lab["oosStart"], cfg=json.dumps(_clean(lab["config"])), s=lab["summary"],
-                 demo=is_demo)).scalar_one())
+            INSERT INTO strategy_run (data_cutoff, oos_start, config, summary)
+            VALUES (:dc, :oos, CAST(:cfg AS jsonb), :s) RETURNING id"""),
+            dict(dc=lab["dataCutoff"], oos=lab["oosStart"], cfg=json.dumps(_clean(lab["config"])), s=lab["summary"])).scalar_one())
         for r in lab["results"]:
             c.execute(text("""
                 INSERT INTO strategy_result (run_id, strategy_key, family, name, description, params, metrics, equity, yearly,
@@ -131,12 +129,12 @@ def insert_strategy_run(engine: Engine, lab: dict, is_demo: bool) -> int:
     return rid
 
 
-def insert_time_machine(engine: Engine, res: dict, is_demo: bool) -> int:
+def insert_time_machine(engine: Engine, res: dict) -> int:
     with engine.begin() as c:
         return int(c.execute(text("""
-            INSERT INTO time_machine_run (as_of_date, data_cutoff, headline, result, is_demo)
-            VALUES (:d, :dc, :h, CAST(:r AS jsonb), :demo) RETURNING id"""),
-            dict(d=res["asOfDate"], dc=res["dataCutoff"], h=res["headline"], r=json.dumps(_clean(res)), demo=is_demo)).scalar_one())
+            INSERT INTO time_machine_run (as_of_date, data_cutoff, headline, result)
+            VALUES (:d, :dc, :h, CAST(:r AS jsonb)) RETURNING id"""),
+            dict(d=res["asOfDate"], dc=res["dataCutoff"], h=res["headline"], r=json.dumps(_clean(res)))).scalar_one())
 
 
 def previous_ai_holdings(engine: Engine, strategy_key: str, before) -> set[int]:

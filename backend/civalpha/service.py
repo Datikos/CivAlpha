@@ -19,17 +19,13 @@ TARGET = ("P(total return of {sym} over the next {h} trading days > total return
           "measured from the close of {d} to the close {h} trading days later")
 
 
-def _is_demo(bundle: DataBundle) -> bool:
-    return bool(bundle.companies["is_demo"].any()) if "is_demo" in bundle.companies else False
-
-
 # --------------------------------------------------------------------------- evaluation
 def evaluate(engine, cfg: EvalConfig | None = None) -> dict:
     cfg = cfg or EvalConfig()
     bundle = db.load_bundle(engine)
     panel = build_panel(bundle, sample_every=cfg.sample_every)
     result = run_walk_forward(panel, bundle.calendar, cfg)
-    eid = db.insert_evaluation(engine, result, bundle.calendar[-1].date(), _is_demo(bundle))
+    eid = db.insert_evaluation(engine, result, bundle.calendar[-1].date())
     return {"evaluationId": eid, "verdict": result["verdict"], "metrics": db._clean(result["metrics"])}
 
 
@@ -66,7 +62,7 @@ def issue(engine, as_of: str | None = None, as_of_dates: list[str] | None = None
             model = LogitModel(FEATURES[kind], n_boot=n_boot).fit(train, train["label"].astype(bool), groups=train["idx"])
             trained_through = bundle.calendar[int(train["idx"].max())].date()
             mv_id = db.insert_model_version(engine, kind, ALGORITHM, FEATURES[kind], trained_through, cutoff.to_pydatetime(),
-                                            len(train), model.to_json(), CODE_VERSION, _is_demo(bundle))
+                                            len(train), model.to_json(), CODE_VERSION)
             p = model.predict(rows)
             lo, hi = model.predict_interval(rows)
             for i, r in rows.iterrows():
@@ -120,7 +116,7 @@ def _payload(bundle, engine, sources, providers, kind, mv_id, model, r, p, lo, h
     src = []
     for e in ev_prov:
         for s in sources[sources["event_id"] == e["event_id"]].itertuples(index=False):
-            src.append({"kind": "EVENT", "label": f"{s.publisher}: {s.title}", "url": f"/api/documents/{s.document_id}" if s.is_demo else s.url,
+            src.append({"kind": "EVENT", "label": f"{s.publisher}: {s.title}", "url": s.url,
                         "accessionNo": None, "publishedAt": pd.Timestamp(s.published_at).isoformat() if not pd.isna(s.published_at) else None})
     src.extend({"kind": "FILING", "label": x["label"], "url": x["url"], "accessionNo": x["label"].split(" ")[-1],
                 "publishedAt": x["publishedAt"]} for x in fact_filings)

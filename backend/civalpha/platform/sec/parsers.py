@@ -169,7 +169,8 @@ CONCEPTS = frozenset({
     "Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet", "CostOfRevenue",
     "GrossProfit", "OperatingIncomeLoss", "NetIncomeLoss", "ResearchAndDevelopmentExpense", "InterestExpense",
     "Assets", "Liabilities", "LongTermDebtNoncurrent", "LongTermDebt", "CashAndCashEquivalentsAtCarryingValue",
-    "EarningsPerShareDiluted", "EntityCommonStockSharesOutstanding"})
+    "EarningsPerShareDiluted", "EntityCommonStockSharesOutstanding",
+    "PaymentsOfDividends", "PaymentsOfDividendsCommonStock", "PaymentsForRepurchaseOfCommonStock"})
 
 
 def parse_company_facts(b: bytes, concepts: set[str] | frozenset[str] | None) -> list[FactRow]:
@@ -296,5 +297,5 @@ def pick_instance(names: list[str], primary_document: str | None) -> str | None:
 
 
 def conventional_instance(primary_document: str) -> str:
-    """Conventional name used when no directory listing is available (e.g. fixtures)."""
+    """Conventional name used when no directory listing is available."""
     return re.sub(r"\.htm$", "_htm.xml", primary_document)

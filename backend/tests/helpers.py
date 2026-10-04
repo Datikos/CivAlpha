@@ -1,4 +1,4 @@
-"""Small synthetic bundles for tests."""
+"""Small generated bundles for the model tests (random prices, no database)."""
 import numpy as np
 import pandas as pd
 
@@ -33,7 +33,7 @@ def make_bundle(n_days=400, n_companies=4, seed=0, events=None, targets=None, ex
         stock.append(pd.DataFrame({"company_id": c, "symbol": f"S{c}", "trade_date": cal, "close": px}))
     stock = pd.concat(stock)
     companies = pd.DataFrame({"id": range(1, n_companies + 1), "symbol": [f"S{c}" for c in range(1, n_companies + 1)],
-                              "benchmark_symbol": "BMK", "industry": "X", "is_demo": True})
+                              "benchmark_symbol": "BMK", "industry": "X"})
     empty_actions = pd.DataFrame(columns=["company_id", "symbol", "ex_date", "action_type", "value"])
     facts = facts if facts is not None else pd.DataFrame(columns=["company_id", "taxonomy", "concept", "unit", "value", "period_start",
                                                                   "period_end", "dims_key", "accession_no", "accepted_at", "form_type"])

@@ -4,12 +4,8 @@ name: civalpha
 
 x-app-env: &app-env
   DATABASE_URL: postgresql+psycopg://civalpha:${POSTGRES_PASSWORD:-civalpha}@postgres:5432/civalpha
-  CIVALPHA_UNIVERSE_FILE: /config/universe.yml
   CIVALPHA_DOCUMENTS_DIR: /data/documents
   CIVALPHA_IMPORTS_DIR: /data/imports
-  CIVALPHA_DEMO_DIR: /data/demo
-  CIVALPHA_SEC_FIXTURE_DIR: /data/demo/sec
-  CIVALPHA_SEC_MODE: ${CIVALPHA_SEC_MODE:-fixture}
   SEC_USER_AGENT: ${SEC_USER_AGENT:-}
   SEC_MAX_RPS: ${SEC_MAX_RPS:-5}
   SEC_LOOKBACK_YEARS: ${SEC_LOOKBACK_YEARS:-6}
@@ -55,7 +51,6 @@ services:
     command: ["sh", "-c", "python -m civalpha.platform.migrate && exec uvicorn civalpha.platform.app:app --host 0.0.0.0 --port 8000 --workers 2 --proxy-headers"]
     volumes:
       - civdata:/data
-      - ./config:/config:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -74,7 +69,6 @@ services:
     command: ["python", "-m", "civalpha.platform.worker"]
     volumes:
       - civdata:/data
-      - ./config:/config:ro
     depends_on:
       api:
         condition: service_healthy
@@ -93,4 +87,4 @@ services:
 
 volumes:
   pgdata:
-  civdata:   # original source documents (/data/documents), generated demo inputs (/data/demo), CSV drop folder (/data/imports), uploads (/data/uploads)
+  civdata:   # original source documents (/data/documents), CSV drop folder (/data/imports), uploads (/data/uploads)

@@ -1,5 +1,4 @@
-"""Looks up a ticker's CIK and registrant name in SEC's company_tickers.json (live mode: sec.gov, cached for a day;
-fixture mode: the local fixture file, which only covers the demo companies)."""
+"""Looks up a ticker's CIK and registrant name in SEC's company_tickers.json (sec.gov, cached for a day)."""
 from __future__ import annotations
 
 import json

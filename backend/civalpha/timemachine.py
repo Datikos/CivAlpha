@@ -254,6 +254,5 @@ def run(engine, as_of: str) -> dict:
     res["headline"] = headline(res)
     res["stocks"] = sorted(res["stocks"].values(), key=lambda s: s["symbol"])
     res["dataCutoff"] = str(bundle.calendar[-1].date())
-    is_demo = bool(bundle.companies["is_demo"].any()) if "is_demo" in bundle.companies else False
-    run_id = db.insert_time_machine(engine, res, is_demo)
+    run_id = db.insert_time_machine(engine, res)
     return {"runId": run_id, "headline": res["headline"]}

@@ -58,12 +58,12 @@ class MacroService:
             ON CONFLICT (series_id) DO UPDATE SET title = EXCLUDED.title, units = EXCLUDED.units, frequency = EXCLUDED.frequency""",
                         id=series_id, t=title, u=units, f=frequency, s=source)
 
-    def insert(self, obs: list[Observation], demo: bool) -> int:
+    def insert(self, obs: list[Observation]) -> int:
         n = self.db.executemany("""
-            INSERT INTO macro_observation (series_id, obs_date, value, realtime_start, realtime_end, is_demo)
-            VALUES (:s, :d, :v, :rs, :re, :demo)
+            INSERT INTO macro_observation (series_id, obs_date, value, realtime_start, realtime_end)
+            VALUES (:s, :d, :v, :rs, :re)
             ON CONFLICT (series_id, obs_date, realtime_start) DO UPDATE SET realtime_end = EXCLUDED.realtime_end""",
-                                [{"s": o.series_id, "d": o.obs_date, "v": o.value, "rs": o.realtime_start, "re": o.realtime_end, "demo": demo}
+                                [{"s": o.series_id, "d": o.obs_date, "v": o.value, "rs": o.realtime_start, "re": o.realtime_end}
                                  for o in obs])
         return max(0, n)
 
@@ -83,14 +83,14 @@ class MacroService:
         # the stored locator omits the API key
         self.docs.store(NewDocument("MACRO", "FRED/ALFRED (Federal Reserve Bank of St. Louis)",
                                     f"{base}/series/observations?series_id={series_id}&realtime_start=1776-07-04&realtime_end=9999-12-31",
-                                    None, f"{series_id} all vintages", None, "application/json", body, False))
+                                    None, f"{series_id} all vintages", None, "application/json", body))
         obs = []
         for o in json.loads(body).get("observations") or []:
             v = str(o.get("value"))
             end = str(o.get("realtime_end"))
             obs.append(Observation(series_id, date.fromisoformat(str(o.get("date"))), None if v == "." else float(v),
                                    date.fromisoformat(str(o.get("realtime_start"))), None if end == "9999-12-31" else date.fromisoformat(end)))
-        return self.insert(obs, False)
+        return self.insert(obs)
 
     def _get(self, url: str) -> bytes:
         if self.http is not None:

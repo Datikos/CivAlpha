@@ -109,7 +109,9 @@ const EMPTY: Draft = { symbol: '', name: '', cik: '', sector: '', industry: '', 
         </p>
         <label class="small">
           <input type="checkbox" name="ingest" [(ngModel)]="draft.ingestSec" /> Ingest SEC filings right away
-          ({{ meta.meta()?.secMode ?? '…' }} mode)
+          @if (meta.meta(); as m) {
+            (SEC EDGAR {{ m.secConfigured ? 'configured' : 'not configured: set SEC_USER_AGENT in .env' }})
+          }
         </label>
         <div style="margin-top: 0.6rem">
           <button type="submit" class="btn btn-primary" [disabled]="busy()">Add stock</button>
@@ -143,9 +145,6 @@ const EMPTY: Draft = { symbol: '', name: '', cik: '', sector: '', industry: '', 
                 <a [routerLink]="['/companies', c.symbol]" class="mono">{{ c.symbol }}</a>
                 @if (c.formerSymbols) {
                   <div class="small muted">was {{ c.formerSymbols }}</div>
-                }
-                @if (c.isDemo) {
-                  <app-demo-badge />
                 }
               </td>
               <td>
@@ -216,7 +215,7 @@ const EMPTY: Draft = { symbol: '', name: '', cik: '', sector: '', industry: '', 
           } @empty {
             <tr>
               <td colspan="9" class="muted">
-                No stocks yet. Add one above, or run the pipeline / load the demo to seed from config/universe.yml.
+                No stocks yet. Add one above: look it up on SEC EDGAR by ticker, then fill in the remaining fields.
               </td>
             </tr>
           }

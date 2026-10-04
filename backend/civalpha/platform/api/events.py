@@ -24,7 +24,7 @@ log = logging.getLogger("civalpha.api.events")
 CATEGORIES = {"MONETARY_POLICY", "TRADE_TARIFF"}
 LIST_SQL = """
     SELECT e.id, e.category, e.event_type, e.title, e.event_date, e.published_at, e.first_seen_at, e.evidence_status,
-           a.name AS actor_name, e.version, e.is_demo, e.summary, e.attributes,
+           a.name AS actor_name, e.version, e.summary, e.attributes,
            (SELECT count(*) FROM event_source s WHERE s.event_id = e.id) AS source_count,
            (SELECT count(DISTINCT x.company_id) FROM event_target t JOIN company_exposure x
               ON x.target_type = t.target_type AND x.target_code = t.target_code WHERE t.event_id = e.id) AS affected_company_count
@@ -59,9 +59,9 @@ def get_event(event_id: int):
         actor["records"] = [{
             "recordType": r["record_type"], "occurredAt": value(r["occurred_at"]), "summary": r["summary"],
             "source": {"id": r["doc_id"], "title": r["title"] or "",
-                       "url": f"/api/documents/{r['doc_id']}" if r["is_demo"] else r["url"]},
+                       "url": r["url"]},
         } for r in db().all("""
-            SELECT r.record_type, r.occurred_at, r.summary, sd.id AS doc_id, sd.url, sd.title, sd.is_demo
+            SELECT r.record_type, r.occurred_at, r.summary, sd.id AS doc_id, sd.url, sd.title
             FROM actor_record r JOIN source_document sd ON sd.id = r.source_document_id
             WHERE r.actor_id = :a ORDER BY r.occurred_at DESC LIMIT 25""", a=actor_id)]
         e["actor"] = actor
@@ -70,7 +70,7 @@ def get_event(event_id: int):
     sources = []
     for r in db().all("""
         SELECT sd.id, s.role, sd.source_type, sd.publisher, sd.title, sd.url, sd.accession_no, sd.published_at, sd.ingested_at,
-               sd.version, sd.content_sha256, sd.storage_path, sd.is_demo
+               sd.version, sd.content_sha256, sd.storage_path
         FROM event_source s JOIN source_document sd ON sd.id = s.source_document_id WHERE s.event_id = :id ORDER BY s.linked_at""",
             id=event_id):
         m = camel(r)
@@ -170,9 +170,9 @@ def create_event(body: EventIn):
         targets=[Target(t.targetType, t.targetCode, t.magnitude) for t in body.targets or []],
         source=Source(url=src.url, title=src.title or body.title, publisher=src.publisher or urlparse(src.url).hostname,
                       role=src.role or "OFFICIAL_PRIMARY", published_at=body.publishedAt, content=content,
-                      content_type=content_type, demo=False))
+                      content_type=content_type))
     events = EventService()
-    res = events.ingest(draft, False)
+    res = events.ingest(draft)
     reissued: list[int] = []
     official = db().scalar("SELECT evidence_status = 'OFFICIAL' FROM policy_event WHERE id = :id", id=res.event_id)
     if official and (res.created or res.upgraded):

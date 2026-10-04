@@ -20,7 +20,7 @@ import { UI } from '../shared/ui';
           <p class="muted">
             <app-model-tag [kind]="f.modelKind" /> model · {{ f.companyName }} · forecast #{{ f.id }} · version
             {{ f.version }}
-            <app-issue-mode [mode]="f.issueMode" /> <app-demo-badge [show]="f.isDemo" />
+            <app-issue-mode [mode]="f.issueMode" />
           </p>
         </div>
         <a class="btn" [routerLink]="['/companies', f.symbol, 'forecasts']">Company forecast history</a>

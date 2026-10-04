@@ -108,10 +108,6 @@ class ForecastService:
         now = datetime.now(timezone.utc).isoformat()
         return self.persist_all(self.issue_fn(as_of=now, company_ids=company_ids), "LIVE", reason)
 
-    def issue_replay(self, dates: list[date], reason: str) -> IssueResult:
-        """Replay issue: cutoff = close of each historical date; published now and labelled REPLAY."""
-        return self.persist_all(self.issue_fn(as_of_dates=[d.isoformat() for d in dates]), "REPLAY", reason)
-
     def issue_at(self, as_of_date: date, reason: str) -> IssueResult:
         mode = "REPLAY" if as_of_date < date.today() - timedelta(days=7) else "LIVE"
         return self.persist_all(self.issue_fn(as_of_dates=[as_of_date.isoformat()]), mode, reason)
@@ -139,13 +135,12 @@ class ForecastService:
             if prev is not None and prev["content_sha256"] == digest:
                 return None
             version = prev["version"] + 1 if prev else 1
-            demo = bool(self.db.scalar("SELECT is_demo FROM company WHERE id = :c", c=company_id))
             return self.db.scalar("""
                 INSERT INTO forecast (company_id, symbol, benchmark_symbol, model_kind, model_version_id, target, horizon_trading_days,
                     as_of, as_of_date, issue_mode, probability, prob_low, prob_high, uncertainty_note, features, explanation, sources,
-                    series_key, version, supersedes_id, reason, content_sha256, is_demo)
+                    series_key, version, supersedes_id, reason, content_sha256)
                 VALUES (:c, :sym, :bench, :kind, :mv, :target, :h, :asof, :d, :mode, :p, :lo, :hi, :note,
-                    CAST(:features AS jsonb), CAST(:expl AS jsonb), CAST(:sources AS jsonb), :series, :v, :sup, :reason, :hash, :demo)
+                    CAST(:features AS jsonb), CAST(:expl AS jsonb), CAST(:sources AS jsonb), :series, :v, :sup, :reason, :hash)
                 RETURNING id""",
                 c=company_id, sym=p.get("symbol"), bench=p.get("benchmarkSymbol"), kind=kind, mv=int(p["modelVersionId"]),
                 target=p.get("target"), h=int(p["horizonTradingDays"]), asof=datetime.fromisoformat(p["asOf"]),
@@ -153,7 +148,7 @@ class ForecastService:
                 hi=_num(p.get("probHigh")), note=p.get("uncertaintyNote"), features=jsonb(p.get("features")),
                 expl=jsonb(p.get("explanation")), sources=jsonb(p.get("sources")), series=series, v=version,
                 sup=prev["id"] if prev else None,
-                reason=f"{reason} (supersedes v{version - 1})" if version > 1 else reason, hash=digest, demo=demo)
+                reason=f"{reason} (supersedes v{version - 1})" if version > 1 else reason, hash=digest)
 
 
 def _num(o):

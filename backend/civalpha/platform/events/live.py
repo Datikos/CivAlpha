@@ -85,7 +85,7 @@ class LiveEventSources:
             content = json.dumps(r, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
             out.append(EventDraft("TRADE_TARIFF", signals.trade_event_type(text), title, abstract, pub, published, agency, attrs,
                                   signals.trade_targets(text),
-                                  Source(url, title, "Federal Register", "OFFICIAL_PRIMARY", published, content, "application/json", False)))
+                                  Source(url, title, "Federal Register", "OFFICIAL_PRIMARY", published, content, "application/json")))
         return out
 
     def fed_rss(self) -> list[EventDraft]:
@@ -110,7 +110,7 @@ class LiveEventSources:
                                   published.date(), published, "Federal Open Market Committee", attrs,
                                   [Target("INTEREST_RATE", "US_POLICY_RATE", None if decision is None else float(decision.change_bps))],
                                   Source(link, title, "Board of Governors of the Federal Reserve System", "OFFICIAL_PRIMARY", published,
-                                         page, "text/html", False)))
+                                         page, "text/html")))
         return out
 
     def news(self, feed_url: str) -> list[EventDraft]:
@@ -134,7 +134,7 @@ class LiveEventSources:
                                   signals.trade_event_type(text) if trade else "RATE_DECISION",
                                   title, desc, published.date(), published, None, {"severity": 0.3},
                                   signals.trade_targets(text) if trade else [],
-                                  Source(link, title, _host(feed_url), "NEWS_DISCOVERY", published, None, None, False)))
+                                  Source(link, title, _host(feed_url), "NEWS_DISCOVERY", published, None, None)))
         return out
 
     def _get(self, url: str) -> bytes:

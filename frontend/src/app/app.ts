@@ -29,14 +29,6 @@ import { MetaService } from './core/meta.service';
       </div>
     </header>
 
-    @if (meta.demo()) {
-      <div class="demo-banner" role="status">
-        <div class="container">
-          <strong>DEMO DATA</strong> — synthetic prices, filings and events generated for demonstration. Not real
-          market data.
-        </div>
-      </div>
-    }
     @if (meta.resource.error()) {
       <div class="api-down" role="alert">
         <div class="container">
@@ -58,7 +50,7 @@ import { MetaService } from './core/meta.service';
             }
           </ul>
           <p class="muted small">
-            Data cutoff {{ m.dataCutoff ?? '—' }} · SEC mode {{ m.secMode }} · LLM extraction
+            Data cutoff {{ m.dataCutoff ?? '—' }} · SEC EDGAR {{ m.secConfigured ? 'configured' : 'not configured' }} · LLM extraction
             {{ m.llmEnabled ? 'enabled' : 'disabled' }}
           </p>
         } @else {
@@ -141,13 +133,6 @@ import { MetaService } from './core/meta.service';
         flex-basis: 100%;
         padding-bottom: 0.4rem;
       }
-    }
-    .demo-banner {
-      background: var(--demo-bg);
-      color: var(--demo-ink);
-      font-size: 0.9rem;
-      padding: 0.45rem 0;
-      border-bottom: 1px solid var(--border);
     }
     .api-down {
       background: var(--bad-bg);

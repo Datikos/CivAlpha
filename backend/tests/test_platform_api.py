@@ -4,7 +4,7 @@ import pytest
 from civalpha.platform.app import protected_request
 
 READ_URLS = ["/api/meta", "/api/companies", "/api/companies/META", "/api/companies/FB/prices", "/api/companies/META/filings",
-             "/api/companies/META/financials", "/api/companies/META/exposures", "/api/events", "/api/events?category=TRADE_TARIFF",
+             "/api/companies/META/financials", "/api/companies/META/dividends", "/api/companies/META/exposures", "/api/events", "/api/events?category=TRADE_TARIFF",
              "/api/forecasts/current", "/api/forecasts/history", "/api/forecasts/history?symbol=META&modelKind=AUGMENTED",
              "/api/accuracy", "/api/admin/jobs", "/api/strategies", "/api/decisions", "/api/decisions?date=2026-01-02",
              "/api/timemachine", "/api/admin/universe", "/health"]

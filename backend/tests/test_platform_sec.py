@@ -207,12 +207,12 @@ def test_revised_filing_is_visible_only_after_its_acceptance(tdb, universe, tmp_
     intc = TickerResolver(tdb).company_by_cik("0000050863")
     service = _service(tdb, universe, tmp_path)
     log: list[str] = []
-    res = service.ingest(FixtureSecClient(sec), intc, False, log.append)
+    res = service.ingest(FixtureSecClient(sec), intc, log.append)
     assert res.facts == 2
     assert res.filings == 2
     # the page outside the lookback window is not fetched (it does not exist; a fetch would be logged as missing)
     assert not any("submissions-000" in line for line in log)
-    assert log[-1] == "INTC: 2 new filings, 2 facts, 0 passages, 0 exposures (fixture mode)"
+    assert log[-1] == "INTC: 2 new filings, 2 facts, 0 passages, 0 exposures"
     assert tdb.scalars("SELECT amends_accession FROM filing WHERE form_type = '10-K/A'") == ["0000050863-25-000010"]
 
     assert _pit_revenue(tdb, intc, utc("2025-01-30T21:00:00Z")) == []
@@ -228,11 +228,11 @@ def test_revised_filing_is_visible_only_after_its_acceptance(tdb, universe, tmp_
     assert after["accession_no"] == "0000050863-25-000099"
 
     # re-ingesting is idempotent
-    assert service.ingest(FixtureSecClient(sec), intc, False, log.append).facts == 0
+    assert service.ingest(FixtureSecClient(sec), intc, log.append).facts == 0
 
 
 def test_annual_report_yields_passages_dimensional_facts_and_exposures(tdb, universe, tmp_path):
-    """A 10-K with a primary document and an inline-XBRL instance (laid out like the demo fixtures)."""
+    """A 10-K with a primary document and an inline-XBRL instance, laid out like sec.gov."""
     sec = tmp_path / "sec"
     acc, doc = "0000050863-25-000010", "intc-20241228.htm"
     archive = sec / "Archives" / "edgar" / "data" / "50863" / acc.replace("-", "")
@@ -262,7 +262,7 @@ def test_annual_report_yields_passages_dimensional_facts_and_exposures(tdb, univ
     intc = TickerResolver(tdb).company_by_cik("0000050863")
     service = _service(tdb, universe, tmp_path)
     log: list[str] = []
-    res = service.ingest(FixtureSecClient(sec), intc, False, log.append)
+    res = service.ingest(FixtureSecClient(sec), intc, log.append)
     assert (res.filings, res.facts, res.passages) == (1, 2, 2)
     exposures = {(e["target_type"], e["target_code"], e["exposure_channel"]): e for e in tdb.all(
         "SELECT * FROM company_exposure WHERE company_id = :c", c=intc)}
@@ -274,5 +274,5 @@ def test_annual_report_yields_passages_dimensional_facts_and_exposures(tdb, univ
     assert exposures[("PRODUCT", "SEMICONDUCTORS", "REVENUE")]["method"] == "SECTOR_MAP"   # industry SEMICONDUCTORS
     assert res.exposures == len(exposures)
     # a second run neither re-fetches the document nor derives again
-    again = service.ingest(FixtureSecClient(sec), intc, False, log.append)
+    again = service.ingest(FixtureSecClient(sec), intc, log.append)
     assert (again.filings, again.facts, again.passages, again.exposures) == (0, 0, 0, 0)

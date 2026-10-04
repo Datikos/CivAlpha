@@ -49,13 +49,13 @@ class DecisionService:
         """Inserts one decision; None if this (company, date, strategy) was already decided."""
         return self.db.scalar("""
             INSERT INTO strategy_decision (company_id, as_of_date, strategy_key, action, probability, entry_p, exit_p, weight, rank,
-                                           factors, rule_votes, model, is_demo)
-            VALUES (:c, :d, :k, :a, :p, :ep, :xp, :w, :r, CAST(:f AS jsonb), CAST(:v AS jsonb), CAST(:m AS jsonb), :demo)
+                                           factors, rule_votes, model)
+            VALUES (:c, :d, :k, :a, :p, :ep, :xp, :w, :r, CAST(:f AS jsonb), CAST(:v AS jsonb), CAST(:m AS jsonb))
             ON CONFLICT (company_id, as_of_date, strategy_key) DO NOTHING
             RETURNING id""",
             c=int(d["companyId"]), d=date.fromisoformat(d["asOfDate"]), k=d["strategyKey"], a=d["action"],
             p=float(d["probability"]), ep=float(d["entryP"]), xp=float(d["exitP"]), w=float(d["weight"]), r=int(d["rank"]),
-            f=jsonb(d.get("factors")), v=jsonb(d.get("ruleVotes")), m=jsonb(d.get("model")), demo=bool(d.get("isDemo")))
+            f=jsonb(d.get("factors")), v=jsonb(d.get("ruleVotes")), m=jsonb(d.get("model")))
 
     def _explain(self, decision_id: int, d: dict) -> bool:
         facts = {k: d.get(k) for k in ("action", "probability", "entryP", "exitP", "rank", "maxPositions", "factors", "ruleVotes")}

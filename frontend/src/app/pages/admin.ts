@@ -40,8 +40,8 @@ const ACTIVE = new Set(['RUNNING', 'PENDING', 'QUEUED', 'STARTED']);
           No prices yet for benchmark ETF{{ count > 1 ? 's' : '' }} {{ meta.meta()?.missingBenchmarks?.join(', ') }}:
           companies measured against {{ count > 1 ? 'them' : 'it' }} are left out of evaluation and forecasts.
         } @else {
-          No price data yet. Use <strong>Update prices</strong> (automatic provider), load the demo dataset, or import a
-          prices CSV that includes the stocks and the benchmark ETFs ({{ meta.meta()?.missingBenchmarks?.join(', ') }}),
+          No price data yet. Use <strong>Update prices</strong> (automatic provider) or import a prices CSV
+          that includes the stocks and the benchmark ETFs ({{ meta.meta()?.missingBenchmarks?.join(', ') }}),
           before evaluating or issuing forecasts.
         }
       </div>
@@ -55,12 +55,13 @@ const ACTIVE = new Set(['RUNNING', 'PENDING', 'QUEUED', 'STARTED']);
       <div class="card">
         <h3>Pipeline</h3>
         <div class="actions">
-          <button type="button" class="btn btn-primary" [disabled]="busy()" (click)="run('Demo load', api.loadDemo())">
-            Load demo dataset
-          </button>
-          <p class="small muted">Synthetic prices, filings and events + full pipeline. Everything it creates is badged DEMO.</p>
-          <button type="button" class="btn" [disabled]="busy()" (click)="run('Pipeline run', api.runPipeline())">Run pipeline</button>
-          <p class="small muted">Ingest configured sources ({{ meta.meta()?.secMode ?? '…' }} SEC mode), evaluate, issue forecasts.</p>
+          <button type="button" class="btn btn-primary" [disabled]="busy()" (click)="run('Pipeline run', api.runPipeline())">Run pipeline</button>
+          <p class="small muted">
+            Ingest SEC filings and configured sources, evaluate, issue forecasts.
+            @if (meta.meta(); as m) {
+              SEC EDGAR: {{ m.secConfigured ? 'configured' : 'not configured (set SEC_USER_AGENT in .env)' }}.
+            }
+          </p>
           <button type="button" class="btn" [disabled]="busy()" (click)="run('Evaluation', api.evaluate())">Evaluate models</button>
           <p class="small muted">Walk-forward evaluation of BASELINE vs AUGMENTED.</p>
           <button type="button" class="btn" [disabled]="busy()" (click)="run('Strategy backtest', api.backtestStrategies())">
@@ -242,7 +243,7 @@ export class AdminPage {
       const t = setInterval(() => this.jobs.reload(), 3000);
       onCleanup(() => clearInterval(t));
     });
-    // When jobs finish, refresh global metadata (e.g. the demo-data flag after a demo load).
+    // When jobs finish, refresh global metadata (e.g. the data cutoff after a price update).
     let wasActive = false;
     effect(() => {
       const active = this.anyActive();

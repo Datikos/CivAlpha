@@ -1,0 +1,90 @@
+"""Dividend profile: frequency, status, specials, split adjustment, streaks and the filed payout ratio."""
+from datetime import date, timedelta
+
+import pytest
+
+from civalpha.dividends import dividend_profile, payout_from_facts
+
+
+def quarterly(first: date, n: int, amount: float = 0.25, step: float = 0.0):
+    return [(first + timedelta(days=91 * i), "CASH_DIVIDEND", amount + step * (i // 4)) for i in range(n)]
+
+
+def test_no_dividends_is_none():
+    p = dividend_profile([(date(2025, 6, 1), "SPLIT", 4.0)], date(2026, 1, 1), 100.0)
+    assert p["status"] == "NONE" and p["frequency"] is None and p["ttmDividends"] == 0 and p["trailingYield"] is None
+
+
+def test_regular_quarterly_payer():
+    acts = quarterly(date(2023, 1, 10), 12)          # last ex-date 2025-10-07
+    p = dividend_profile(acts, date(2025, 11, 1), 50.0)
+    assert p["status"] == "REGULAR" and p["frequency"] == "QUARTERLY" and p["paymentsPerYear"] == 4
+    assert p["ttmPayments"] == 4 and p["ttmDividends"] == pytest.approx(1.0)
+    assert p["trailingYield"] == pytest.approx(0.02) and p["indicatedYield"] == pytest.approx(0.02)
+    assert p["nextExpected"] == date(2026, 1, 6)
+    assert p["yearsPaid"] == 3 and p["payments"][0]["exDate"] == date(2025, 10, 7)
+
+
+@pytest.mark.parametrize("gap,label", [(30, "MONTHLY"), (182, "SEMIANNUAL"), (365, "ANNUAL")])
+def test_frequency_from_the_median_gap(gap, label):
+    acts = [(date(2023, 1, 5) + timedelta(days=gap * i), "CASH_DIVIDEND", 1.0) for i in range(30) if gap * i < 1000]
+    as_of = acts[-1][0] + timedelta(days=5)
+    assert dividend_profile(acts, as_of, 10.0)["frequency"] == label
+
+
+def test_overdue_payment_means_suspended():
+    acts = quarterly(date(2022, 1, 10), 8)           # last ex-date 2023-10-09
+    p = dividend_profile(acts, date(2024, 6, 1), 50.0)
+    assert p["status"] == "SUSPENDED" and p["indicatedYield"] is None and p["ttmPayments"] == 2
+
+
+def test_only_dates_up_to_as_of_count():
+    acts = quarterly(date(2023, 1, 10), 12)
+    p = dividend_profile(acts, date(2023, 1, 9), 50.0)
+    assert p["status"] == "NONE"
+
+
+def test_special_dividend_counts_in_trailing_total_but_not_the_schedule():
+    acts = quarterly(date(2024, 1, 10), 8) + [(date(2025, 6, 20), "CASH_DIVIDEND", 3.0)]
+    p = dividend_profile(acts, date(2025, 11, 1), 100.0)
+    assert p["status"] == "REGULAR" and p["frequency"] == "QUARTERLY"
+    assert p["ttmSpecial"] == pytest.approx(3.0) and p["ttmDividends"] == pytest.approx(4.0)
+    assert p["indicatedAnnual"] == pytest.approx(1.0)
+
+
+def test_dividends_before_a_split_are_restated_per_current_share():
+    acts = quarterly(date(2024, 1, 10), 8, amount=1.0)
+    acts = [(d, t, v if d < date(2025, 3, 1) else v / 4) for d, t, v in acts] + [(date(2025, 3, 1), "SPLIT", 4.0)]
+    p = dividend_profile(acts, date(2025, 11, 1), 25.0)
+    assert {round(x["amount"], 6) for x in p["payments"]} == {0.25}
+    assert p["ttmDividends"] == pytest.approx(1.0) and p["frequency"] == "QUARTERLY"
+    # SPLIT_INFO: the provider already adjusted the history
+    info = [(d, "SPLIT_INFO" if t == "SPLIT" else t, v) for d, t, v in acts]
+    assert dividend_profile(info, date(2025, 11, 1), 25.0)["payments"][-1]["amount"] == pytest.approx(1.0)
+
+
+def test_years_raised_counts_completed_years_with_a_higher_last_payment():
+    acts = quarterly(date(2021, 1, 10), 20, amount=0.20, step=0.01)   # raise every four payments
+    p = dividend_profile(acts, date(2025, 11, 1), 40.0)
+    assert p["yearsPaid"] == 5 and p["yearsRaised"] == 3   # 2022, 2023, 2024 vs the year before
+
+
+def fy(concept, value, end, form="10-K"):
+    return {"concept": concept, "value": value, "period_start": end - timedelta(days=364), "period_end": end,
+            "form_type": form, "filed_date": end + timedelta(days=40), "accession_no": f"A-{end}", "source_url": "u"}
+
+
+def test_payout_uses_the_latest_fiscal_year_with_net_income():
+    end, prev = date(2025, 9, 30), date(2024, 9, 30)
+    facts = [fy("NetIncomeLoss", 100.0, end), fy("PaymentsOfDividends", 40.0, end), fy("PaymentsForRepurchaseOfCommonStock", 30.0, end),
+             fy("NetIncomeLoss", 90.0, prev), fy("PaymentsOfDividends", 35.0, prev),
+             {**fy("PaymentsOfDividends", 20.0, end), "period_start": end - timedelta(days=180)}]   # year-to-date: ignored
+    p = payout_from_facts(facts)
+    assert p["fiscalYearEnd"] == end and p["payoutRatio"] == pytest.approx(0.4) and p["totalPayoutRatio"] == pytest.approx(0.7)
+
+
+def test_payout_is_not_meaningful_with_a_loss():
+    end = date(2025, 12, 31)
+    p = payout_from_facts([fy("NetIncomeLoss", -5.0, end), fy("PaymentsOfDividends", 2.0, end)])
+    assert p["payoutRatio"] is None and p["dividendsPaid"] == 2.0
+    assert payout_from_facts([fy("PaymentsOfDividends", 2.0, end)]) is None

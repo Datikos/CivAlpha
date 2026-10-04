@@ -6,6 +6,7 @@ from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Query, Response
 
+from ...dividends import BUYBACK_CONCEPT, DIVIDEND_CONCEPTS, dividend_profile, payout_from_facts
 from ..errors import BadRequest, NotFound
 from ..llm import provider
 from ..market import MarketDataService
@@ -67,10 +68,9 @@ def meta():
     s = settings()
     llm = provider()
     return {
-        "demoDataPresent": bool(db().scalar("SELECT exists(SELECT 1 FROM company WHERE is_demo)")),
         "llmEnabled": llm.enabled,
         "llmProvider": llm.name,
-        "secMode": s.sec.mode,
+        "secConfigured": s.sec.configured,
         "fredEnabled": s.fred.enabled,
         "adminTokenRequired": s.admin_token_required,
         "missingBenchmarks": MarketDataService().missing_benchmarks(),
@@ -92,7 +92,7 @@ def meta():
 def companies():
     out = camel_all(db().all("""
         SELECT c.id, (SELECT symbol FROM ticker_history t WHERE t.company_id = c.id ORDER BY valid_from DESC LIMIT 1) AS symbol,
-               c.name, c.sector, c.benchmark_symbol, c.is_demo,
+               c.name, c.sector, c.benchmark_symbol,
                (SELECT cik FROM cik_mapping m WHERE m.company_id = c.id AND m.valid_to IS NULL LIMIT 1) AS cik,
                p.close AS latest_close, p.trade_date AS latest_close_date
         FROM company c
@@ -103,9 +103,19 @@ def companies():
                          FROM forecast ORDER BY company_id, model_kind, as_of_date DESC, version DESC"""):
         latest.setdefault(f["company_id"], {})[f["model_kind"]] = {
             "id": f["id"], "probability": value(f["probability"]), "asOfDate": value(f["as_of_date"])}
+    actions: dict[int, list] = {}
+    for a in db().all("""SELECT company_id, ex_date, action_type, value FROM corporate_action
+                         WHERE company_id IS NOT NULL AND action_type IN ('CASH_DIVIDEND', 'SPLIT')"""):
+        actions.setdefault(a["company_id"], []).append((a["ex_date"], a["action_type"], a["value"]))
     for c in out:
         c["latestForecasts"] = latest.get(c["id"], {})
+        c["dividend"] = _dividend_summary(actions.get(c["id"], []), c["latestCloseDate"], c["latestClose"])
     return out
+
+
+def _dividend_summary(actions: list, close_date: str | None, close: float | None) -> dict:
+    p = dividend_profile(actions, date.fromisoformat(close_date) if close_date else date.today(), close)
+    return {k: value(p[k]) for k in ("status", "frequency", "trailingYield", "indicatedYield", "lastExDate", "yearsPaid")}
 
 
 def pit_facts(company_id: int, as_of: datetime, latest_period_first: bool) -> list[dict]:
@@ -128,15 +138,14 @@ def _fact(f: dict) -> dict:
         "concept": f["concept"], "label": LABELS.get(f["concept"], f["concept"]), "value": value(f["value"]), "unit": f["unit"],
         "periodStart": value(f["period_start"]), "periodEnd": value(f["period_end"]), "fiscalPeriod": f["fiscal_period"],
         "formType": f["form_type"], "filedDate": value(f["filed_date"]), "accessionNo": f["accession_no"], "filingId": f["filing_id"],
-        "sourceUrl": f"/filings/{f['filing_id']}" if f["is_demo"] and f["filing_id"] is not None else f["source_url"],
-        "isDemo": f["is_demo"],
+        "sourceUrl": f["source_url"],
     }
 
 
 @router.get("/companies/{symbol}")
 def company(symbol: str):
     cid = resolve(symbol)
-    c = camel(db().one("SELECT c.id, c.name, c.sector, c.industry, c.benchmark_symbol, c.exchange, c.is_demo FROM company c WHERE c.id = :id",
+    c = camel(db().one("SELECT c.id, c.name, c.sector, c.industry, c.benchmark_symbol, c.exchange FROM company c WHERE c.id = :id",
                        id=cid))
     c["symbol"] = TickerResolver().current_symbol(cid)
     c["tickerHistory"] = camel_all(db().all("SELECT symbol, valid_from, valid_to, source FROM ticker_history WHERE company_id = :id ORDER BY valid_from",
@@ -180,7 +189,7 @@ def financials(symbol: str, asOf: str | None = None):  # noqa: N803 - query para
 def company_prices(symbol: str, from_: str | None = Query(None, alias="from")):
     cid = resolve(symbol)
     start = parse_date(from_) or minus_years(date.today(), 3)
-    c = db().one("SELECT benchmark_symbol, is_demo FROM company WHERE id = :id", id=cid)
+    c = db().one("SELECT benchmark_symbol FROM company WHERE id = :id", id=cid)
     bars = camel_all(db().all("""
         SELECT p.trade_date AS date, p.symbol, p.close, b.close AS benchmark_close
         FROM price_bar p LEFT JOIN price_bar b ON b.symbol = :bench AND b.trade_date = p.trade_date
@@ -188,16 +197,34 @@ def company_prices(symbol: str, from_: str | None = Query(None, alias="from")):
     actions = camel_all(db().all("""
         SELECT ex_date, action_type AS type, value, symbol FROM corporate_action WHERE company_id = :id AND ex_date >= :from ORDER BY ex_date""",
         id=cid, **{"from": start}))
-    return {"symbol": TickerResolver().current_symbol(cid), "benchmarkSymbol": c["benchmark_symbol"], "isDemo": c["is_demo"],
+    return {"symbol": TickerResolver().current_symbol(cid), "benchmarkSymbol": c["benchmark_symbol"],
             "bars": bars, "corporateActions": actions}
 
 
+@router.get("/companies/{symbol}/dividends")
+def company_dividends(symbol: str):
+    """Recorded cash dividends as of the latest close, plus the latest fiscal year's payout as filed."""
+    cid = resolve(symbol)
+    last = db().one("SELECT close, trade_date FROM price_bar WHERE company_id = :id ORDER BY trade_date DESC LIMIT 1", id=cid)
+    actions = [(a["ex_date"], a["action_type"], a["value"]) for a in db().all(
+        "SELECT ex_date, action_type, value FROM corporate_action WHERE company_id = :id AND action_type IN ('CASH_DIVIDEND', 'SPLIT')",
+        id=cid)]
+    p = dividend_profile(actions, last["trade_date"] if last else date.today(), float(last["close"]) if last else None)
+    wanted = {"NetIncomeLoss", BUYBACK_CONCEPT, *DIVIDEND_CONCEPTS}
+    payout = payout_from_facts(f for f in pit_facts(cid, datetime.now(timezone.utc), True) if f["concept"] in wanted)
+    p["payout"] = None if payout is None else {k: value(v) for k, v in payout.items()}
+    p["symbol"] = TickerResolver().current_symbol(cid)
+    p["priceDate"] = value(last["trade_date"]) if last else None
+    p["price"] = value(last["close"]) if last else None
+    return p
+
+
 def with_url(f: dict) -> dict:
-    """Demo filings are not on EDGAR: link to the stored copy instead of a sec.gov URL."""
+    """The EDGAR URL, plus a link to the stored original."""
     doc_id = f.pop("sourceDocumentId", None)
     src = f.pop("sourceUrl", None)
     f["documentUrl"] = None if doc_id is None else f"/api/documents/{doc_id}"
-    f["url"] = f["documentUrl"] if f.get("isDemo") else src
+    f["url"] = src
     return f
 
 
@@ -205,8 +232,7 @@ def with_url(f: dict) -> dict:
 def company_filings(symbol: str):
     cid = resolve(symbol)
     return [with_url(camel(r)) for r in db().all("""
-        SELECT f.id, f.accession_no, f.form_type, f.period_of_report, f.filed_date, f.accepted_at, f.items, f.amends_accession,
-               f.is_demo, sd.url AS source_url, f.source_document_id,
+        SELECT f.id, f.accession_no, f.form_type, f.period_of_report, f.filed_date, f.accepted_at, f.items, f.amends_accession, sd.url AS source_url, f.source_document_id,
                (SELECT count(*) FROM filing_passage p WHERE p.filing_id = f.id) AS passage_count,
                (SELECT count(*) FROM xbrl_fact x WHERE x.filing_id = f.id) AS fact_count
         FROM filing f LEFT JOIN source_document sd ON sd.id = f.source_document_id
@@ -216,9 +242,9 @@ def company_filings(symbol: str):
 # --------------------------------------------------------------------------- exposures
 def _shape_exposure(r: dict) -> dict:
     m = {camel_key(k): value(r[k]) for k in ("id", "target_type", "target_code", "channel", "share", "basis", "confidence", "method",
-                                              "rationale", "available_at", "period_end", "version", "is_demo")}
+                                              "rationale", "available_at", "period_end", "version")}
     if r["filing_id"] is not None:
-        url = f"/filings/{r['filing_id']}" if r["filing_demo"] or r["filing_url"] is None else r["filing_url"]
+        url = f"/filings/{r['filing_id']}" if r["filing_url"] is None else r["filing_url"]
         m["filing"] = {"id": r["filing_id"], "accessionNo": r["accession_no"], "formType": r["form_type"], "url": url}
     else:
         m["filing"] = None
@@ -235,8 +261,8 @@ def exposures(symbol: str, asOf: str | None = None):  # noqa: N803
     ex = [_shape_exposure(r) for r in db().all("""
         SELECT DISTINCT ON (x.target_type, x.target_code, x.exposure_channel)
                x.id, x.target_type, x.target_code, x.exposure_channel AS channel, x.share, x.basis, x.confidence, x.method,
-               x.rationale, x.available_at, x.period_end, x.version, x.is_demo,
-               f.id AS filing_id, f.accession_no, f.form_type, f.is_demo AS filing_demo, f.source_document_id, sd.url AS filing_url,
+               x.rationale, x.available_at, x.period_end, x.version,
+               f.id AS filing_id, f.accession_no, f.form_type, f.source_document_id, sd.url AS filing_url,
                p.id AS passage_id, p.section AS passage_section, p.text AS passage_text,
                xf.id AS fact_id, xf.concept AS fact_concept, xf.value AS fact_value, xf.dimensions AS fact_dimensions
         FROM company_exposure x
@@ -267,8 +293,7 @@ def exposures(symbol: str, asOf: str | None = None):  # noqa: N803
 @router.get("/filings/{filing_id}")
 def filing(filing_id: int):
     r = db().one("""
-        SELECT f.id, f.accession_no, f.form_type, f.period_of_report, f.filed_date, f.accepted_at, f.items, f.amends_accession,
-               f.is_demo, sd.url AS source_url, f.source_document_id,
+        SELECT f.id, f.accession_no, f.form_type, f.period_of_report, f.filed_date, f.accepted_at, f.items, f.amends_accession, sd.url AS source_url, f.source_document_id,
                (SELECT symbol FROM ticker_history t WHERE t.company_id = f.company_id ORDER BY valid_from DESC LIMIT 1) AS company_symbol
         FROM filing f LEFT JOIN source_document sd ON sd.id = f.source_document_id WHERE f.id = :id""", id=filing_id)
     if r is None:
@@ -301,7 +326,7 @@ def document(doc_id: int):
 SUMMARY = """
     SELECT f.id, f.company_id, f.symbol, c.name AS company_name, f.benchmark_symbol, f.model_kind, f.probability, f.prob_low,
            f.prob_high, f.horizon_trading_days, f.as_of_date, f.as_of, f.issued_at, f.issue_mode, f.version, f.supersedes_id,
-           f.reason, f.is_demo,
+           f.reason,
            o.window_end_date, o.stock_return, o.benchmark_return, o.excess_return, o.outcome, o.brier
     FROM forecast f JOIN company c ON c.id = f.company_id LEFT JOIN forecast_outcome o ON o.forecast_id = f.id"""
 
@@ -355,7 +380,7 @@ def forecast(forecast_id: int):
 # --------------------------------------------------------------------------- accuracy
 @router.get("/accuracy")
 def accuracy():
-    ev = db().one("""SELECT id, run_at, data_cutoff, is_demo, config, metrics, comparison, calibration, trading, folds, verdict
+    ev = db().one("""SELECT id, run_at, data_cutoff, config, metrics, comparison, calibration, trading, folds, verdict
                      FROM model_evaluation ORDER BY id DESC LIMIT 1""")
     by_mode: dict[str, dict] = {}
     for r in db().all("""
@@ -371,7 +396,7 @@ def accuracy():
 
 # --------------------------------------------------------------------------- strategies, decisions, time machine
 def _latest_run():
-    r = db().one("SELECT id, run_at, data_cutoff, oos_start, config, summary, is_demo FROM strategy_run ORDER BY id DESC LIMIT 1")
+    r = db().one("SELECT id, run_at, data_cutoff, oos_start, config, summary FROM strategy_run ORDER BY id DESC LIMIT 1")
     return camel(r) if r else None
 
 
@@ -413,7 +438,7 @@ def decisions(date_: str | None = Query(None, alias="date")):
         SELECT s.id, s.company_id, c.name,
                (SELECT symbol FROM ticker_history t WHERE t.company_id = c.id ORDER BY valid_from DESC LIMIT 1) AS symbol,
                s.as_of_date, s.strategy_key, s.action, s.probability, s.entry_p, s.exit_p, s.weight, s.rank,
-               s.factors, s.rule_votes, s.model, s.issued_at, s.is_demo,
+               s.factors, s.rule_votes, s.model, s.issued_at,
                e.text AS explanation, e.model AS explanation_model
         FROM strategy_decision s JOIN company c ON c.id = s.company_id
         LEFT JOIN decision_explanation e ON e.decision_id = s.id
@@ -424,12 +449,12 @@ def decisions(date_: str | None = Query(None, alias="date")):
 
 @router.get("/timemachine")
 def time_machine_runs():
-    return camel_all(db().all("SELECT id, as_of_date, run_at, data_cutoff, headline, is_demo FROM time_machine_run ORDER BY id DESC LIMIT 50"))
+    return camel_all(db().all("SELECT id, as_of_date, run_at, data_cutoff, headline FROM time_machine_run ORDER BY id DESC LIMIT 50"))
 
 
 @router.get("/timemachine/{run_id}")
 def time_machine_run(run_id: int):
-    r = db().one("SELECT id, as_of_date, run_at, data_cutoff, headline, is_demo, result FROM time_machine_run WHERE id = :id", id=run_id)
+    r = db().one("SELECT id, as_of_date, run_at, data_cutoff, headline, result FROM time_machine_run WHERE id = :id", id=run_id)
     if r is None:
         raise NotFound(f"no time machine run {run_id}")
     return camel(r)

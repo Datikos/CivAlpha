@@ -18,8 +18,8 @@ from ..universe import UniverseService
 from .csv_prices import ActionRow, PriceBarRow, parse_actions, parse_bars
 
 _INSERT_ACTION = """
-    INSERT INTO corporate_action (company_id, symbol, ex_date, action_type, value, announced_at, provider, source_document_id, is_demo)
-    VALUES (:c, :s, :d, :t, :v, :a, :p, :doc, :demo) ON CONFLICT (symbol, ex_date, action_type) DO NOTHING"""
+    INSERT INTO corporate_action (company_id, symbol, ex_date, action_type, value, announced_at, provider, source_document_id)
+    VALUES (:c, :s, :d, :t, :v, :a, :p, :doc) ON CONFLICT (symbol, ex_date, action_type) DO NOTHING"""
 
 
 @dataclass(frozen=True)
@@ -46,9 +46,9 @@ class MarketDataService:
         self.tickers = tickers or TickerResolver(self.db)
         self.universe = universe or UniverseService(self.db)
 
-    def import_prices(self, csv: bytes, file_name: str, provider: str, demo: bool) -> ImportResult:
+    def import_prices(self, csv: bytes, file_name: str, provider: str) -> ImportResult:
         d = self.docs.store(NewDocument("PRICE_FILE", provider, "file://" + file_name, None, "Price file " + file_name, None,
-                                        "text/csv", csv, demo))
+                                        "text/csv", csv))
         rows = parse_bars(csv)
         benchmarks = set(self.universe.benchmark_symbols())
         spans: dict[str, list] = {}
@@ -64,10 +64,10 @@ class MarketDataService:
                     unknown.add(r.symbol)
                     continue
             resolved.append(Resolved(company_id, r))
-        res = self.store(resolved, provider, d.id, demo)
+        res = self.store(resolved, provider, d.id)
         return ImportResult(len(rows), res.inserted, res.unchanged, res.revised, sorted(unknown))
 
-    def store(self, resolved: list[Resolved], provider: str, document_id: int, demo: bool) -> ImportResult:
+    def store(self, resolved: list[Resolved], provider: str, document_id: int) -> ImportResult:
         """Writes resolved bars: new bars are inserted; an identical bar is a no-op; a different close is a correction
         (old values archived in price_bar_revision, bar becomes version n+1)."""
         with self.db.transaction():
@@ -88,7 +88,7 @@ class MarketDataService:
                 seen.add(key)
                 prev = existing.get(key)
                 p = {"c": x.company_id, "s": r.symbol, "d": r.date, "o": r.open, "h": r.high, "l": r.low, "cl": r.close,
-                     "v": r.volume, "p": provider, "doc": document_id, "demo": demo}
+                     "v": r.volume, "p": provider, "doc": document_id}
                 if prev is None:
                     batch.append(p)
                 elif r.close is not None and prev.compare(r.close) == 0:
@@ -98,38 +98,38 @@ class MarketDataService:
             # archive the replaced values, then apply the corrections as a new version of each bar
             self.db.executemany("""
                 INSERT INTO price_bar_revision (symbol, trade_date, company_id, version, open, high, low, close, volume, provider,
-                                                source_document_id, ingested_at, superseded_by_document_id, is_demo)
+                                                source_document_id, ingested_at, superseded_by_document_id)
                 SELECT symbol, trade_date, company_id, version, open, high, low, close, volume, provider, source_document_id,
-                       ingested_at, :doc, is_demo FROM price_bar WHERE symbol = :s AND trade_date = :d""", corrections)
+                       ingested_at, :doc FROM price_bar WHERE symbol = :s AND trade_date = :d""", corrections)
             self.db.executemany("""
                 UPDATE price_bar SET open = :o, high = :h, low = :l, close = :cl, volume = :v, provider = :p, source_document_id = :doc,
                        ingested_at = now(), version = version + 1 WHERE symbol = :s AND trade_date = :d""", corrections)
             inserted = max(0, self.db.executemany("""
-                INSERT INTO price_bar (company_id, symbol, trade_date, open, high, low, close, volume, provider, source_document_id, is_demo)
-                VALUES (:c, :s, :d, :o, :h, :l, :cl, :v, :p, :doc, :demo) ON CONFLICT (symbol, trade_date) DO NOTHING""", batch))
+                INSERT INTO price_bar (company_id, symbol, trade_date, open, high, low, close, volume, provider, source_document_id)
+                VALUES (:c, :s, :d, :o, :h, :l, :cl, :v, :p, :doc) ON CONFLICT (symbol, trade_date) DO NOTHING""", batch))
         return ImportResult(len(resolved), inserted, unchanged, len(corrections), [])
 
-    def store_actions(self, company_id: int | None, actions: list[ActionRow], provider: str, document_id: int, demo: bool) -> int:
+    def store_actions(self, company_id: int | None, actions: list[ActionRow], provider: str, document_id: int) -> int:
         """Stores corporate actions already attributed to a company (None = benchmark); duplicates are ignored."""
         n = 0
         for a in actions:
             n += self.db.execute(_INSERT_ACTION, c=company_id, s=a.symbol, d=a.ex_date, t=a.type, v=a.value, a=a.announced_at,
-                                 p=provider, doc=document_id, demo=demo)
+                                 p=provider, doc=document_id)
         return n
 
-    def import_actions(self, csv: bytes, file_name: str, provider: str, demo: bool) -> int:
+    def import_actions(self, csv: bytes, file_name: str, provider: str) -> int:
         d = self.docs.store(NewDocument("PRICE_FILE", provider, "file://" + file_name, None, "Corporate actions " + file_name, None,
-                                        "text/csv", csv, demo))
+                                        "text/csv", csv))
         benchmarks = set(self.universe.benchmark_symbols())
         n = 0
         for a in parse_actions(csv):
             company_id = None if a.symbol in benchmarks else self.tickers.company_at(a.symbol, a.ex_date)
             n += self.db.execute(_INSERT_ACTION, c=company_id, s=a.symbol, d=a.ex_date, t=a.type, v=a.value, a=a.announced_at,
-                                 p=provider, doc=d.id, demo=demo)
+                                 p=provider, doc=d.id)
         return n
 
     def missing_benchmarks(self) -> list[str]:
-        """Configured benchmark ETFs (config/universe.yml) that have no price bars yet, sorted."""
+        """Benchmark ETFs assigned to companies that have no price bars yet, sorted."""
         present = set(self.db.scalars("SELECT DISTINCT symbol FROM price_bar WHERE company_id IS NULL"))
         return sorted(set(self.universe.benchmark_symbols()) - present)
 
@@ -139,7 +139,7 @@ class MarketDataService:
         missing = self.missing_benchmarks()
         if self.latest_benchmark_date() is None:
             raise Problem("No benchmark ETF prices are loaded (" + ", ".join(self.universe.benchmark_symbols())
-                          + "). Run 'Update prices' (needs CIVALPHA_PRICE_PROVIDER), load the demo dataset, or import a prices CSV "
+                          + "). Run 'Update prices' (needs CIVALPHA_PRICE_PROVIDER) or import a prices CSV "
                             "that includes these ETFs, then try again.")
         if not missing:
             return None

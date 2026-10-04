@@ -8,36 +8,39 @@ sources, the uncertainty, and how accurate the forecasts turned out to be.
 return of its sector benchmark ETF, measured from the close of the as-of date `t` to the close of `t+21`.
 
 This is research software. It has no brokerage connection and places no orders. It claims no
-profitability unless the cost-adjusted walk-forward evidence supports it, and on the demo data it does not.
+profitability unless the cost-adjusted walk-forward evidence supports it. It works on real data only.
 
 ## Quick start
 
 Requires Docker with Compose v2. The stack uses about 0.8 GB of RAM while idle and needs no GPU.
 
-```bash
-cp .env.example .env            # optional; everything works with defaults
-docker compose up -d --build    # postgres, api, worker, frontend
-open http://localhost:8088      # or browse to it
-```
+1. Configure the sources in `.env`:
+   ```bash
+   cp .env.example .env
+   ```
+   * **SEC filings:** `SEC_USER_AGENT="Your Name you@example.com"`. The SEC requires you to identify yourself;
+     no key is needed.
+   * **Daily prices:** `CIVALPHA_PRICE_PROVIDER=tiingo` plus `TIINGO_API_KEY` (free key at tiingo.com).
+     `CIVALPHA_PRICE_PROVIDER=yahoo` needs no key but uses an unofficial API, so personal research only.
+   * **Optional:**
+     * `FRED_API_KEY` (free) for macro series;
+     * `EVENTS_FEDERAL_REGISTER_ENABLED=true` and `EVENTS_FED_RSS_ENABLED=true` for official trade and rate events;
+     * `EVENTS_NEWS_FEEDS` for news discovery;
+     * `CIVALPHA_LLM_PROVIDER=anthropic` with `ANTHROPIC_API_KEY`.
+2. Start the stack:
+   ```bash
+   docker compose up -d --build    # postgres, api, worker, frontend
+   open http://localhost:8088
+   ```
+3. On the **Universe** page, add the stocks to track. **Look up on SEC** fills in the CIK and name; then pick a
+   sector, an industry and the sector benchmark ETF (for example `XLK` for technology).
+4. On **Data & pipeline**, click **Run pipeline**. That one job:
+   * downloads prices, dividends and splits for every stock and benchmark ETF;
+   * ingests SEC filings (XBRL facts, passages, exposures);
+   * fetches macro data and policy events;
+   * evaluates the models, issues forecasts, runs the strategy lab and records the AI's decisions.
 
-To run the full demo, either click **Data & pipeline → Load demo dataset** in the UI, or call:
-
-```bash
-curl -X POST http://localhost:8088/api/admin/demo/load
-```
-
-`scripts/demo.sh` does all of the above in one step. The demo takes about 40 seconds and runs these steps:
-
-1. Generates the synthetic dataset.
-2. Loads the universe and imports prices and corporate actions through the CSV importer.
-3. Loads macro data with vintages.
-4. Ingests SEC-format filings for 24 companies through the same parser that live mode uses.
-5. Extracts passages and derives exposures.
-6. Ingests events and deduplicates the news reports.
-7. Runs a walk-forward evaluation.
-8. Replays 12 monthly forecast dates.
-9. Issues live forecasts.
-10. Resolves outcomes.
+   Later runs, from the button or the optional schedule, only fetch what is new.
 
 Other commands:
 
@@ -46,29 +49,6 @@ docker compose logs -f api worker   # follow logs
 docker compose down                 # stop (data is kept in volumes)
 docker compose down -v              # stop and delete the database and stored documents
 ```
-
-### Real data instead of the demo
-
-1. Start from an empty database. The demo and real data are never mixed. If you loaded the demo before, run
-   `docker compose down -v`.
-2. In `.env`, set a price provider. `CIVALPHA_PRICE_PROVIDER=yahoo` needs no key but uses an unofficial API, so
-   personal research only. Alternatively set `CIVALPHA_PRICE_PROVIDER=tiingo` plus `TIINGO_API_KEY`. For SEC
-   filings, also set `CIVALPHA_SEC_MODE=live` and `SEC_USER_AGENT="Your Name you@example.com"`.
-3. Run `docker compose up -d`, then click **Data & pipeline → Run pipeline**. That one job:
-   * seeds the universe from `config/universe.yml`;
-   * downloads prices, dividends and splits for every stock and benchmark ETF;
-   * ingests SEC filings;
-   * evaluates the models and issues forecasts.
-
-   Later runs, whether from the button or the optional schedule, only download new bars.
-
-Manage which stocks are tracked on the **Universe** page (see below).
-
-> **Demo data is synthetic.** Company names and CIKs are real public identifiers. All prices, filings, XBRL
-> values, events (titled `[DEMO]`) and macro values are generated. The generator plants two effects on purpose:
-> post-tariff drift for exposed companies, and leverage-dependent drift after rate changes. These let you check
-> that the pipeline works end to end. Accuracy on demo data says nothing about real markets. Every demo row
-> has `is_demo = true`, and the UI shows a banner and badges for it.
 
 ## Architecture
 
@@ -85,7 +65,7 @@ Manage which stocks are tracked on the **Universe** page (see below).
                                         │ pipeline_job table (queue + log)
 ┌───────────────────────────────────────▼──────────────────────────────┐
 │ worker — Python, same image: runs jobs one at a time + schedules     │
-│  ingestion: SEC client (live: UA + ≤10 rps, or fixtures) · XBRL /    │
+│  ingestion: SEC EDGAR client (UA + ≤10 rps) · XBRL /                 │
 │  companyfacts parsers · passages · exposures · prices (CSV, Tiingo,  │
 │  Yahoo) · FRED/ALFRED · Federal Register / Fed RSS / news · dedup    │
 │  models: point-in-time features · logistic models · walk-forward     │
@@ -97,7 +77,6 @@ Manage which stocks are tracked on the **Universe** page (see below).
                          └─────────────────────────────┘
   volume civdata:/data
     documents/  original sources (content-addressed)
-    demo/       generated demo inputs
     imports/    CSV drop folder (prices*.csv, corporate_actions*.csv)
     uploads/    CSV uploads waiting for the worker
 ```
@@ -230,18 +209,16 @@ changing every later price leaves the predictions untouched.
 
 | Source | Default | To enable | Notes |
 |---|---|---|---|
-| SEC EDGAR (submissions, companyfacts, filing documents, XBRL instances) | `fixture` (demo files) | `CIVALPHA_SEC_MODE=live`, `SEC_USER_AGENT="Your Name you@example.com"` | No key needed. The client refuses to start without a User-Agent that includes an e-mail and caps requests at ≤10/s (default 5), with gzip and backoff on 429/503. Fetches the last `SEC_LOOKBACK_YEARS` years. |
-| Daily prices and corporate actions (automatic) | off | `CIVALPHA_PRICE_PROVIDER=yahoo` (no key; unofficial, personal research only) or `tiingo` + `TIINGO_API_KEY` (free key) | Runs with every pipeline run and on **Update prices**. Downloads are incremental, re-checking the last week of bars so corrections are versioned. Bars are stored under the ticker valid on each date. Never runs against the demo database. |
-| Daily prices and corporate actions | CSV importer | Upload in Admin, or drop `prices*.csv` / `corporate_actions*.csv` into the `civdata` volume under `/data/imports` and run the pipeline | Columns: `symbol,date,open,high,low,close,volume` and `symbol,ex_date,action_type(SPLIT\|CASH_DIVIDEND),value,announced_at`. Use raw (unadjusted) prices. Vendor adapters implement `market/PriceProvider`. |
+| SEC EDGAR (submissions, companyfacts, filing documents, XBRL instances) | off until configured | `SEC_USER_AGENT="Your Name you@example.com"` | No key needed. The client refuses to start without a User-Agent that includes an e-mail and caps requests at ≤10/s (default 5), with gzip and backoff on 429/503. Fetches the last `SEC_LOOKBACK_YEARS` years. |
+| Daily prices and corporate actions (automatic) | off | `CIVALPHA_PRICE_PROVIDER=yahoo` (no key; unofficial, personal research only) or `tiingo` + `TIINGO_API_KEY` (free key) | Runs with every pipeline run and on **Update prices**. Downloads are incremental, re-checking the last week of bars so corrections are versioned. Bars are stored under the ticker valid on each date. |
+| Daily prices and corporate actions | CSV importer | Upload in Admin, or drop `prices*.csv` / `corporate_actions*.csv` into the `civdata` volume under `/data/imports` and run the pipeline | Columns: `symbol,date,open,high,low,close,volume` and `symbol,ex_date,action_type(SPLIT\|CASH_DIVIDEND),value,announced_at`. Use raw (unadjusted) prices. Vendor adapters implement `PriceProvider` (`backend/civalpha/platform/market/providers.py`). |
 | FRED / ALFRED | off | `FRED_API_KEY` (free) | Fetches every vintage of `FEDFUNDS` and `CPIAUCSL`. |
 | Federal Register API (official trade notices) | off | `EVENTS_FEDERAL_REGISTER_ENABLED=true` | No key needed. Event targets are extracted with deterministic rules. |
 | Federal Reserve monetary press RSS (FOMC statements) | off | `EVENTS_FED_RSS_ENABLED=true` | Parses the rate change from the statement text. |
 | News RSS (discovery only) | off | `EVENTS_NEWS_FEEDS=url1,url2` | Stays `NEWS_ONLY` and is excluded from features until an official document is linked. |
 | LLM-assisted exposure extraction | off | `CIVALPHA_LLM_PROVIDER=anthropic`, `ANTHROPIC_API_KEY` (model `CIVALPHA_LLM_MODEL`, default `claude-opus-5-5`) | Optional. Output is schema-constrained and stored as `ESTIMATED` with confidence no higher than MEDIUM. Any failure means no hints, never a failed ingest. |
 
-With live sources configured, run **Data & pipeline → Run configured pipeline**
-(`POST /api/admin/pipeline/run`). Use a separate database for live data and for the demo
-(`docker compose down -v` between them). The demo loader refuses to run if non-demo companies exist.
+With the sources configured, run **Data & pipeline → Run pipeline** (`POST /api/admin/pipeline/run`).
 
 **Licensing.** Being able to reach a market-data API does not give you the right to train models on its data or
 display it publicly. Check your vendor licence before connecting a provider or publishing derived output. Keep
@@ -249,13 +226,12 @@ keys in `.env`, which git ignores, and never in source control.
 
 ## Managing the universe
 
-The database is the source of truth for which stocks are tracked. `config/universe.yml` only seeds companies whose
-CIK is not in the database yet; a pipeline run never re-adds a stock you removed or undoes an edit.
+The database is the source of truth for which stocks are tracked, and the **Universe** page is how you change it.
 
 The **Universe** page (`/api/admin/universe`) supports these actions:
 
 * **Add** a stock by ticker. **Look up on SEC** fills in the CIK and registrant name from SEC's
-  `company_tickers.json` (live SEC mode). You then pick a sector, an optional industry, a sector benchmark ETF and
+  `company_tickers.json`. You then pick a sector, an optional industry, a sector benchmark ETF and
   a *member since* date.
   * The *member since* date defaults to today. An earlier date puts the stock into backtests for periods when it
     wasn't actually selected, which biases results toward stocks already known to have done well.
@@ -287,21 +263,22 @@ If you choose a benchmark ETF that is new to the universe, its prices are downlo
 
 All variables are listed with comments in `.env.example`. The main ones are `CIVALPHA_PORT` (8088),
 `CIVALPHA_BIND`, `CIVALPHA_ADMIN_TOKEN`, `CIVALPHA_PIPELINE_CRON`, `CIVALPHA_OUTCOMES_CRON`, `POSTGRES_PASSWORD`,
-`CIVALPHA_SEC_MODE`, `SEC_USER_AGENT`, `SEC_MAX_RPS`, `SEC_LOOKBACK_YEARS`, `FRED_API_KEY`, `EVENTS_*`,
-`CIVALPHA_LLM_PROVIDER`, `CIVALPHA_LLM_MODEL` and `ANTHROPIC_API_KEY`. The universe (24 stocks with
-sector benchmarks and ticker history) is set in `config/universe.yml`. Edit it to cover 20–50 symbols.
+`SEC_USER_AGENT`, `SEC_MAX_RPS`, `SEC_LOOKBACK_YEARS`, `CIVALPHA_PRICE_PROVIDER`, `TIINGO_API_KEY`, `FRED_API_KEY`,
+`EVENTS_*`, `CIVALPHA_LLM_PROVIDER`, `CIVALPHA_LLM_MODEL` and `ANTHROPIC_API_KEY`. The stocks themselves are managed
+on the Universe page; 20–50 symbols is a sensible size.
 
 ## Troubleshooting
 
 * **"No benchmark ETF prices are loaded"**
   * Evaluation and forecasts compare each stock with its sector benchmark ETF (`XLK`, `XLY`, `XLP`, `XLC`, `XLV`,
-    `XLI` in the default universe).
-  * Fix: load the demo, or import a prices CSV that includes those ETFs alongside the stocks.
+    `XLI` for a typical Nasdaq universe).
+  * Fix: run **Update prices** (with a price provider configured), or import a prices CSV that includes those ETFs.
   * The Data & pipeline page lists any benchmarks that are still missing.
-* **"This database already holds real (non-demo) data"**
-  * The synthetic demo is never mixed with imported data.
-  * Fix: start from an empty database with `docker compose down -v && docker compose up -d`. This also deletes
-    stored documents.
+* **"The universe is empty"**
+  * Add companies on the Universe page before running the pipeline or importing prices.
+* **"price sync failed" / "request limit reached"**
+  * The provider refused the requests (for example Tiingo's free plan allows 50 requests an hour). The pipeline
+    continues with the prices already stored; try again later.
 
 ## Tests
 
@@ -333,9 +310,7 @@ Python continue without any manual step. Never edit an applied migration; add th
 backend/   Python: civalpha/ (models, strategies, time machine) and civalpha/platform/ (API, worker, ingestion)
 db/        migration/ (SQL schema migrations)
 frontend/  Angular UI (served by nginx, proxies /api)
-config/    universe.yml
 docs/      api.md (REST contract)
-scripts/   demo.sh
 ```
 
 ## Known limitations / next steps

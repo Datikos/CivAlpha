@@ -1,25 +1,21 @@
 """The research universe: company, ticker_history, cik_mapping, universe_membership.
 
-config/universe.yml only seeds companies whose CIK is not in the database yet; after that, additions, removals and
-edits made through the API are authoritative and are never undone by a pipeline run. Membership is time-ranged
-[valid_from, valid_to): removing a stock closes its span, so past forecasts and point-in-time features still see it
-as a member for the dates it was one.
+Companies are added, edited, removed and restored through the API (the Universe page), with the CIK and name from
+SEC company_tickers.json. Membership is time-ranged [valid_from, valid_to): removing a stock closes its span, so past
+forecasts and point-in-time features still see it as a member for the dates it was one.
 """
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
-from datetime import date, datetime
-from pathlib import Path
-
-import yaml
+from dataclasses import dataclass
+from datetime import date
 
 from .errors import BadRequest, NotFound
-from .settings import settings
 from .sql import Db, db
 from .tickers import TickerResolver, pad_cik
 
 EPOCH = date(1990, 1, 1)
+DEFAULT_UNIVERSE = "default"
 
 
 @dataclass(frozen=True)
@@ -27,45 +23,6 @@ class TickerSpan:
     symbol: str
     valid_from: date | None
     valid_to: date | None
-
-
-@dataclass(frozen=True)
-class Entry:
-    symbol: str
-    name: str
-    cik: str
-    sector: str
-    industry: str | None
-    benchmark: str
-    ticker_history: list[TickerSpan] = field(default_factory=list)
-
-
-@dataclass(frozen=True)
-class UniverseConfig:
-    universe: str
-    start_date: date | None
-    benchmarks: dict[str, str]
-    companies: list[Entry]
-
-    @staticmethod
-    def load(path: str | Path) -> "UniverseConfig":
-        y = yaml.safe_load(Path(path).read_text())
-        entries = []
-        for c in y.get("companies") or []:
-            hist = [TickerSpan(str(m["symbol"]), _date(m.get("valid_from")), _date(m.get("valid_to"))) for m in c.get("ticker_history") or []]
-            entries.append(Entry(str(c["symbol"]), c.get("name"), str(c.get("cik")), c.get("sector"), c.get("industry"),
-                                 c.get("benchmark"), hist))
-        return UniverseConfig(y.get("universe"), _date(y.get("start_date")), dict(y.get("benchmarks") or {}), entries)
-
-
-def _date(o) -> date | None:
-    if o is None:
-        return None
-    if isinstance(o, datetime):
-        return o.date()
-    if isinstance(o, date):
-        return o
-    return date.fromisoformat(str(o))
 
 
 def _required(v: str | None, name: str) -> str:
@@ -79,43 +36,22 @@ def _blank_to_none(v: str | None) -> str | None:
 
 
 class UniverseService:
-    def __init__(self, database: Db | None = None, universe_file: str | None = None):
+    def __init__(self, database: Db | None = None):
         self.db = database or db()
-        self.file = Path(universe_file or settings().universe_file)
         self.tickers = TickerResolver(self.db)
 
-    def config(self) -> UniverseConfig:
-        try:
-            return UniverseConfig.load(self.file)
-        except OSError as e:
-            raise RuntimeError(f"cannot read universe file {self.file}") from e
-
     def universe_name(self) -> str:
-        return self.config().universe if self.file.is_file() else "default"
+        """Name recorded on membership rows (one universe per database)."""
+        return self.db.scalar("SELECT universe FROM universe_membership ORDER BY id LIMIT 1") or DEFAULT_UNIVERSE
 
     def benchmark_symbols(self) -> list[str]:
-        """Benchmark ETFs: those configured plus any benchmark assigned to a company in the database."""
-        out = set(self.db.scalars("SELECT DISTINCT benchmark_symbol FROM company"))
-        if self.file.is_file():
-            out |= set(self.config().benchmarks)
-        return sorted(out)
-
-    def load(self, demo: bool) -> int:
-        """Seeds companies from the config whose CIK is not in the database yet; returns the number created."""
-        cfg = self.config()
-        created = 0
-        with self.db.transaction():
-            for e in cfg.companies:
-                cik = pad_cik(e.cik)
-                if self.tickers.company_by_cik(cik) is not None:
-                    continue
-                hist = e.ticker_history or [TickerSpan(e.symbol, EPOCH, None)]
-                self._create(e.name, cik, e.sector, e.industry, e.benchmark, hist, cfg.start_date, demo, "universe config")
-                created += 1
-        return created
+        """Benchmark ETFs: the sector benchmarks assigned to companies."""
+        return sorted(self.db.scalars("SELECT DISTINCT benchmark_symbol FROM company"))
 
     # ------------------------------------------------------------------ management
-    def add(self, symbol, name, cik, sector, industry, benchmark_symbol, member_since: date | None) -> int:
+    def add(self, symbol, name, cik, sector, industry, benchmark_symbol, member_since: date | None,
+            former_tickers: list[TickerSpan] | None = None) -> int:
+        """Adds a company; `former_tickers` records earlier symbols (e.g. FB before META) as closed spans."""
         sym = _required(symbol, "symbol").upper().strip()
         if not re.fullmatch(r"[A-Z0-9.\-]{1,10}", sym):
             raise BadRequest("symbol must be 1-10 letters, digits, '.' or '-'")
@@ -134,19 +70,23 @@ class UniverseService:
             by_sym = self.tickers.company_at(sym, today)
             if by_sym is not None:
                 raise BadRequest(f"{sym} is already the current ticker of company {by_sym}")
+            spans = list(former_tickers or [])
+            # the current symbol starts where the last former one ended (or at the epoch without history)
+            spans.append(TickerSpan(sym, max((t.valid_to for t in spans if t.valid_to), default=EPOCH), None))
             return self._create(_required(name, "name").strip(), c, _required(sector, "sector").strip(), _blank_to_none(industry),
-                                bench, [TickerSpan(sym, EPOCH, None)], since, False, "manual")
+                                bench, spans, since, "manual")
 
-    def _create(self, name, cik, sector, industry, benchmark, spans, member_since, demo, source) -> int:
-        cid = self.db.scalar("""INSERT INTO company (name, sector, industry, benchmark_symbol, is_demo)
-                                VALUES (:n, :s, :i, :b, :demo) RETURNING id""", n=name, s=sector, i=industry, b=benchmark, demo=demo)
+    def _create(self, name, cik, sector, industry, benchmark, spans, member_since, source) -> int:
+        universe = self.universe_name()
+        cid = self.db.scalar("""INSERT INTO company (name, sector, industry, benchmark_symbol)
+                                VALUES (:n, :s, :i, :b) RETURNING id""", n=name, s=sector, i=industry, b=benchmark)
         self.db.execute("INSERT INTO cik_mapping (company_id, cik, valid_from, source) VALUES (:c, :cik, :f, :src)",
                         c=cid, cik=cik, f=EPOCH, src=source)
         for t in spans:
             self.db.execute("INSERT INTO ticker_history (company_id, symbol, valid_from, valid_to, source) VALUES (:c, :s, :f, :t, :src)",
                             c=cid, s=t.symbol.upper(), f=t.valid_from, t=t.valid_to, src=source)
         self.db.execute("INSERT INTO universe_membership (universe, company_id, valid_from) VALUES (:u, :c, :f)",
-                        u=self.universe_name(), c=cid, f=member_since)
+                        u=universe, c=cid, f=member_since)
         return cid
 
     def edit(self, company_id: int, name=None, sector=None, industry=None, benchmark_symbol=None) -> None:

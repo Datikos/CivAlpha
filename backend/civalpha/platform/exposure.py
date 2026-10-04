@@ -75,7 +75,7 @@ class ExposureService:
     def derive_for_filing(self, filing_id: int) -> int:
         with self.db.transaction():
             f = self.db.one("""
-                SELECT f.id, f.company_id, f.form_type, f.accepted_at, f.period_of_report, f.is_demo, c.industry, c.name
+                SELECT f.id, f.company_id, f.form_type, f.accepted_at, f.period_of_report, c.industry, c.name
                 FROM filing f JOIN company c ON c.id = f.company_id WHERE f.id = :id""", id=filing_id)
             if f is None:
                 raise LookupError(f"filing {filing_id} not found")
@@ -107,11 +107,11 @@ class ExposureService:
                     c=company_id, t=c.target_type, code=c.target_code, ch=c.channel)
                 self.db.execute("""
                     INSERT INTO company_exposure (company_id, target_type, target_code, exposure_channel, share, basis, confidence,
-                        method, filing_id, passage_id, xbrl_fact_id, available_at, period_end, rationale, version, is_demo)
-                    VALUES (:c, :t, :code, :ch, :share, :basis, :conf, :m, :f, :p, :x, :at, :pe, :r, :v, :demo)""",
+                        method, filing_id, passage_id, xbrl_fact_id, available_at, period_end, rationale, version)
+                    VALUES (:c, :t, :code, :ch, :share, :basis, :conf, :m, :f, :p, :x, :at, :pe, :r, :v)""",
                     c=company_id, t=c.target_type, code=c.target_code, ch=c.channel, share=c.share, basis=c.basis,
                     conf=c.confidence, m=c.method, f=filing_id, p=c.passage_id, x=c.fact_id, at=f["accepted_at"],
-                    pe=f["period_of_report"], r=c.rationale, v=version, demo=f["is_demo"])
+                    pe=f["period_of_report"], r=c.rationale, v=version)
                 n += 1
             return n
 

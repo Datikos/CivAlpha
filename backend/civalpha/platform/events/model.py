@@ -23,7 +23,6 @@ class Source:
     published_at: datetime | None = None
     content: bytes | None = None
     content_type: str | None = None
-    demo: bool = False
 
     @property
     def official(self) -> bool:

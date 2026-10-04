@@ -32,8 +32,6 @@
   --fc-bg: #ecebfb;
   --fc-ink: #3a2c99;
   --fc-border: #9085e9;
-  --demo-bg: #fde7e7;
-  --demo-ink: #9b1c1c;
   --good-ink: #006300;
   --good-bg: #e3f4e3;
   --bad-ink: #a12828;
@@ -75,8 +73,6 @@
     --fc-bg: #24204a;
     --fc-ink: #c6c0ff;
     --fc-border: #6e63c9;
-    --demo-bg: #4a1717;
-    --demo-ink: #ffb4b4;
     --good-ink: #5fd35f;
     --good-bg: #13301a;
     --bad-ink: #ff9a9a;
@@ -333,11 +329,6 @@ table.table {
 }
 .badge + .badge {
   margin-left: 0.3em;
-}
-.badge-demo {
-  background: var(--demo-bg);
-  color: var(--demo-ink);
-  border-color: transparent;
 }
 .badge-fact,
 .badge-official {

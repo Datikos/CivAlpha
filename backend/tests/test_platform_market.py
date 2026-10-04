@@ -101,7 +101,7 @@ def test_ticker_change_keeps_one_company_across_prices_and_lookups(tdb, market, 
            b"XLC,2022-06-08,60,61,59,60.5,100\n"
            b"XLC,2022-06-09,60,61,59,59.9,100\n"
            b"FB,2022-06-10,1,1,1,1,1\n")
-    r = market.import_prices(csv, "ticker-change.csv", "test", False)
+    r = market.import_prices(csv, "ticker-change.csv", "test")
     # FB after the rename is not a valid symbol for this company any more
     assert r.unknown_symbols == ["FB"]
     assert tdb.scalars("SELECT DISTINCT company_id FROM price_bar WHERE symbol IN ('FB','META')") == [meta(tdb)]
@@ -157,18 +157,14 @@ def test_price_sync_stores_provider_bars_under_the_ticker_valid_on_each_date(tdb
     assert "META: 2 new bars, 0 corrected, 1 corporate actions" in log
     # running again only re-checks the overlap window: nothing new
     assert price_sync.sync(log.append, fake).inserted == 0
-    # never mixed into the synthetic demo
-    tdb.execute("UPDATE company SET is_demo = true WHERE id = :c", c=meta(tdb))
-    with pytest.raises(Problem, match="synthetic demo"):
-        price_sync.sync(log.append, fake)
 
 
 def test_price_corrections_are_versioned_not_dropped(tdb, market):
     v1 = b"symbol,date,open,high,low,close,volume\nXLC,2023-03-01,60,61,59,60.00,100\nXLC,2023-03-02,60,61,59,61.00,100\n"
-    first = market.import_prices(v1, "vendor-v1.csv", "vendor", False)
+    first = market.import_prices(v1, "vendor-v1.csv", "vendor")
     assert first.inserted == 2
     v2 = b"symbol,date,open,high,low,close,volume\nXLC,2023-03-01,60,61,59,60.00,100\nXLC,2023-03-02,60,61,59,61.50,120\n"
-    second = market.import_prices(v2, "vendor-v2.csv", "vendor", False)
+    second = market.import_prices(v2, "vendor-v2.csv", "vendor")
     assert second.inserted == 0
     assert second.unchanged == 1
     assert second.revised == 1
@@ -184,7 +180,7 @@ def test_price_corrections_are_versioned_not_dropped(tdb, market):
     assert old["was_from"] == "file://vendor-v1.csv"
     assert old["replaced_by"] == "file://vendor-v2.csv"
     # re-importing the corrected file again changes nothing
-    assert market.import_prices(v2, "vendor-v2.csv", "vendor", False).revised == 0
+    assert market.import_prices(v2, "vendor-v2.csv", "vendor").revised == 0
 
 
 def test_price_sync_stops_at_the_rate_limit_and_skips_symbols_that_are_current(price_sync):
@@ -232,6 +228,6 @@ def test_unconfigured_provider_and_macro_store(tdb, docs, price_sync):
         macro.fetch_fred("FEDFUNDS")
     macro.upsert_series("FEDFUNDS", "Federal Funds Rate", "Percent", "Monthly", "test")
     obs = [Observation("FEDFUNDS", date(2024, 1, 1), 5.33, date(2024, 2, 1), None)]
-    assert macro.insert(obs, False) == 1
-    assert macro.insert([Observation("FEDFUNDS", date(2024, 1, 1), 5.33, date(2024, 2, 1), date(2024, 3, 1))], False) == 1
+    assert macro.insert(obs) == 1
+    assert macro.insert([Observation("FEDFUNDS", date(2024, 1, 1), 5.33, date(2024, 2, 1), date(2024, 3, 1))]) == 1
     assert tdb.scalar("SELECT realtime_end FROM macro_observation WHERE series_id = 'FEDFUNDS'") == date(2024, 3, 1)

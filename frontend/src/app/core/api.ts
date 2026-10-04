@@ -33,6 +33,7 @@ export const apiUrl = {
     withQuery(`${BASE}/companies/${enc(symbol)}/prices`, { from }),
   financials: (symbol: string, asOf?: string | null) =>
     withQuery(`${BASE}/companies/${enc(symbol)}/financials`, { asOf }),
+  dividends: (symbol: string) => `${BASE}/companies/${enc(symbol)}/dividends`,
   filings: (symbol: string) => `${BASE}/companies/${enc(symbol)}/filings`,
   filing: (id: number | string) => `${BASE}/filings/${enc(String(id))}`,
   exposures: (symbol: string, asOf?: string | null) =>
@@ -60,10 +61,6 @@ export class ApiService {
 
   createEvent(body: NewEventRequest): Observable<NewEventResponse> {
     return this.http.post<NewEventResponse>(`${BASE}/events`, body);
-  }
-
-  loadDemo(): Observable<Job> {
-    return this.http.post<Job>(`${BASE}/admin/demo/load`, {});
   }
 
   runPipeline(): Observable<Job> {

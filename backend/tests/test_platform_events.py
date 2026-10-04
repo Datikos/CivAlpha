@@ -17,7 +17,7 @@ from civalpha.platform.storage import DocumentStore
 
 def draft(cat, typ, title, day, targets, url):
     return EventDraft(cat, typ, title, None, date.fromisoformat(day), datetime.fromisoformat(day + "T20:00:00+00:00"), None, {},
-                      targets, Source(url, title, "x", "NEWS_DISCOVERY", None, None, None, False))
+                      targets, Source(url, title, "x", "NEWS_DISCOVERY", None, None, None))
 
 
 OFFICIAL = Existing(7, "TRADE_TARIFF", "TARIFF_IMPOSED", "New duties on electronics assembled in China and Vietnam", date(2026, 9, 22),
@@ -79,8 +79,8 @@ def test_extracts_trade_targets():
 def test_maps_xbrl_geographic_members():
     assert vocabulary.geo_member("country:CN") == vocabulary.GeoMatch("CN", True)
     assert vocabulary.geo_member("aapl:GreaterChinaSegmentMember") == vocabulary.GeoMatch("CN", False)
-    assert vocabulary.geo_member("civdemo:EuropeMember") == vocabulary.GeoMatch("EU", False)
-    assert vocabulary.geo_member("civdemo:RestOfWorldMember") is None
+    assert vocabulary.geo_member("ext:EuropeMember") == vocabulary.GeoMatch("EU", False)
+    assert vocabulary.geo_member("ext:RestOfWorldMember") is None
     assert vocabulary.geo_member("us-gaap:AmericasMember") is None
 
 
@@ -122,13 +122,13 @@ def official_draft(url="https://www.federalregister.gov/d/2026-1", published="20
     return EventDraft("TRADE_TARIFF", "TARIFF_IMPOSED", title, "25% additional duties", date(2026, 9, 22), _ts(published), "USTR",
                       attrs if attrs is not None else {"severity": 0.8, "tariff_rate_pct": 25},
                       [Target("COUNTRY", "CN", 25.0), Target("COUNTRY", "VN", 25.0), Target("PRODUCT", "CONSUMER_ELECTRONICS", 25.0)],
-                      Source(url, title, "Federal Register", "OFFICIAL_PRIMARY", _ts(published), b"<html>notice</html>", "text/html", False))
+                      Source(url, title, "Federal Register", "OFFICIAL_PRIMARY", _ts(published), b"<html>notice</html>", "text/html"))
 
 
 def news_draft(url="https://news.example/1", title="Wire report: new duties on electronics assembled in China and Vietnam",
                published="2026-09-22T15:00:00+00:00", targets=None):
     return EventDraft("TRADE_TARIFF", "TARIFF_IMPOSED", title, None, date(2026, 9, 22), _ts(published), None, {"severity": 0.3},
-                      targets or [], Source(url, title, "news.example", "NEWS_DISCOVERY", _ts(published), None, None, False))
+                      targets or [], Source(url, title, "news.example", "NEWS_DISCOVERY", _ts(published), None, None))
 
 
 def _event(tdb, event_id):
@@ -148,7 +148,6 @@ def test_news_report_merges_into_official_event(tdb, events):
     assert e["version"] == 1
     assert e["attributes"] == {"severity": 0.8, "tariff_rate_pct": 25}
     assert e["dedup_key"] == "TRADE_TARIFF|2026-09-22|china electronic duty vietnam assembled"
-    assert e["is_demo"] is False
     assert e["actor_id"] == events.actor_id("USTR")
     assert _sources(tdb, r.event_id) == [{"role": "OFFICIAL_PRIMARY", "url": "https://www.federalregister.gov/d/2026-1",
                                           "source_type": "OFFICIAL_EVENT"}]
@@ -170,15 +169,13 @@ def test_news_report_merges_into_official_event(tdb, events):
 
 
 def test_official_source_upgrades_news_only_event(tdb, events):
-    n = events.ingest(news_draft(targets=[Target("COUNTRY", "CN", None)]), demo=True)
+    n = events.ingest(news_draft(targets=[Target("COUNTRY", "CN", None)]))
     assert (n.deduplicated, n.upgraded, n.created) == (False, False, True)
     e = _event(tdb, n.event_id)
     assert e["evidence_status"] == "NEWS_ONLY"
     assert e["actor_id"] is None
-    assert e["is_demo"] is True
     assert e["published_at"] == _ts("2026-09-22T15:00:00+00:00")
     assert tdb.scalar("SELECT count(*) FROM actor_record") == 0
-    assert tdb.scalar("SELECT is_demo FROM source_document WHERE url = 'https://news.example/1'") is True
 
     o = events.ingest(official_draft(published="2026-09-22T13:45:00+00:00"))
     assert (o.event_id, o.deduplicated, o.upgraded, o.created) == (n.event_id, True, True, False)
@@ -210,7 +207,7 @@ def test_monetary_vote_record_and_actor_profile(tdb, events):
     d = EventDraft("MONETARY_POLICY", "RATE_DECISION", "FOMC statement: target range lowered", "FOMC statement", date(2025, 9, 17), pub,
                    "Federal Open Market Committee", {"rate_change_bps": -25, "votes_for": 11, "votes_against": 1},
                    [Target("INTEREST_RATE", "US_POLICY_RATE", -25.0)],
-                   Source("https://www.federalreserve.gov/x.htm", "FOMC statement", "Fed", "OFFICIAL_PRIMARY", pub, b"x", "text/html", False))
+                   Source("https://www.federalreserve.gov/x.htm", "FOMC statement", "Fed", "OFFICIAL_PRIMARY", pub, b"x", "text/html"))
     r = events.ingest(d)
     rec = tdb.one("SELECT * FROM actor_record WHERE actor_id = :a", a=a["id"])
     assert rec["record_type"] == "VOTE"
