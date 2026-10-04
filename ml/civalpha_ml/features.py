@@ -306,7 +306,9 @@ def build_rows(bundle: DataBundle, idx: int, as_of: pd.Timestamp | None = None, 
     as_of = pit.close_ts(d) if as_of is None else pit.to_utc(as_of)
     # Always build every member: cross-sectional references (mean leverage) must not depend on which
     # companies a caller asked for, or a targeted re-issue would see different features than training did.
-    members = pit.members_as_of(bundle.membership, d)
+    # membership is judged at the cutoff: for backtests that is the close of d; for a live issue it is "now",
+    # so a stock added (or removed) today is included (or excluded) immediately
+    members = pit.members_as_of(bundle.membership, pd.Timestamp(as_of.date()))
     comp = bundle.companies.set_index("id")
     rows = []
     for cid in sorted(members):

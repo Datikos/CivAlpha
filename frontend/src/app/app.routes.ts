@@ -46,6 +46,11 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/filing-detail').then((m) => m.FilingDetailPage),
   },
   {
+    path: 'universe',
+    title: 'Universe · CivAlpha',
+    loadComponent: () => import('./pages/universe').then((m) => m.UniversePage),
+  },
+  {
     path: 'events',
     title: 'Policy events · CivAlpha',
     loadComponent: () => import('./pages/events-list').then((m) => m.EventsPage),

@@ -40,8 +40,9 @@ const ACTIVE = new Set(['RUNNING', 'PENDING', 'QUEUED', 'STARTED']);
           No prices yet for benchmark ETF{{ count > 1 ? 's' : '' }} {{ meta.meta()?.missingBenchmarks?.join(', ') }}:
           companies measured against {{ count > 1 ? 'them' : 'it' }} are left out of evaluation and forecasts.
         } @else {
-          No price data yet. Load the demo dataset, or import a prices CSV that includes the stocks and the benchmark ETFs
-          ({{ meta.meta()?.missingBenchmarks?.join(', ') }}), before evaluating or issuing forecasts.
+          No price data yet. Use <strong>Update prices</strong> (automatic provider), load the demo dataset, or import a
+          prices CSV that includes the stocks and the benchmark ETFs ({{ meta.meta()?.missingBenchmarks?.join(', ') }}),
+          before evaluating or issuing forecasts.
         }
       </div>
     }
@@ -109,7 +110,29 @@ const ACTIVE = new Set(['RUNNING', 'PENDING', 'QUEUED', 'STARTED']);
       </div>
 
       <div class="card">
-        <h3>Import prices (CSV)</h3>
+        <h3>Automatic prices</h3>
+        @if (meta.meta()?.priceProvider && meta.meta()?.priceProvider !== 'none') {
+          <p class="small muted">
+            Provider: <strong>{{ meta.meta()?.priceProvider }}</strong>. Downloads daily bars, dividends and splits for
+            every active stock and benchmark ETF. Also runs with every pipeline run.
+          </p>
+          <button type="button" class="btn btn-primary" [disabled]="busy()" (click)="run('Price update', api.syncPrices())">
+            Update prices
+          </button>
+        } @else {
+          <p class="small">
+            No provider configured. Add one line to <span class="mono">.env</span> and restart
+            (<span class="mono">docker compose up -d</span>):
+          </p>
+          <p class="small mono">CIVALPHA_PRICE_PROVIDER=yahoo</p>
+          <p class="small muted">
+            Yahoo needs no key but is unofficial (personal research only). For a keyed provider use
+            <span class="mono">CIVALPHA_PRICE_PROVIDER=tiingo</span> plus <span class="mono">TIINGO_API_KEY=…</span>
+            (free account at tiingo.com).
+          </p>
+        }
+
+        <h3 style="margin-top: 1.25rem">Import prices (CSV)</h3>
         <p class="small muted">
           Columns: <span class="mono">symbol,date,open,high,low,close,volume</span>. Imported prices are treated as
           recorded facts.

@@ -35,11 +35,12 @@ public class AdminController {
     private final SecClientFactory sec;
     private final TickerResolver tickers;
     private final com.civalpha.universe.UniverseService universe;
+    private final com.civalpha.market.PriceSyncService priceSync;
     private final Rows rows;
 
     public AdminController(JobService jobs, Pipeline pipeline, ForecastService forecasts, MlClient ml, MarketDataService market,
                            FilingIngestionService filings, SecClientFactory sec, TickerResolver tickers,
-                           com.civalpha.universe.UniverseService universe, Rows rows) {
+                           com.civalpha.universe.UniverseService universe, com.civalpha.market.PriceSyncService priceSync, Rows rows) {
         this.jobs = jobs;
         this.pipeline = pipeline;
         this.forecasts = forecasts;
@@ -49,6 +50,7 @@ public class AdminController {
         this.sec = sec;
         this.tickers = tickers;
         this.universe = universe;
+        this.priceSync = priceSync;
         this.rows = rows;
     }
 
@@ -87,6 +89,14 @@ public class AdminController {
         }));
     }
 
+    @PostMapping("/prices/sync")
+    public Map<String, Object> syncPrices() {
+        return rows.camel(jobs.submit("PRICE_SYNC", Map.of(), log -> {
+            if (!universe.anyCompanies()) log.accept("universe: " + universe.load(false) + " companies created from config/universe.yml");
+            priceSync.sync(log);
+        }));
+    }
+
     @PostMapping("/outcomes/resolve")
     public Map<String, Object> resolve() {
         return rows.camel(jobs.submit("RESOLVE_OUTCOMES", Map.of(), log -> log.accept(String.valueOf(ml.resolveOutcomes()))));
@@ -105,7 +115,7 @@ public class AdminController {
         byte[] bytes = file.getBytes();
         String name = file.getOriginalFilename() == null ? "upload.csv" : file.getOriginalFilename();
         return rows.camel(jobs.submit("PRICE_IMPORT", Map.of("file", name), log -> {
-            if (universe.companies().isEmpty()) {
+            if (!universe.anyCompanies()) {
                 // symbols resolve through the configured universe; on a fresh database load it first
                 log.accept("universe: " + universe.load(false) + " companies created from config/universe.yml");
             }

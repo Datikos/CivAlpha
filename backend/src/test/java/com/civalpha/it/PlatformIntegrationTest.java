@@ -67,6 +67,7 @@ class PlatformIntegrationTest {
     @Autowired CompanyController companies;
     @Autowired ForecastService forecasts;
     @Autowired MockMvc mvc;
+    @Autowired com.civalpha.market.PriceSyncService priceSync;
 
     @Test
     void readEndpointsAnswerWithoutErrors() throws Exception {
@@ -136,6 +137,80 @@ class PlatformIntegrationTest {
                 INSERT INTO price_bar (symbol, trade_date, close, provider) VALUES ('XLC', '2024-01-02', 60, 'test')""").update();
         assertThat(market.missingBenchmarks()).isEmpty();
         assertThat(market.requireBenchmarks()).isEmpty();
+    }
+
+    @Test
+    @org.springframework.transaction.annotation.Transactional  // rolled back so other tests see the original universe
+    void universeCanBeManagedAndSeedingNeverUndoesIt() {
+        long id = universe.add(new UniverseService.NewCompany("bdsx", "Biodesix, Inc.", "1439725", "Health Care", "DIAGNOSTICS", "xlv", null));
+        assertThat(tickers.companyAt("BDSX", LocalDate.now())).contains(id);
+        assertThat(universe.companies()).extracting(c -> ((Number) c.get("id")).longValue()).contains(id);
+        assertThat(universe.benchmarkSymbols()).contains("XLV");
+        // duplicates are rejected
+        assertThatThrownBy(() -> universe.add(new UniverseService.NewCompany("BDSY", "x", "1439725", "Health Care", null, "XLV", null)))
+                .hasMessageContaining("already belongs to BDSX");
+        assertThatThrownBy(() -> universe.add(new UniverseService.NewCompany("BDSX", "x", "999", "Health Care", null, "XLV", null)))
+                .hasMessageContaining("already the current ticker");
+
+        // remove: membership closes today, history kept; seeding from config does not re-add it
+        universe.remove(id, null);
+        assertThat(universe.companies()).extracting(c -> ((Number) c.get("id")).longValue()).doesNotContain(id);
+        universe.load(false);
+        assertThat(universe.isActive(id)).isFalse();
+        universe.restore(id, null);
+        assertThat(universe.isActive(id)).isTrue();
+
+        universe.edit(id, new UniverseService.CompanyEdit(null, null, "MEDICAL_DIAGNOSTICS", null));
+        assertThat(jdbc.sql("SELECT industry FROM company WHERE id = :id").param("id", id).query(String.class).single()).isEqualTo("MEDICAL_DIAGNOSTICS");
+
+        universe.changeTicker(id, "BDSZ", LocalDate.now().plusDays(1));
+        assertThat(tickers.companyAt("BDSX", LocalDate.now())).contains(id);
+        assertThat(tickers.companyAt("BDSZ", LocalDate.now().plusDays(1))).contains(id);
+
+        // a company with data cannot be deleted; one without can
+        jdbc.sql("INSERT INTO price_bar (company_id, symbol, trade_date, close, provider) VALUES (:c, 'BDSX', '2024-01-02', 1, 'test')")
+                .param("c", id).update();
+        assertThatThrownBy(() -> universe.delete(id)).hasMessageContaining("remove it from the universe instead");
+        jdbc.sql("DELETE FROM price_bar WHERE company_id = :c").param("c", id).update();
+        universe.delete(id);
+        assertThat(jdbc.sql("SELECT count(*) FROM company WHERE id = :id").param("id", id).query(Integer.class).single()).isZero();
+    }
+
+    @Test
+    void priceSyncStoresProviderBarsUnderTheTickerValidOnEachDate() {
+        // fake provider: returns META history under today's symbol, including dates when it traded as FB
+        com.civalpha.market.PriceProvider fake = new com.civalpha.market.PriceProvider() {
+            public String name() { return "fake"; }
+            public boolean splitAdjusted() { return false; }
+            public Series fetch(String symbol, LocalDate from, LocalDate to) {
+                var d1 = LocalDate.parse("2022-06-03");
+                var d2 = LocalDate.parse("2022-06-10");
+                var bars = java.util.List.of(
+                        new com.civalpha.market.PriceBarRow(symbol, d1, null, null, null, new java.math.BigDecimal("190.78"), 1L),
+                        new com.civalpha.market.PriceBarRow(symbol, d2, null, null, null, new java.math.BigDecimal("175.57"), 1L));
+                var acts = java.util.List.of(new com.civalpha.market.CsvPrices.ActionRow(symbol, d2, "CASH_DIVIDEND", new java.math.BigDecimal("0.10"), null));
+                return new Series(bars, acts, "[]".getBytes(), "application/json", "https://fake/" + symbol);
+            }
+        };
+        java.util.List<String> log = new java.util.ArrayList<>();
+        var summary = priceSync.sync(fake, log::add);
+        assertThat(summary.failed()).isZero();
+        assertThat(jdbc.sql("SELECT symbol FROM price_bar WHERE company_id = :c AND trade_date = '2022-06-03'").param("c", meta())
+                .query(String.class).single()).isEqualTo("FB");
+        assertThat(jdbc.sql("SELECT symbol FROM price_bar WHERE company_id = :c AND trade_date = '2022-06-10'").param("c", meta())
+                .query(String.class).single()).isEqualTo("META");
+        assertThat(jdbc.sql("SELECT count(*) FROM price_bar WHERE company_id IS NULL AND symbol = 'XLC' AND trade_date = '2022-06-10'")
+                .query(Integer.class).single()).isEqualTo(1);
+        assertThat(market.missingBenchmarks()).doesNotContain("XLC");
+        // running again only re-checks the overlap window: nothing new
+        assertThat(priceSync.sync(fake, log::add).inserted()).isZero();
+        // never mixed into the synthetic demo
+        jdbc.sql("UPDATE company SET is_demo = true WHERE id = :c").param("c", meta()).update();
+        try {
+            assertThatThrownBy(() -> priceSync.sync(fake, log::add)).hasMessageContaining("synthetic demo");
+        } finally {
+            jdbc.sql("UPDATE company SET is_demo = false WHERE id = :c").param("c", meta()).update();
+        }
     }
 
     @Test

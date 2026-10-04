@@ -15,7 +15,8 @@ public record AppProperties(
         Events events,
         Llm llm,
         Security security,
-        Schedule schedule) {
+        Schedule schedule,
+        Prices prices) {
 
     public record Storage(String documentsDir, String importsDir) {}
 
@@ -37,6 +38,11 @@ public record AppProperties(
     /** adminToken: when set, admin endpoints and all write requests need it (header X-Admin-Token or Bearer). */
     public record Security(String adminToken) {
         public boolean enabled() { return adminToken != null && !adminToken.isBlank(); }
+    }
+
+    /** provider: none | yahoo | tiingo. historyStart: first date downloaded for a symbol with no prices yet. */
+    public record Prices(String provider, String tiingoApiKey, java.time.LocalDate historyStart) {
+        public boolean enabled() { return provider != null && !provider.isBlank() && !"none".equalsIgnoreCase(provider); }
     }
 
     /** Spring cron expressions ("-" disables). Times are evaluated in `zone`. */

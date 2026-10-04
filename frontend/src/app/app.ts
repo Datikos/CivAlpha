@@ -180,6 +180,7 @@ export class App {
     { path: '/events', label: 'Policy events', exact: false },
     { path: '/forecasts/history', label: 'Forecast history', exact: false },
     { path: '/accuracy', label: 'Accuracy', exact: false },
+    { path: '/universe', label: 'Universe', exact: false },
     { path: '/admin', label: 'Data & pipeline', exact: false },
   ];
 }
