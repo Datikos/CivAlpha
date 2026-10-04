@@ -39,6 +39,18 @@ public class MlClient {
         return (List<Map<String, Object>>) post("/forecasts", body).get("forecasts");
     }
 
+    public Map<String, Object> backtestStrategies() {
+        return post("/strategies/backtest", Map.of());
+    }
+
+    /** Today's AI action per company (as_of null = latest trading day); the caller persists them. */
+    @SuppressWarnings("unchecked")
+    public List<Map<String, Object>> decide(String asOf) {
+        Map<String, Object> body = new HashMap<>();
+        if (asOf != null) body.put("as_of", asOf);
+        return (List<Map<String, Object>>) post("/strategies/decide", body).get("decisions");
+    }
+
     public Map<String, Object> resolveOutcomes() {
         return post("/outcomes/resolve", Map.of());
     }

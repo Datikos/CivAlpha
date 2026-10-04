@@ -76,6 +76,21 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/accuracy').then((m) => m.AccuracyPage),
   },
   {
+    path: 'strategies',
+    title: 'Strategy lab · CivAlpha',
+    loadComponent: () => import('./pages/strategies').then((m) => m.StrategiesPage),
+  },
+  {
+    path: 'strategies/:key',
+    title: 'Strategy · CivAlpha',
+    loadComponent: () => import('./pages/strategy-detail').then((m) => m.StrategyDetailPage),
+  },
+  {
+    path: 'decisions',
+    title: 'AI decisions · CivAlpha',
+    loadComponent: () => import('./pages/decisions').then((m) => m.DecisionsPage),
+  },
+  {
     path: 'admin',
     title: 'Data & pipeline · CivAlpha',
     loadComponent: () => import('./pages/admin').then((m) => m.AdminPage),

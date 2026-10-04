@@ -68,17 +68,21 @@ class PlatformIntegrationTest {
     @Autowired ForecastService forecasts;
     @Autowired MockMvc mvc;
     @Autowired com.civalpha.market.PriceSyncService priceSync;
+    @Autowired tools.jackson.databind.ObjectMapper om;
 
     @Test
     void readEndpointsAnswerWithoutErrors() throws Exception {
         for (String url : List.of("/api/meta", "/api/companies", "/api/companies/META", "/api/companies/FB/prices",
                 "/api/companies/META/filings", "/api/companies/META/financials", "/api/companies/META/exposures",
                 "/api/events", "/api/events?category=TRADE_TARIFF", "/api/forecasts/current", "/api/forecasts/history",
-                "/api/forecasts/history?symbol=META&modelKind=AUGMENTED", "/api/accuracy", "/api/admin/jobs")) {
+                "/api/forecasts/history?symbol=META&modelKind=AUGMENTED", "/api/accuracy", "/api/admin/jobs",
+                "/api/strategies", "/api/decisions", "/api/decisions?date=2026-01-02")) {
             mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(url))
                     .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
         }
         mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/companies/NOPE"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isNotFound());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/strategies/NOPE"))
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isNotFound());
         // an event without original evidence is rejected
         mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/events")
@@ -319,5 +323,57 @@ class PlatformIntegrationTest {
         assertThatThrownBy(() -> jdbc.sql("DELETE FROM forecast WHERE id = :id").param("id", v1).update())
                 .hasMessageContaining("immutable");
         assertThat(jdbc.sql("SELECT probability FROM forecast WHERE id = :id").param("id", v1).query(Double.class).single()).isEqualTo(0.42);
+    }
+
+    static com.civalpha.llm.LlmProvider stubLlm(String explanation) {
+        return new com.civalpha.llm.LlmProvider() {
+            public boolean enabled() { return true; }
+            public String name() { return "stub"; }
+            public List<com.civalpha.llm.ExposureHint> extractExposures(String companyName, String passage) { return List.of(); }
+            public String explainDecision(String companyName, String symbol, Map<String, Object> decision) { return explanation; }
+        };
+    }
+
+    Map<String, Object> decision(String date, String action) {
+        Map<String, Object> d = new HashMap<>();
+        d.put("companyId", meta()); d.put("symbol", "META"); d.put("name", "Meta Platforms, Inc."); d.put("asOfDate", date);
+        d.put("strategyKey", "AI_GBM"); d.put("action", action); d.put("probability", 0.61); d.put("entryP", 0.55);
+        d.put("exitP", 0.48); d.put("weight", 0.125); d.put("rank", 1); d.put("maxPositions", 8);
+        d.put("factors", List.of(Map.of("feature", "mom_12_1", "contribution", 0.04)));
+        d.put("ruleVotes", Map.of("SMA_50_200", true)); d.put("model", Map.of("horizon", 10)); d.put("isDemo", false);
+        return d;
+    }
+
+    @Test
+    void aiDecisionsAreAppendOnlyAndExplanationsNeverBlockThem() throws Exception {
+        // a language model that fails returns null: the decision is stored anyway, without an explanation
+        var r = new com.civalpha.strategy.DecisionService(jdbc, null, stubLlm(null), om).persistAll(List.of(decision("2026-01-05", "ENTER")), s -> {});
+        assertThat(r.created()).isEqualTo(1);
+        assertThat(r.explained()).isZero();
+        long id = jdbc.sql("SELECT id FROM strategy_decision WHERE company_id = :c AND as_of_date = '2026-01-05'").param("c", meta()).query(Long.class).single();
+        assertThat(jdbc.sql("SELECT count(*) FROM decision_explanation WHERE decision_id = :id").param("id", id).query(Long.class).single()).isZero();
+
+        // re-running the same day neither duplicates nor changes the stored decision
+        var again = new com.civalpha.strategy.DecisionService(jdbc, null, stubLlm("text"), om).persistAll(List.of(decision("2026-01-05", "EXIT")), s -> {});
+        assertThat(again.created()).isZero();
+        assertThat(again.existing()).isEqualTo(1);
+        assertThat(jdbc.sql("SELECT action FROM strategy_decision WHERE id = :id").param("id", id).query(String.class).single()).isEqualTo("ENTER");
+
+        // a working model explains ENTER/EXIT, but not HOLD
+        var ok = new com.civalpha.strategy.DecisionService(jdbc, null, stubLlm("Momentum and the trend rules agree."), om)
+                .persistAll(List.of(decision("2026-01-06", "EXIT"), decision("2026-01-07", "HOLD")), s -> {});
+        assertThat(ok.created()).isEqualTo(2);
+        assertThat(ok.explained()).isEqualTo(1);
+
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/decisions?date=2026-01-06"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.decisions[0].explanation")
+                        .value("Momentum and the trend rules agree."));
+
+        // the decision record cannot be edited or removed afterwards
+        assertThatThrownBy(() -> jdbc.sql("UPDATE strategy_decision SET action = 'EXIT' WHERE id = :id").param("id", id).update())
+                .hasMessageContaining("immutable");
+        assertThatThrownBy(() -> jdbc.sql("DELETE FROM strategy_decision WHERE id = :id").param("id", id).update())
+                .hasMessageContaining("immutable");
     }
 }

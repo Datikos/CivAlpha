@@ -499,6 +499,143 @@ export interface AccuracyResponse {
   issuedByMode?: Partial<Record<'LIVE' | 'REPLAY', Partial<Record<ModelKind, IssuedAccuracy>>>> | null;
 }
 
+// ---------- Strategy lab ----------
+
+export type StrategyFamily = 'BENCHMARK' | 'TREND' | 'MEAN_REVERSION' | 'FUNDAMENTAL' | 'EVENT' | 'AI';
+
+export interface StrategyMetrics {
+  start: string;
+  end: string;
+  years: number;
+  totalReturn: number | null;
+  cagr: number | null;
+  volatility: number | null;
+  /** annualized, on returns in excess of cash */
+  sharpe: number | null;
+  sortino: number | null;
+  maxDrawdown: number | null;
+  calmar: number | null;
+  /** average invested fraction of capital */
+  exposure: number | null;
+  beta: number | null;
+  alpha: number | null;
+  trades: number;
+  closedTrades: number;
+  winRate: number | null;
+  avgHoldingDays: number | null;
+  turnoverPerYear: number | null;
+  costDragPerYear: number | null;
+  /** annualized mean daily return minus equal-weight buy & hold, with a block-bootstrap 95% CI */
+  excessReturn?: number | null;
+  excessCiLow?: number | null;
+  excessCiHigh?: number | null;
+  informationRatio?: number | null;
+  /** probability the excess Sharpe is real after testing every strategy (>= 0.95 needed) */
+  deflatedSharpe?: number | null;
+}
+
+export interface EquityPoint {
+  date: string;
+  equity: number;
+  drawdown: number;
+}
+
+export interface StrategyResult {
+  strategyKey: string;
+  family: StrategyFamily;
+  name: string;
+  description: { entry: string; exit: string; origin: string; sizing: string; trailingStop?: number };
+  params: Record<string, unknown>;
+  metrics: StrategyMetrics;
+  equity: EquityPoint[];
+  yearly: { year: number; return: number }[];
+  costSensitivity: Record<string, { cagr: number | null; sharpe: number | null }>;
+  verdict: string;
+}
+
+export interface StrategyRun {
+  id: number;
+  runAt: string;
+  dataCutoff: string;
+  oosStart: string;
+  config: {
+    costBpsPerSide: number;
+    costSensitivityBps: number[];
+    reference: string;
+    nCandidates: number;
+    execution: string;
+    verdictRule: string;
+    ai: Record<string, unknown>;
+  };
+  summary: string;
+  isDemo: boolean;
+}
+
+export interface StrategiesResponse {
+  run: StrategyRun | null;
+  results: StrategyResult[];
+}
+
+export interface StrategyTrade {
+  companyId: number | null;
+  symbol: string;
+  entryDate: string;
+  exitDate: string | null;
+  tradeReturn: number | null;
+  holdingDays: number;
+  entryReason: string;
+  exitReason: string;
+}
+
+export interface StrategyDetailResponse {
+  run: StrategyRun;
+  result: StrategyResult;
+  reference: { strategyKey: string; name: string; equity: EquityPoint[] } | null;
+  trades: StrategyTrade[];
+  tradeCount: number;
+}
+
+export type DecisionAction = 'ENTER' | 'EXIT' | 'HOLD' | 'STAY_OUT';
+
+export interface DecisionFactor {
+  feature: string;
+  label: string;
+  kind: string;
+  value: number | null;
+  median: number | null;
+  /** change in probability versus the feature at its training median */
+  contribution: number;
+  direction: 'UP' | 'DOWN';
+}
+
+export interface AiDecision {
+  id: number;
+  companyId: number;
+  name: string;
+  symbol: string;
+  asOfDate: string;
+  strategyKey: string;
+  action: DecisionAction;
+  probability: number;
+  entryP: number;
+  exitP: number;
+  weight: number;
+  rank: number;
+  factors: DecisionFactor[];
+  ruleVotes: Record<string, boolean>;
+  model: { algorithm: string; trainedThrough: string; nTrain: number; horizon: number; codeVersion: string };
+  issuedAt: string;
+  isDemo: boolean;
+  explanation: string | null;
+  explanationModel: string | null;
+}
+
+export interface DecisionsResponse {
+  asOfDate: string | null;
+  dates: string[];
+  decisions: AiDecision[];
+}
+
 // ---------- Admin ----------
 
 export interface Job {

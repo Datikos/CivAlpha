@@ -111,6 +111,39 @@ def insert_evaluation(engine: Engine, result: dict, data_cutoff, is_demo: bool, 
     return eid
 
 
+def insert_strategy_run(engine: Engine, lab: dict, is_demo: bool) -> int:
+    with engine.begin() as c:
+        rid = int(c.execute(text("""
+            INSERT INTO strategy_run (data_cutoff, oos_start, config, summary, is_demo)
+            VALUES (:dc, :oos, CAST(:cfg AS jsonb), :s, :demo) RETURNING id"""),
+            dict(dc=lab["dataCutoff"], oos=lab["oosStart"], cfg=json.dumps(_clean(lab["config"])), s=lab["summary"],
+                 demo=is_demo)).scalar_one())
+        for r in lab["results"]:
+            c.execute(text("""
+                INSERT INTO strategy_result (run_id, strategy_key, family, name, description, params, metrics, equity, yearly,
+                                             cost_sensitivity, verdict)
+                VALUES (:run, :k, :f, :n, CAST(:d AS jsonb), CAST(:p AS jsonb), CAST(:m AS jsonb), CAST(:e AS jsonb),
+                        CAST(:y AS jsonb), CAST(:cs AS jsonb), :v)"""),
+                dict(run=rid, k=r["key"], f=r["family"], n=r["name"], d=json.dumps(r["description"]), p=json.dumps(_clean(r["params"])),
+                     m=json.dumps(_clean(r["metrics"])), e=json.dumps(_clean(r["equity"])), y=json.dumps(_clean(r["yearly"])),
+                     cs=json.dumps(_clean(r["costSensitivity"])), v=r["verdict"]))
+            rows = [dict(run=rid, k=r["key"], c=t["companyId"], sym=t["symbol"], ed=t["entryDate"], xd=t["exitDate"],
+                         ret=_clean(t["return"]), h=t["holdingDays"], er=t["entryReason"], xr=t["exitReason"]) for t in r["trades"]]
+            if rows:
+                c.execute(text("""
+                    INSERT INTO strategy_trade (run_id, strategy_key, company_id, symbol, entry_date, exit_date, trade_return,
+                                                holding_days, entry_reason, exit_reason)
+                    VALUES (:run, :k, :c, :sym, :ed, :xd, :ret, :h, :er, :xr)"""), rows)
+    return rid
+
+
+def previous_ai_holdings(engine: Engine, strategy_key: str, before) -> set[int]:
+    """Companies the AI held after its latest decision dated before `before` (ENTER or HOLD)."""
+    df = _q(engine, """SELECT DISTINCT ON (company_id) company_id, action FROM strategy_decision
+                       WHERE strategy_key = :k AND as_of_date < :d ORDER BY company_id, as_of_date DESC""", k=strategy_key, d=before)
+    return set(df.loc[df["action"].isin(["ENTER", "HOLD"]), "company_id"].astype(int))
+
+
 def unresolved_forecasts(engine: Engine) -> pd.DataFrame:
     return _dates(_q(engine, """SELECT f.id, f.company_id, f.benchmark_symbol, f.as_of_date, f.horizon_trading_days, f.probability::float8 AS probability
                                 FROM forecast f LEFT JOIN forecast_outcome o ON o.forecast_id = f.id WHERE o.forecast_id IS NULL"""), ["as_of_date"])

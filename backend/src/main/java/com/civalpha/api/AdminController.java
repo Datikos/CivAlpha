@@ -36,11 +36,13 @@ public class AdminController {
     private final TickerResolver tickers;
     private final com.civalpha.universe.UniverseService universe;
     private final com.civalpha.market.PriceSyncService priceSync;
+    private final com.civalpha.strategy.DecisionService decisions;
     private final Rows rows;
 
     public AdminController(JobService jobs, Pipeline pipeline, ForecastService forecasts, MlClient ml, MarketDataService market,
                            FilingIngestionService filings, SecClientFactory sec, TickerResolver tickers,
-                           com.civalpha.universe.UniverseService universe, com.civalpha.market.PriceSyncService priceSync, Rows rows) {
+                           com.civalpha.universe.UniverseService universe, com.civalpha.market.PriceSyncService priceSync,
+                           com.civalpha.strategy.DecisionService decisions, Rows rows) {
         this.jobs = jobs;
         this.pipeline = pipeline;
         this.forecasts = forecasts;
@@ -51,6 +53,7 @@ public class AdminController {
         this.tickers = tickers;
         this.universe = universe;
         this.priceSync = priceSync;
+        this.decisions = decisions;
         this.rows = rows;
     }
 
@@ -74,6 +77,24 @@ public class AdminController {
         return rows.camel(jobs.submit("EVALUATE", Map.of(), log -> {
             market.requireBenchmarks().ifPresent(log);
             log.accept(String.valueOf(ml.evaluate().get("verdict")));
+        }));
+    }
+
+    @PostMapping("/strategies/backtest")
+    public Map<String, Object> backtestStrategies() {
+        return rows.camel(jobs.submit("STRATEGY_BACKTEST", Map.of(), log -> {
+            market.requireBenchmarks().ifPresent(log);
+            log.accept(String.valueOf(ml.backtestStrategies().get("summary")));
+        }));
+    }
+
+    @PostMapping("/strategies/decide")
+    public Map<String, Object> decide(@RequestBody(required = false) IssueIn in) {
+        LocalDate d = in == null ? null : in.asOfDate();
+        return rows.camel(jobs.submit("STRATEGY_DECIDE", d == null ? Map.of() : Map.of("asOfDate", d.toString()), log -> {
+            market.requireBenchmarks().ifPresent(log);
+            var r = decisions.decide(d, log);
+            log.accept("AI decisions: %d stored, %d already existed, %d explained".formatted(r.created(), r.existing(), r.explained()));
         }));
     }
 

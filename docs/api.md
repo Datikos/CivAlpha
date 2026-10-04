@@ -182,6 +182,58 @@ Forecast summary object:
 `issued` covers LIVE forecasts only; `issuedByMode` has the same statistics for `LIVE` and `REPLAY` (replayed = published
 after its data cutoff, reconstructed point-in-time). `evaluation` is null before the first evaluation run.
 
+## Strategies
+
+`GET /api/strategies` — latest strategy backtest: every classic rule, the benchmarks and the AI, scored on the same
+out-of-sample window after costs. Results are sorted by Sharpe.
+```json
+{ "run": {"id": 3, "runAt": "2026-10-04T05:10:00Z", "dataCutoff": "2026-09-30", "oosStart": "2021-07-01", "isDemo": false,
+          "summary": "13 strategies backtested on the same out-of-sample window ...",
+          "config": {"costBpsPerSide": 10, "costSensitivityBps": [0, 10, 25], "reference": "EW_BUY_HOLD", "nCandidates": 11,
+                     "execution": "...", "verdictRule": "...", "ai": {"horizon": 10, "entry_p": 0.55, "exit_p": 0.48, "...": "..."},
+                     "aiFolds": ["..."]}},
+  "results": [
+    {"strategyKey": "SMA_50_200", "family": "TREND", "name": "Golden cross (50/200-day average)",
+     "description": {"entry": "...", "exit": "...", "origin": "...", "sizing": "SLEEVE"}, "params": {"fast": 50, "slow": 200},
+     "metrics": {"start": "2021-07-01", "end": "2026-09-30", "years": 5.2, "totalReturn": 0.41, "cagr": 0.068, "volatility": 0.11,
+                 "sharpe": 0.52, "sortino": 0.71, "maxDrawdown": -0.14, "calmar": 0.49, "exposure": 0.58, "beta": 0.55, "alpha": 0.01,
+                 "trades": 96, "closedTrades": 84, "winRate": 0.45, "avgHoldingDays": 61, "turnoverPerYear": 2.1,
+                 "costDragPerYear": 0.0021, "excessReturn": -0.02, "excessCiLow": -0.08, "excessCiHigh": 0.04,
+                 "informationRatio": -0.3, "deflatedSharpe": 0.12},
+     "equity": [{"date": "2021-07-02", "equity": 0.999, "drawdown": -0.001}],
+     "yearly": [{"year": 2022, "return": -0.05}],
+     "costSensitivity": {"0": {"cagr": 0.07, "sharpe": 0.55}, "10": {"cagr": 0.068, "sharpe": 0.52}, "25": {"cagr": 0.064, "sharpe": 0.48}},
+     "verdict": "Beats buy-and-hold after costs: NOT supported"}
+  ] }
+```
+Families: `BENCHMARK`, `TREND`, `MEAN_REVERSION`, `FUNDAMENTAL`, `EVENT`, `AI`. `excess*` compare daily net returns with
+`EW_BUY_HOLD` (annualized, 95% stationary block-bootstrap CI). `deflatedSharpe` is the Deflated Sharpe Ratio of that excess,
+deflated for `nCandidates` strategies. A verdict says SUPPORTED only with at least 3 years out of sample, an excess CI above
+0 and DSR ≥ 0.95. `equity` is sampled weekly. `run` is null and `results` empty before the first backtest.
+
+`GET /api/strategies/{key}` — one result plus `reference` (the `EW_BUY_HOLD` equity curve), `trades` (latest 2000 round
+trips: `companyId`, `symbol`, `entryDate`, `exitDate` (null = still open), `tradeReturn` (gross), `holdingDays`,
+`entryReason`, `exitReason`; dates are execution dates) and `tradeCount`. 404 for an unknown key or before the first run.
+
+`GET /api/decisions?date=2026-09-30` — the AI strategy's decisions for one trading day (default: the latest).
+```json
+{ "asOfDate": "2026-09-30", "dates": ["2026-09-30", "2026-09-29"],
+  "decisions": [
+    {"id": 812, "companyId": 3, "symbol": "NVDA", "name": "NVIDIA Corporation", "asOfDate": "2026-09-30", "strategyKey": "AI_GBM",
+     "action": "ENTER", "probability": 0.61, "entryP": 0.55, "exitP": 0.48, "weight": 0.125, "rank": 1,
+     "factors": [{"feature": "mom_12_1", "label": "12-1 month momentum", "kind": "TECHNICAL", "value": 0.42, "median": 0.11,
+                  "contribution": 0.031, "direction": "UP"}],
+     "ruleVotes": {"SMA_50_200": true, "RSI2_SMA200": false, "...": "..."},
+     "model": {"algorithm": "hist_gradient_boosting", "trainedThrough": "2026-09-15", "nTrain": 31250, "horizon": 10, "...": "..."},
+     "issuedAt": "2026-09-30T22:05:00Z", "isDemo": false,
+     "explanation": "The model ...", "explanationModel": "anthropic:claude-opus-5-5"}
+  ] }
+```
+`action` is `ENTER`, `EXIT`, `HOLD` or `STAY_OUT` (relative to the previous stored decision). `contribution` is the change
+in probability compared with the feature at its training median. `explanation` is written by the language model only for
+ENTER/EXIT when `CIVALPHA_LLM_PROVIDER=anthropic`; it is null otherwise and never changes the decision. Decision rows are
+append-only (UPDATE/DELETE are rejected by the database).
+
 ## Admin / pipeline
 When the server sets `CIVALPHA_ADMIN_TOKEN`, every `/api/admin/**` request and every non-GET `/api` request
 (e.g. `POST /api/events`) must send `X-Admin-Token: <token>` (or `Authorization: Bearer <token>`); otherwise the
@@ -193,6 +245,9 @@ response is `401`. `GET /api/meta` reports `adminTokenRequired`.
 * `POST /api/admin/forecasts/issue` body `{"asOfDate": "2026-09-30"}` (optional) → job
 * `POST /api/admin/evaluate` → job
 * `POST /api/admin/outcomes/resolve` → job
+* `POST /api/admin/strategies/backtest` → job — backtest every strategy and store a new run (also part of every pipeline run)
+* `POST /api/admin/strategies/decide` body `{"asOfDate": "2026-09-30"}` (optional) → job — store the AI's decisions for
+  that trading day and explain ENTER/EXIT actions when a language model is configured
 * `POST /api/admin/sec/ingest` body `{"symbol":"AAPL"}` → job
 * `POST /api/admin/prices/import` multipart `file` (CSV `symbol,date,open,high,low,close,volume`) → job
 

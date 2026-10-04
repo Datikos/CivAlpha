@@ -63,6 +63,11 @@ const ACTIVE = new Set(['RUNNING', 'PENDING', 'QUEUED', 'STARTED']);
           <p class="small muted">Ingest configured sources ({{ meta.meta()?.secMode ?? '…' }} SEC mode), evaluate, issue forecasts.</p>
           <button type="button" class="btn" [disabled]="busy()" (click)="run('Evaluation', api.evaluate())">Evaluate models</button>
           <p class="small muted">Walk-forward evaluation of BASELINE vs AUGMENTED.</p>
+          <button type="button" class="btn" [disabled]="busy()" (click)="run('Strategy backtest', api.backtestStrategies())">
+            Run strategy backtest
+          </button>
+          <button type="button" class="btn" [disabled]="busy()" (click)="run('AI decisions', api.decide())">AI decisions</button>
+          <p class="small muted">Backtest every classic rule and the AI on one window, then record today's AI decisions.</p>
           <button type="button" class="btn" [disabled]="busy()" (click)="run('Outcome resolution', api.resolveOutcomes())">
             Resolve outcomes
           </button>
