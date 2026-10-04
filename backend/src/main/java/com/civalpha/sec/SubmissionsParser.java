@@ -12,13 +12,31 @@ import java.util.List;
 /** Parses https://data.sec.gov/submissions/CIK##########.json ("filings.recent" column arrays). */
 public final class SubmissionsParser {
 
-    public record Submissions(String cik, String name, List<String> tickers, List<FilingMeta> filings) {}
+    /** An older page of the filing index (filings.files[]), fetched from https://data.sec.gov/submissions/{name}. */
+    public record FilePage(String name, LocalDate filingFrom, LocalDate filingTo) {}
+
+    public record Submissions(String cik, String name, List<String> tickers, List<FilingMeta> filings, List<FilePage> olderPages) {}
 
     private static final ZoneId NEW_YORK = ZoneId.of("America/New_York");
 
     public static Submissions parse(ObjectMapper om, byte[] json) {
         JsonNode root = om.readTree(json);
-        JsonNode r = root.path("filings").path("recent");
+        List<FilingMeta> out = columns(root.path("filings").path("recent"));
+        List<String> tickers = new ArrayList<>();
+        root.path("tickers").forEach(t -> tickers.add(t.asString()));
+        List<FilePage> pages = new ArrayList<>();
+        for (JsonNode f : root.path("filings").path("files")) {
+            pages.add(new FilePage(f.path("name").asString(), date(f.path("filingFrom")), date(f.path("filingTo"))));
+        }
+        return new Submissions(root.path("cik").asString(), root.path("name").asString(), tickers, out, pages);
+    }
+
+    /** Older pages hold the same column arrays at their top level. */
+    public static List<FilingMeta> parsePage(ObjectMapper om, byte[] json) {
+        return columns(om.readTree(json));
+    }
+
+    private static List<FilingMeta> columns(JsonNode r) {
         JsonNode acc = r.path("accessionNumber");
         List<FilingMeta> out = new ArrayList<>();
         for (int i = 0; i < acc.size(); i++) {
@@ -28,9 +46,7 @@ public final class SubmissionsParser {
                     date(r.path("reportDate").path(i)), accepted, text(r.path("primaryDocument").path(i)),
                     text(r.path("items").path(i))));
         }
-        List<String> tickers = new ArrayList<>();
-        root.path("tickers").forEach(t -> tickers.add(t.asString()));
-        return new Submissions(root.path("cik").asString(), root.path("name").asString(), tickers, out);
+        return out;
     }
 
     /**

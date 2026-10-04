@@ -2,6 +2,7 @@ import { httpResource } from '@angular/common/http';
 import { Component, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Observable } from 'rxjs';
+import { getAdminToken, setAdminToken } from '../core/admin-token';
 import { ApiService, apiUrl, errorMessage, valueOf } from '../core/api';
 import { FORMAT_PIPES } from '../core/format';
 import { MetaService } from '../core/meta.service';
@@ -20,6 +21,18 @@ const ACTIVE = new Set(['RUNNING', 'PENDING', 'QUEUED', 'STARTED']);
         <p class="muted">Load data, run the pipeline, evaluate models and issue forecasts. Jobs run in the background.</p>
       </div>
     </div>
+
+    @if (meta.meta()?.adminTokenRequired) {
+      <div class="card" style="margin-bottom: 1rem">
+        <h3>Admin token</h3>
+        <p class="small muted">This server requires a token for admin and write actions. It is kept for this browser tab only.</p>
+        <form class="actions" (submit)="saveToken(); $event.preventDefault()">
+          <label class="sr-only" for="admin-token">Admin token</label>
+          <input id="admin-token" type="password" autocomplete="off" [ngModel]="token()" (ngModelChange)="token.set($event)" name="token" />
+          <button type="submit" class="btn">{{ hasToken() ? 'Update token' : 'Save token' }}</button>
+        </form>
+      </div>
+    }
 
     @if (notice(); as n) {
       <div class="alert" [class.alert-ok]="n.ok" [class.alert-error]="!n.ok" role="status">{{ n.text }}</div>
@@ -165,6 +178,8 @@ export class AdminPage {
   private readonly companiesRes = httpResource<CompanySummary[]>(() => apiUrl.companies());
   protected readonly companies = computed(() => valueOf(this.companiesRes) ?? []);
 
+  protected readonly token = signal(getAdminToken());
+  protected readonly hasToken = signal(!!getAdminToken());
   protected readonly busy = signal(false);
   protected readonly notice = signal<{ ok: boolean; text: string } | null>(null);
   protected readonly issueDate = signal('');
@@ -194,6 +209,13 @@ export class AdminPage {
       if (wasActive && !active) this.meta.resource.reload();
       wasActive = active;
     });
+  }
+
+  protected saveToken(): void {
+    setAdminToken(this.token().trim());
+    this.hasToken.set(!!this.token().trim());
+    this.notice.set({ ok: true, text: this.hasToken() ? 'Admin token saved for this tab.' : 'Admin token cleared.' });
+    this.jobs.reload();
   }
 
   protected isActive(j: Job): boolean {

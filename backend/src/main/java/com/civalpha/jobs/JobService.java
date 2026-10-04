@@ -55,6 +55,11 @@ public class JobService {
         return get(id);
     }
 
+    public boolean running(String type) {
+        return jdbc.sql("SELECT exists(SELECT 1 FROM pipeline_job WHERE job_type = :t AND status = 'RUNNING')")
+                .param("t", type).query(Boolean.class).single();
+    }
+
     public Map<String, Object> get(long id) {
         return jdbc.sql("SELECT * FROM pipeline_job WHERE id = :id").param("id", id).query().singleRow();
     }

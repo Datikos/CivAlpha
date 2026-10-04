@@ -1,4 +1,4 @@
-import { provideHttpClient, withFetch } from '@angular/common/http';
+import { provideHttpClient, withFetch, withInterceptors } from '@angular/common/http';
 import { ApplicationConfig, provideBrowserGlobalErrorListeners } from '@angular/core';
 import {
   provideRouter,
@@ -7,11 +7,12 @@ import {
   withRouterConfig,
 } from '@angular/router';
 import { routes } from './app.routes';
+import { adminTokenInterceptor } from './core/admin-token';
 
 export const appConfig: ApplicationConfig = {
   providers: [
     provideBrowserGlobalErrorListeners(),
-    provideHttpClient(withFetch()),
+    provideHttpClient(withFetch(), withInterceptors([adminTokenInterceptor])),
     provideRouter(
       routes,
       withComponentInputBinding(),
