@@ -1,6 +1,6 @@
 """Thin SQL helper over SQLAlchemy Core: named parameters (:name), dict rows, optional transactions.
 
-Outside `transaction()` every statement commits on its own (like the Java JdbcClient). Inside it, all statements
+Outside `transaction()` every statement commits on its own. Inside it, all statements
 of the current thread/task share one connection and commit together; nested `transaction()` calls join the outer one.
 """
 from __future__ import annotations

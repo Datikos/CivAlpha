@@ -1,6 +1,6 @@
 """Database access (read the PIT inputs, write model versions / evaluations / outcomes).
 
-The schema is owned by the backend's Flyway migrations. Forecast rows are written by the backend only.
+The schema is defined by the SQL migrations in db/migration. Forecast rows are written by civalpha.platform.forecasts only.
 """
 from __future__ import annotations
 
