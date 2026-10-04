@@ -59,8 +59,8 @@ docker compose down -v              # stop and delete the database and stored do
             └───────────────────────────┬──────────────────────────────┘
                                         │ /api
 ┌───────────────────────────────────────▼──────────────────────────────┐
-│ api — Python (FastAPI): REST API, admin token, queues jobs;          │
-│       applies pending database migrations on start                   │
+│ api — Python (FastAPI): REST API + MCP endpoint (/mcp) for AI        │
+│       assistants, admin token, queues jobs; applies migrations       │
 └───────────────────────────────────────┬──────────────────────────────┘
                                         │ pipeline_job table (queue + log)
 ┌───────────────────────────────────────▼──────────────────────────────┐
@@ -246,6 +246,44 @@ The **Universe** page (`/api/admin/universe`) supports these actions:
 A newly added stock gets forecasts once it has about six months of price history; **Update prices** downloads it.
 If you choose a benchmark ETF that is new to the universe, its prices are downloaded too.
 
+## AI assistants (MCP)
+
+The API also speaks the [Model Context Protocol](https://modelcontextprotocol.io) at `http://localhost:8088/mcp`
+(Streamable HTTP), so Claude Desktop, Claude Code, claude.ai or any MCP client can read the research data, manage
+the universe and the pipeline, and ask where the evidence points. The server is `backend/civalpha/platform/mcp_server.py`.
+
+* **Research tools (read-only, public):** `get_status`, `list_companies`, `get_company`, `get_financials`,
+  `get_prices`, `get_dividends`, `list_filings`, `get_filing`, `get_exposures`, `list_events`, `get_event`,
+  `get_current_forecasts`, `get_forecast_history`, `get_forecast`, `get_accuracy`, `get_strategies`, `get_strategy`,
+  `get_decisions`, `list_time_machine_runs`, `get_time_machine_run` — the same shapes as the REST API.
+* **`investment_candidates`:** the universe ranked by the AI strategy's latest decision and probability, with the
+  current forecasts and intervals, the dividend profile, the accuracy record and the strategy-lab verdicts, plus the
+  disclaimers. It hands the assistant the evidence and its uncertainty; it does not output a bare "buy" list.
+* **Management tools (admin):** `get_universe`, `lookup_company`, `add_company`, `edit_company`, `remove_company`,
+  `restore_company`, `change_ticker`, `delete_company` (needs `confirm`), `add_event`, and the jobs
+  `run_pipeline`, `sync_prices`, `ingest_sec_filings`, `issue_forecasts`, `evaluate_models`, `resolve_outcomes`,
+  `backtest_strategies`, `decide_strategy`, `run_time_machine`, with `list_jobs` / `get_job` to follow their logs.
+  When `CIVALPHA_ADMIN_TOKEN` is set they need the same token as the REST API, sent as the `X-Admin-Token` header
+  (or `Authorization: Bearer`) on the MCP connection.
+* Resources `civalpha://about` (what is measured, verdict rule, disclaimers) and `civalpha://status`; prompt
+  `investment_review` walks through accuracy → candidates → the evidence behind each name.
+
+Connect from Claude Code:
+
+```bash
+claude mcp add --transport http civalpha http://localhost:8088/mcp
+# with an admin token:
+claude mcp add --transport http civalpha http://localhost:8088/mcp --header "X-Admin-Token: <token>"
+```
+
+For a client that launches servers over stdio, run `python -m civalpha.platform.mcp_server` from `backend/` with
+the same environment as the `api` service (`DATABASE_URL` pointing at the published database, `CIVALPHA_DOCUMENTS_DIR`);
+over stdio the operator who launches the process is trusted for the management tools.
+
+The endpoint rejects requests whose `Host` is not localhost (DNS-rebinding protection). If the UI is published
+on another interface, list the host names clients use in `CIVALPHA_MCP_ALLOWED_HOSTS` (and browser origins in
+`CIVALPHA_MCP_ALLOWED_ORIGINS`), and set the admin token first.
+
 ## Security and scheduling
 
 * **Admin token.** Set `CIVALPHA_ADMIN_TOKEN` to require a shared secret for `/api/admin/**` (any method) and
@@ -264,7 +302,8 @@ If you choose a benchmark ETF that is new to the universe, its prices are downlo
 All variables are listed with comments in `.env.example`. The main ones are `CIVALPHA_PORT` (8088),
 `CIVALPHA_BIND`, `CIVALPHA_ADMIN_TOKEN`, `CIVALPHA_PIPELINE_CRON`, `CIVALPHA_OUTCOMES_CRON`, `POSTGRES_PASSWORD`,
 `SEC_USER_AGENT`, `SEC_MAX_RPS`, `SEC_LOOKBACK_YEARS`, `CIVALPHA_PRICE_PROVIDER`, `TIINGO_API_KEY`, `FRED_API_KEY`,
-`EVENTS_*`, `CIVALPHA_LLM_PROVIDER`, `CIVALPHA_LLM_MODEL` and `ANTHROPIC_API_KEY`. The stocks themselves are managed
+`EVENTS_*`, `CIVALPHA_LLM_PROVIDER`, `CIVALPHA_LLM_MODEL`, `ANTHROPIC_API_KEY`, `CIVALPHA_MCP_ALLOWED_HOSTS` and
+`CIVALPHA_MCP_ALLOWED_ORIGINS`. The stocks themselves are managed
 on the Universe page; 20–50 symbols is a sensible size.
 
 ## Troubleshooting
@@ -292,7 +331,7 @@ The suite covers:
 * the platform: SEC parsers (incl. XXE), passage rules, dedup, FOMC parsing, ticker resolution, price providers
   and sync;
 * a Testcontainers PostgreSQL suite (needs Docker) for migrations, ticker changes, revised filings, price
-  versioning, forecast and decision immutability, and API smoke tests.
+  versioning, forecast and decision immutability, API smoke tests and the MCP server (tools, token rule, host check).
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on every pull request and every push to `main`. It runs the
 Python tests (and fails if the database tests could not run), the Angular production build, and a
@@ -307,10 +346,10 @@ Python continue without any manual step. Never edit an applied migration; add th
 ## Layout
 
 ```
-backend/   Python: civalpha/ (models, strategies, time machine) and civalpha/platform/ (API, worker, ingestion)
+backend/   Python: civalpha/ (models, strategies, time machine) and civalpha/platform/ (API, MCP server, worker, ingestion)
 db/        migration/ (SQL schema migrations)
-frontend/  Angular UI (served by nginx, proxies /api)
-docs/      api.md (REST contract)
+frontend/  Angular UI (served by nginx, proxies /api and /mcp)
+docs/      api.md (REST contract and MCP tools)
 ```
 
 ## Known limitations / next steps

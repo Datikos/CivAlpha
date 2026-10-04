@@ -3,9 +3,13 @@
 Optional shared-secret protection: when CIVALPHA_ADMIN_TOKEN is set, /api/admin/** (any method) and every non-GET
 /api request must carry it as "X-Admin-Token: <token>" or "Authorization: Bearer <token>". Read-only endpoints stay
 public. Without a token everything is open, which is only safe on localhost.
+
+/mcp serves the same data and actions to AI assistants over the Model Context Protocol (civalpha.platform.mcp_server);
+its management tools apply the same token rule.
 """
 from __future__ import annotations
 
+import contextlib
 import hmac
 import logging
 
@@ -19,7 +23,18 @@ from .settings import settings
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("civalpha.api")
 
-app = FastAPI(title="CivAlpha API", version="1.0.0", docs_url="/api/docs", openapi_url="/api/openapi.json", redoc_url=None)
+
+
+@contextlib.asynccontextmanager
+async def lifespan(_: FastAPI):
+    from .mcp_server import lifespan as mcp_lifespan
+
+    async with mcp_lifespan():
+        yield
+
+
+app = FastAPI(title="CivAlpha API", version="1.0.0", docs_url="/api/docs", openapi_url="/api/openapi.json", redoc_url=None,
+              lifespan=lifespan)
 
 
 def protected_request(path: str, method: str) -> bool:
@@ -79,8 +94,10 @@ if not settings().admin_token_required:
     log.warning("CIVALPHA_ADMIN_TOKEN is not set: admin and write endpoints are unauthenticated (keep the stack on localhost)")
 
 from .api import admin, events, read, universe  # noqa: E402  (routers import the services)
+from . import mcp_server  # noqa: E402
 
 app.include_router(read.router)
 app.include_router(events.router)
 app.include_router(admin.router)
 app.include_router(universe.router)
+mcp_server.mount(app)

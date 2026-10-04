@@ -85,6 +85,12 @@ class Schedule:
 
 
 @dataclass(frozen=True)
+class Mcp:
+    allowed_hosts: list[str]      # extra Host header values accepted by the /mcp endpoint (DNS-rebinding protection)
+    allowed_origins: list[str]    # extra Origin header values
+
+
+@dataclass(frozen=True)
 class Settings:
     database_url: str
     documents_dir: str
@@ -96,6 +102,7 @@ class Settings:
     llm: Llm
     prices: Prices
     schedule: Schedule
+    mcp: Mcp
     extra: dict = field(default_factory=dict)
 
     @property
@@ -127,4 +134,5 @@ def load() -> Settings:
                       history_start=date.fromisoformat(start) if start else date(2019, 1, 2)),
         schedule=Schedule(pipeline_cron=_env("CIVALPHA_PIPELINE_CRON", "-"), outcomes_cron=_env("CIVALPHA_OUTCOMES_CRON", "-"),
                           zone=_env("CIVALPHA_SCHEDULE_ZONE", "America/New_York")),
+        mcp=Mcp(allowed_hosts=_list("CIVALPHA_MCP_ALLOWED_HOSTS"), allowed_origins=_list("CIVALPHA_MCP_ALLOWED_ORIGINS")),
     )
