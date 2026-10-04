@@ -18,6 +18,9 @@ const RULE_LABEL: Record<string, string> = {
   BOLLINGER_20_2: 'Bollinger bounce',
   REVERSAL_5D: '5-day reversal',
   QUALITY_GROWTH: 'Quality & growth',
+  PEAD_SUE: 'Earnings-surprise drift',
+  VALUE_EY: 'Value (earnings yield)',
+  GROSS_PROFIT: 'Gross profitability',
   EVENT_AVOID: 'Event avoidance',
 };
 
@@ -30,7 +33,8 @@ const RULE_LABEL: Record<string, string> = {
         <h1>AI decisions</h1>
         <p class="muted">
           What the AI strategy decides for each stock after the close. A gradient-boosted model combines every classic
-          rule's indicator with fundamentals, tariff/rate shocks and macro, and estimates the probability that the stock
+          rule's indicator with the quarterly-report profile (growth, earnings surprise, margins, balance sheet, valuation),
+          tariff/rate shocks and macro, and estimates the probability that the stock
           beats its sector ETF over the next {{ horizon() }} trading days. The decision comes from fixed thresholds;
           nobody overrides it.
         </p>

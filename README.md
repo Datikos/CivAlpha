@@ -163,12 +163,23 @@ strategies on the same data, the same out-of-sample window and the same costs. T
 | Benchmark | Equal-weight buy & hold (the reference every verdict compares against); sector ETF basket |
 | Trend / momentum | 50/200-day golden cross (with and without a 10% trailing stop); 12-1 month momentum, top 5 monthly; Donchian 55/20 breakout |
 | Mean reversion | RSI(2) pullback above the 200-day average; Bollinger band (20, 2σ) bounce; weekly 5-day reversal, bottom 5 |
-| Fundamental / event | Quality & growth screen on as-filed XBRL data; stepping aside from tariff/rate shocks using SEC-filing exposures |
-| AI | Gradient-boosted trees that combine every rule's indicator with fundamentals, event shocks and macro (with and without a 10% trailing stop) |
+| Fundamental / event | Quality & growth screen on as-filed XBRL data; post-earnings-announcement drift (earnings surprise ≥ 1, hold 60 days); value (top 5 earnings yield); gross profitability (top 5 gross profit / assets); stepping aside from tariff/rate shocks using SEC-filing exposures |
+| AI | Gradient-boosted trees that combine every rule's indicator with the financial-report profile, event shocks and macro (with and without a 10% trailing stop); the same model on the financial-report profile alone (`AI_FUND`) |
 
 * **The AI decides.** The model estimates the probability that a stock beats its sector ETF over the next 10 trading days.
   It enters when p ≥ 0.55 and the stock ranks in the top 8, and exits when p < 0.48. It is retrained every 63 trading days,
   walk-forward, only on outcomes known before each refit.
+* **Financial reports.** `ml/civalpha_ml/fundamentals.py` turns the XBRL facts of every 10-Q/10-K into a profile:
+  * **Growth:** revenue growth acceleration.
+  * **Surprise:** earnings surprise and revenue surprise, standardized against the same quarter a year earlier. This
+    is a seasonal random walk with no analyst estimates (Bernard & Thomas).
+  * **Margins:** gross, operating and net margins over the last four quarters, and the change in operating margin.
+  * **Spending and profitability:** R&D intensity, and gross profit ÷ assets.
+  * **Balance sheet:** cash ÷ assets, liabilities ÷ assets, interest coverage.
+  * **Valuation:** earnings and sales yield, using filed shares adjusted for later splits × the close.
+  * **Recency:** days since the report.
+
+  Each value is used only after the report's EDGAR acceptance time; an amendment counts from its own acceptance.
 * **Same rules for everyone.** Every strategy is decided at the close and traded at the next close. Costs are 10 bp per
   side on the amount actually traded, and idle cash earns the realized fed funds rate. All strategies start in cash on
   the AI's first out-of-sample day.

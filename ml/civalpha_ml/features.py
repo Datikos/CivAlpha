@@ -59,6 +59,8 @@ class DataBundle:
     macro: pd.DataFrame
     membership: pd.DataFrame
     filings: pd.DataFrame = field(default_factory=pd.DataFrame)  # id, accession_no, form_type, accepted_at, url
+    close: dict = field(default_factory=dict)       # company_id -> raw close aligned to calendar (forward-filled)
+    actions: pd.DataFrame = field(default_factory=pd.DataFrame)  # corporate actions (splits for share counts)
     _fund_snap: dict = field(default_factory=dict)
     _expo_snap: dict = field(default_factory=dict)
 
@@ -69,12 +71,14 @@ class DataBundle:
         actions = actions.copy() if actions is not None else pd.DataFrame(columns=["company_id", "symbol", "ex_date", "action_type", "value"])
         if len(actions):
             actions["ex_date"] = pd.to_datetime(actions["ex_date"])
-        tr = {}
+        tr, raw = {}, {}
         sp = stock_prices.copy()
         sp["trade_date"] = pd.to_datetime(sp["trade_date"])
         for cid, g in sp.groupby("company_id"):
             a = actions[actions["company_id"] == cid] if "company_id" in actions else actions.iloc[0:0]
-            tr[int(cid)] = total_return_index(g.set_index("trade_date")["close"].astype(float), a, cal)
+            closes = g.set_index("trade_date")["close"].astype(float)
+            tr[int(cid)] = total_return_index(closes, a, cal)
+            raw[int(cid)] = closes[~closes.index.duplicated(keep="last")].reindex(cal).ffill().to_numpy(float)
         bp = bench_prices.copy()
         bp["trade_date"] = pd.to_datetime(bp["trade_date"])
         btr = {}
@@ -83,7 +87,7 @@ class DataBundle:
             btr[sym] = total_return_index(g.set_index("trade_date")["close"].astype(float), a, cal)
         return DataBundle(companies=companies, calendar=cal, tr=tr, bench_tr=btr, facts=facts, exposures=exposures,
                           events=events, targets=targets, macro=macro, membership=membership,
-                          filings=filings if filings is not None else pd.DataFrame())
+                          filings=filings if filings is not None else pd.DataFrame(), close=raw, actions=actions)
 
     # ---------------------------------------------------------------- snapshots
     def fundamentals_at(self, company_id: int, as_of: pd.Timestamp) -> dict:
@@ -98,6 +102,7 @@ class DataBundle:
         (verified in tests) but linear in the number of facts.
         """
         if company_id not in self._fund_snap:
+            from .fundamentals import profile_from_records  # local: fundamentals imports this module
             f = self.facts[self.facts["company_id"] == company_id].sort_values("accepted_at", kind="stable")
             times_ns, snaps, state = [], [], {}
             cols = ["taxonomy", "concept", "unit", "period_start", "period_end", "dims_key", "value", "accession_no", "accepted_at"]
@@ -110,7 +115,8 @@ class DataBundle:
                     state[r[:6]] = r  # later acceptance replaces the earlier value of the same key
                     i += 1
                 times_ns.append(pd.Timestamp(t).value)
-                snaps.append(fundamentals_from_records(state.values()))
+                vals = list(state.values())
+                snaps.append({**fundamentals_from_records(vals), **profile_from_records(vals)})
             self._fund_snap[company_id] = (np.array(times_ns, dtype=np.int64), snaps)
         return self._fund_snap[company_id]
 

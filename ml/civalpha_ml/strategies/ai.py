@@ -5,7 +5,11 @@ Inputs per (date, company), all known at close(t):
     fundamentals, tariff/rate shocks through SEC-filing exposures, fed funds change x leverage;
   * the indicators behind the classic rules: distance from the 50/200-day averages, RSI(2)/RSI(14),
     Bollinger z-score, position in the 55-day Donchian channel, 12-1 momentum, 5-day reversal,
-    21-day volatility, drawdown from the 52-week high.
+    21-day volatility, drawdown from the 52-week high;
+  * the financial-report profile (fundamentals.py): revenue acceleration, earnings and revenue surprise,
+    margins, R&D intensity, profitability, balance sheet, valuation, days since the latest report.
+
+AI_FUND is the same model trained on the report profile alone.
 
 Label: the stock's total return beats its sector ETF over `horizon` days, entering at the next close
 (t+1 -> t+1+horizon). That outcome is known at close(t+1+horizon), so a model refitted at index R only
@@ -25,11 +29,14 @@ from sklearn.ensemble import HistGradientBoostingClassifier
 
 from ..evaluation import EvalConfig, train_mask, walk_forward_folds
 from ..features import AUGMENTED_FEATURES, FEATURE_KIND, FEATURE_LABELS
+from ..fundamentals import FUND_FEATURES, FUND_LABELS
 from .base import Strategy, prior_high, prior_low, rolling_std, rsi, sma
 from .panel import MarketPanel
 
 TECH_FEATURES = ["dist_sma50", "dist_sma200", "rsi2", "rsi14", "boll_z", "donchian_pos", "mom_12_1", "rev_5d", "vol_21", "dd_52w"]
-AI_FEATURES = AUGMENTED_FEATURES + TECH_FEATURES
+AI_FEATURES = AUGMENTED_FEATURES + TECH_FEATURES + FUND_FEATURES
+# the reports-only model: what the quarterly/annual filings say, nothing from prices except valuation and recency
+FUND_MODEL_FEATURES = ["rev_yoy", "gm_chg", "leverage"] + FUND_FEATURES
 TECH_LABELS = {
     "dist_sma50": "Distance from 50-day average", "dist_sma200": "Distance from 200-day average",
     "rsi2": "RSI(2)", "rsi14": "RSI(14)", "boll_z": "Bollinger z-score (20-day)",
@@ -37,6 +44,7 @@ TECH_LABELS = {
     "rev_5d": "5-day return (reversal)", "vol_21": "21-day volatility", "dd_52w": "Drawdown from 52-week high",
 }
 AI_KEY = "AI_GBM"
+AI_FUND_KEY = "AI_FUND"
 ALGORITHM = "hist_gradient_boosting"
 CODE_VERSION = "strategy-0.1.0"
 
@@ -61,11 +69,13 @@ class AiConfig:
 
 
 def feature_label(f: str) -> str:
-    return TECH_LABELS.get(f) or FEATURE_LABELS.get(f, f)
+    return TECH_LABELS.get(f) or FUND_LABELS.get(f) or FEATURE_LABELS.get(f, f)
 
 
 def feature_kind(f: str) -> str:
-    return "TECHNICAL" if f in TECH_LABELS else FEATURE_KIND.get(f, "OTHER")
+    if f in TECH_LABELS:
+        return "TECHNICAL"
+    return "FUNDAMENTAL" if f in FUND_LABELS else FEATURE_KIND.get(f, "OTHER")
 
 
 # --------------------------------------------------------------------------- dataset
@@ -100,6 +110,9 @@ def dataset(p: MarketPanel, cfg: AiConfig) -> pd.DataFrame:
     df, cal_pos, col_pos = df[keep].reset_index(drop=True), cal_pos[keep], col_pos[keep]
     for name, m in technical_features(p).items():
         df[name] = m.to_numpy(float)[cal_pos, col_pos]
+    fund = p.fundamentals()
+    for name in FUND_FEATURES:
+        df[name] = fund[name].to_numpy(float)[cal_pos, col_pos]
     h = cfg.horizon
     s_fwd = p.px.shift(-(h + 1)) / p.px.shift(-1) - 1.0
     b_fwd = p.bench_px.shift(-(h + 1)) / p.bench_px.shift(-1) - 1.0
@@ -148,7 +161,8 @@ def _eval_cfg(cfg: AiConfig) -> EvalConfig:
 
 
 # --------------------------------------------------------------------------- walk-forward
-def walk_forward_probabilities(p: MarketPanel, cfg: AiConfig, data: pd.DataFrame | None = None) -> dict:
+def walk_forward_probabilities(p: MarketPanel, cfg: AiConfig, data: pd.DataFrame | None = None,
+                               features: list[str] = AI_FEATURES) -> dict:
     """Out-of-sample P(beat sector ETF) for every member and day after the first `min_train_days`."""
     data = dataset(p, cfg) if data is None else data
     prob = np.full((len(p.calendar), len(p.px.columns)), np.nan)
@@ -162,8 +176,8 @@ def walk_forward_probabilities(p: MarketPanel, cfg: AiConfig, data: pd.DataFrame
         train = data[train_mask(data, fold, ecfg)]
         if test.empty or len(train) < 200 or train["label"].nunique() < 2:
             continue
-        m = new_model(cfg).fit(train[AI_FEATURES].to_numpy(float), train["label"].astype(int).to_numpy())
-        pr = m.predict_proba(test[AI_FEATURES].to_numpy(float))[:, 1]
+        m = new_model(cfg).fit(train[features].to_numpy(float), train["label"].astype(int).to_numpy())
+        pr = m.predict_proba(test[features].to_numpy(float))[:, 1]
         prob[test["idx"].to_numpy(), p.px.columns.get_indexer(test["company_id"].to_numpy())] = pr
         out_folds.append({"fold": fold["fold"], "testStart": str(p.calendar[fold["test_start_idx"]].date()),
                           "testEnd": str(p.calendar[min(fold["test_end_idx"], len(p.calendar) - 1)].date()),
@@ -206,30 +220,39 @@ def decide_positions(prob: pd.DataFrame, member: pd.DataFrame, cfg: AiConfig, st
     return pd.DataFrame(W, index=prob.index, columns=prob.columns), pd.DataFrame(A, index=prob.index, columns=prob.columns)
 
 
-def ai_strategies(cfg: AiConfig, weights: pd.DataFrame) -> list[Strategy]:
+def ai_strategies(cfg: AiConfig, weights: pd.DataFrame, fund_weights: pd.DataFrame | None = None) -> list[Strategy]:
     desc = dict(entry=f"Model probability ≥ {cfg.entry_p:.2f} that the stock beats its sector ETF over the next "
                       f"{cfg.horizon} days, and among the top {cfg.max_positions}",
                 origin="Gradient-boosted trees over every rule's indicator plus fundamentals, tariff/rate shocks and macro; "
                        f"retrained every {cfg.fold_length} trading days on past data only")
     fixed = lambda _p: weights  # noqa: E731 - weights were computed walk-forward already
-    return [
+    out = [
         Strategy(AI_KEY, "AI", "AI decides (gradient boosting)", exit=f"Probability falls below {cfg.exit_p:.2f}",
                  sizing="WEIGHTS", fn=fixed, params=cfg.params(), **desc),
         Strategy(AI_KEY + "_TSTOP10", "AI", "AI decides + 10% trailing stop",
                  exit=f"Probability below {cfg.exit_p:.2f}, or the close falls 10% below its high since entry",
                  sizing="WEIGHTS", fn=fixed, params=cfg.params(), trailing_stop=0.10, **desc),
     ]
+    if fund_weights is not None:
+        out.append(Strategy(AI_FUND_KEY, "AI", "AI on financial reports only",
+                            entry=desc["entry"], exit=f"Probability falls below {cfg.exit_p:.2f}",
+                            origin="Gradient-boosted trees over the quarterly/annual report profile only: growth, earnings and "
+                                   "revenue surprise, margins, balance sheet, valuation and days since the report; "
+                                   f"retrained every {cfg.fold_length} trading days on past data only",
+                            sizing="WEIGHTS", fn=lambda _p: fund_weights, params={**cfg.params(), "features": FUND_MODEL_FEATURES}))
+    return out
 
 
 # --------------------------------------------------------------------------- explanation
-def explain(model: AiModel, x: np.ndarray, medians: np.ndarray, top: int = 5) -> list[dict]:
+def explain(model: AiModel, x: np.ndarray, medians: np.ndarray, top: int = 5, features: list[str] = AI_FEATURES) -> list[dict]:
     """Per-feature effect: how much the probability moves if this feature were at its training median."""
     base = float(model.predict_proba(x[None, :])[0, 1])
-    probe = np.repeat(x[None, :], len(AI_FEATURES), axis=0)
-    probe[np.arange(len(AI_FEATURES)), np.arange(len(AI_FEATURES))] = medians
+    n = len(features)
+    probe = np.repeat(x[None, :], n, axis=0)
+    probe[np.arange(n), np.arange(n)] = medians
     alt = model.predict_proba(probe)[:, 1]
     contrib = base - alt
     order = np.argsort(-np.abs(contrib), kind="stable")[:top]
-    return [{"feature": AI_FEATURES[i], "label": feature_label(AI_FEATURES[i]), "kind": feature_kind(AI_FEATURES[i]),
+    return [{"feature": features[i], "label": feature_label(features[i]), "kind": feature_kind(features[i]),
              "value": None if np.isnan(x[i]) else float(x[i]), "median": None if np.isnan(medians[i]) else float(medians[i]),
              "contribution": float(contrib[i]), "direction": "UP" if contrib[i] > 0 else "DOWN"} for i in order]
