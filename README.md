@@ -155,11 +155,24 @@ With live sources configured, run **Data & pipeline → Run configured pipeline*
 display it publicly. Check your vendor licence before connecting a provider or publishing derived output. Keep
 keys in `.env`, which git ignores, and never in source control.
 
+## Security and scheduling
+
+* **Admin token.** Set `CIVALPHA_ADMIN_TOKEN` to require a shared secret for `/api/admin/**` (any method) and
+  for every non-GET `/api` request, such as adding an event. Clients send it as `X-Admin-Token: <token>` or
+  `Authorization: Bearer <token>`. Read-only pages stay public. The **Data & pipeline** page asks for the token
+  and keeps it for the browser tab only. Without a token everything is open, which is why the UI binds to
+  `127.0.0.1` by default (`CIVALPHA_BIND`).
+* **Schedule.** `CIVALPHA_PIPELINE_CRON` and `CIVALPHA_OUTCOMES_CRON` take Spring cron expressions
+  (`sec min hour day month weekday`), evaluated in `CIVALPHA_SCHEDULE_ZONE` (default `America/New_York`). `-` turns
+  a schedule off, which is the default. Example: `0 30 22 * * MON-FRI` runs the pipeline after the US close.
+  Scheduled runs are logged like manual jobs and are skipped while a job of the same type is still running.
+
 ## Environment variables
 
 All variables are listed with comments in `.env.example`. The main ones are `CIVALPHA_PORT` (8088),
-`POSTGRES_PASSWORD`, `CIVALPHA_SEC_MODE`, `SEC_USER_AGENT`, `SEC_MAX_RPS`, `SEC_LOOKBACK_YEARS`, `FRED_API_KEY`,
-`EVENTS_*`, `CIVALPHA_LLM_PROVIDER`, `CIVALPHA_LLM_MODEL` and `ANTHROPIC_API_KEY`. The universe (24 stocks with
+`CIVALPHA_BIND`, `CIVALPHA_ADMIN_TOKEN`, `CIVALPHA_PIPELINE_CRON`, `CIVALPHA_OUTCOMES_CRON`, `POSTGRES_PASSWORD`,
+`CIVALPHA_SEC_MODE`, `SEC_USER_AGENT`, `SEC_MAX_RPS`, `SEC_LOOKBACK_YEARS`, `FRED_API_KEY`, `EVENTS_*`,
+`CIVALPHA_LLM_PROVIDER`, `CIVALPHA_LLM_MODEL` and `ANTHROPIC_API_KEY`. The universe (24 stocks with
 sector benchmarks and ticker history) is set in `config/universe.yml`. Edit it to cover 20–50 symbols.
 
 ## Tests
@@ -173,6 +186,10 @@ cd ml && python3 -m venv .venv && . .venv/bin/activate && pip install -r require
 # versioning, and API smoke tests
 cd backend && mvn test
 ```
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on every pull request and every push to `main`. It runs the
+Python tests, the backend tests (and fails if the Testcontainers suite was skipped), the Angular production
+build, and a `docker compose config` check.
 
 ## Layout
 
@@ -191,8 +208,9 @@ scripts/   demo.sh
   trading calendar; the calendar currently comes from benchmark bars. Re-imported conflicting prices are
   reported but not versioned.
 * **SEC.**
-  * Only `filings.recent` is read; older submission pages are not paged.
-  * The XBRL instance is found by the `*_htm.xml` naming convention rather than the filing index.
+  * Older submission pages (`filings.files`) are followed only when they overlap the lookback window.
+  * The XBRL instance is located from the filing's `index.json`, falling back to the `*_htm.xml` naming
+    convention.
   * The passage rules (`rules-v1`) are keyword-based. Precision should be measured on real 10-Ks before relying
     on `RULE_KEYWORD` exposures.
 * **Events.** Event severity for auto-extracted trade notices defaults to 0.5. Calibrating severity and
@@ -203,5 +221,5 @@ scripts/   demo.sh
     proper significance testing across many universes.
   * Live, real-data accuracy can only build up over time.
 * **Operations.**
-  * There is no authentication on admin endpoints, so keep the stack bound to localhost.
-  * There is no scheduler; add a cron calling `/api/admin/pipeline/run` and `/api/admin/outcomes/resolve`.
+  * Admin protection is a single shared token. Real multi-user access needs proper authentication and roles.
+  * The scheduler runs inside the backend, so a missed run while the stack is down is not caught up.

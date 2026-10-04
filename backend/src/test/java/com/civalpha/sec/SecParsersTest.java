@@ -39,6 +39,39 @@ class SecParsersTest {
     }
 
     @Test
+    void submissionsListOlderPagesAndPagesParseLikeRecent() {
+        String root = """
+                {"cik":"0000320193","name":"Apple Inc.","tickers":["AAPL"],"filings":{
+                  "recent":{"accessionNumber":[],"filingDate":[],"reportDate":[],"acceptanceDateTime":[],"form":[],"primaryDocument":[],"items":[]},
+                  "files":[{"name":"CIK0000320193-submissions-001.json","filingCount":1200,"filingFrom":"1994-01-26","filingTo":"2014-07-21"}]}}""";
+        var s = SubmissionsParser.parse(om, root.getBytes(StandardCharsets.UTF_8));
+        assertThat(s.olderPages()).singleElement().satisfies(p -> {
+            assertThat(p.name()).isEqualTo("CIK0000320193-submissions-001.json");
+            assertThat(p.filingTo()).isEqualTo(LocalDate.parse("2014-07-21"));
+        });
+        String page = """
+                {"accessionNumber":["0001193125-14-277160"],"filingDate":["2014-07-23"],"reportDate":["2014-06-28"],
+                 "acceptanceDateTime":["2014-07-23T16:31:21.000Z"],"form":["10-Q"],"primaryDocument":["d735836d10q.htm"],"items":[""]}""";
+        assertThat(SubmissionsParser.parsePage(om, page.getBytes(StandardCharsets.UTF_8)))
+                .singleElement().satisfies(f -> assertThat(f.form()).isEqualTo("10-Q"));
+    }
+
+    @Test
+    void locatesXbrlInstanceFromFilingIndex() {
+        String index = """
+                {"directory":{"name":"/Archives/edgar/data/320193/000032019324000123","item":[
+                  {"name":"0000320193-24-000123-index.htm"},{"name":"FilingSummary.xml"},{"name":"aapl-20240928.htm"},
+                  {"name":"aapl-20240928.xsd"},{"name":"aapl-20240928_cal.xml"},{"name":"aapl-20240928_htm.xml"}]}}""";
+        var names = XbrlInstanceLocator.names(om, index.getBytes(StandardCharsets.UTF_8));
+        assertThat(XbrlInstanceLocator.pick(names, "aapl-20240928.htm")).contains("aapl-20240928_htm.xml");
+        // pre-inline filings: standalone instance next to linkbases and schema
+        var old = List.of("FilingSummary.xml", "aapl-20100925.xml", "aapl-20100925.xsd", "aapl-20100925_lab.xml", "aapl-20100925_pre.xml");
+        assertThat(XbrlInstanceLocator.pick(old, "d10k.htm")).contains("aapl-20100925.xml");
+        assertThat(XbrlInstanceLocator.pick(List.of("FilingSummary.xml", "x.xsd"), "d.htm")).isEmpty();
+        assertThat(XbrlInstanceLocator.conventional("msft-10k_20240630.htm")).isEqualTo("msft-10k_20240630_htm.xml");
+    }
+
+    @Test
     void companyFactsKeepsAccessionFiledDateAndPeriods() {
         String json = """
                 {"cik":320193,"entityName":"Apple Inc.","facts":{"us-gaap":{

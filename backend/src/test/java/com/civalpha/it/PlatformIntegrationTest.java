@@ -131,12 +131,16 @@ class PlatformIntegrationTest {
         Path sec = TMP.resolve("sec");
         Files.createDirectories(sec.resolve("submissions"));
         Files.createDirectories(sec.resolve("companyfacts"));
+        // the amendment sits on an older paged index file, which ingestion must follow
         Files.writeString(sec.resolve("submissions/CIK0000050863.json"), """
                 {"cik":"0000050863","name":"Intel","tickers":["INTC"],"filings":{"recent":{
-                  "accessionNumber":["0000050863-25-000010","0000050863-25-000099"],
-                  "filingDate":["2025-01-30","2025-03-14"], "reportDate":["2024-12-28","2024-12-28"],
-                  "acceptanceDateTime":["2025-01-30T21:05:00.000Z","2025-03-14T20:00:00.000Z"],
-                  "form":["10-K","10-K/A"], "primaryDocument":["",""], "items":["",""]}}}""");
+                  "accessionNumber":["0000050863-25-000010"], "filingDate":["2025-01-30"], "reportDate":["2024-12-28"],
+                  "acceptanceDateTime":["2025-01-30T21:05:00.000Z"], "form":["10-K"], "primaryDocument":[""], "items":[""]},
+                  "files":[{"name":"CIK0000050863-submissions-001.json","filingCount":1,"filingFrom":"2025-03-14","filingTo":"2025-03-14"},
+                           {"name":"CIK0000050863-submissions-000.json","filingCount":1,"filingFrom":"1994-01-01","filingTo":"2001-01-01"}]}}""");
+        Files.writeString(sec.resolve("submissions/CIK0000050863-submissions-001.json"), """
+                {"accessionNumber":["0000050863-25-000099"], "filingDate":["2025-03-14"], "reportDate":["2024-12-28"],
+                 "acceptanceDateTime":["2025-03-14T20:00:00.000Z"], "form":["10-K/A"], "primaryDocument":[""], "items":[""]}""");
         Files.writeString(sec.resolve("companyfacts/CIK0000050863.json"), """
                 {"cik":50863,"entityName":"Intel","facts":{"us-gaap":{"Revenues":{"units":{"USD":[
                   {"start":"2023-12-31","end":"2024-12-28","val":53100000000,"accn":"0000050863-25-000010","fy":2024,"fp":"FY","form":"10-K","filed":"2025-01-30"},
@@ -145,6 +149,9 @@ class PlatformIntegrationTest {
         List<String> log = new ArrayList<>();
         var res = filings.ingest(new FixtureSecClient(sec), intc, false, log::add);
         assertThat(res.facts()).isEqualTo(2);
+        assertThat(res.filings()).isEqualTo(2);
+        // the page outside the lookback window is not fetched (it does not exist; a fetch would be logged as missing)
+        assertThat(log).noneMatch(l -> l.contains("submissions-000"));
         assertThat(jdbc.sql("SELECT amends_accession FROM filing WHERE form_type = '10-K/A'").query(String.class).single())
                 .isEqualTo("0000050863-25-000010");
 

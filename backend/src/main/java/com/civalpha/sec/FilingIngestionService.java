@@ -78,7 +78,25 @@ public class FilingIngestionService {
                     .ifPresent(ch -> logLine.accept(symbol + ": ticker change observed " + ch));
         }
         LocalDate minDate = demo ? LocalDate.of(1990, 1, 1) : LocalDate.now().minusYears(props.sec().lookbackYears());
-        List<FilingMeta> wanted = sub.filings().stream()
+        List<FilingMeta> all = new ArrayList<>(sub.filings());
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        all.forEach(f -> seen.add(f.accessionNo()));
+        // "recent" holds at most ~1000 filings; older ones live in paged files that overlap the lookback window
+        for (SubmissionsParser.FilePage page : sub.olderPages()) {
+            if (page.filingTo() != null && page.filingTo().isBefore(minDate)) continue;
+            String pageUrl = "https://data.sec.gov/submissions/" + page.name();
+            Optional<byte[]> body = sec.get(pageUrl);
+            if (body.isEmpty()) {
+                logLine.accept(symbol + ": submissions page " + page.name() + " not found");
+                continue;
+            }
+            docs.store(new DocumentStore.NewDocument("SEC_API", "SEC EDGAR", pageUrl, null, "Submissions page " + page.name(),
+                    null, "application/json", body.get(), demo));
+            for (FilingMeta f : SubmissionsParser.parsePage(om, body.get())) {
+                if (seen.add(f.accessionNo())) all.add(f);
+            }
+        }
+        List<FilingMeta> wanted = all.stream()
                 .filter(f -> f.filingDate() != null && !f.filingDate().isBefore(minDate))
                 .filter(f -> PERIODIC.contains(f.form()) || ("8-K".equals(f.form()) && relevant8k(f.items())))
                 .sorted(Comparator.comparing(FilingMeta::acceptedAt)).toList();
@@ -104,7 +122,7 @@ public class FilingIngestionService {
         }
         // 2. XBRL facts (point-in-time key: EDGAR acceptance of the reporting filing)
         Map<String, FilingMeta> byAcc = new HashMap<>();
-        sub.filings().forEach(f -> byAcc.put(f.accessionNo(), f));
+        all.forEach(f -> byAcc.put(f.accessionNo(), f));
         String cfUrl = SecClient.COMPANY_FACTS.formatted(cik);
         int facts = 0;
         Optional<byte[]> cf = sec.get(cfUrl);
@@ -130,7 +148,7 @@ public class FilingIngestionService {
                     passages += insertPassages(fid, new String(html.get(), StandardCharsets.UTF_8), demo);
                 }
                 if (f.isAnnual()) {
-                    String inst = SecClient.archiveUrl(cik, f.accessionNo(), f.primaryDocument().replaceAll("\\.htm$", "_htm.xml"));
+                    String inst = SecClient.archiveUrl(cik, f.accessionNo(), instanceName(sec, cik, f));
                     Optional<byte[]> xml = sec.get(inst);
                     if (xml.isPresent()) {
                         docs.store(new DocumentStore.NewDocument("SEC_FILING", "SEC EDGAR", inst, f.accessionNo(),
@@ -144,6 +162,20 @@ public class FilingIngestionService {
         }
         logLine.accept("%s: %d new filings, %d facts, %d passages, %d exposures (%s mode)".formatted(symbol, newFilings, facts, passages, expo, sec.mode()));
         return new Result(symbol, newFilings, facts, passages, expo);
+    }
+
+    /** XBRL instance file name: from the filing's directory listing when available, else the inline-XBRL convention. */
+    private String instanceName(SecClient sec, String cik, FilingMeta f) {
+        Optional<byte[]> index = sec.get(SecClient.archiveUrl(cik, f.accessionNo(), "index.json"));
+        if (index.isPresent()) {
+            try {
+                Optional<String> picked = XbrlInstanceLocator.pick(XbrlInstanceLocator.names(om, index.get()), f.primaryDocument());
+                if (picked.isPresent()) return picked.get();
+            } catch (RuntimeException e) {
+                log.warn("unreadable filing index for {}: {}", f.accessionNo(), e.toString());
+            }
+        }
+        return XbrlInstanceLocator.conventional(f.primaryDocument());
     }
 
     private static boolean relevant8k(String items) {

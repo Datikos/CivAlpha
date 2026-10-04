@@ -183,6 +183,10 @@ Forecast summary object:
 after its data cutoff, reconstructed point-in-time). `evaluation` is null before the first evaluation run.
 
 ## Admin / pipeline
+When the server sets `CIVALPHA_ADMIN_TOKEN`, every `/api/admin/**` request and every non-GET `/api` request
+(e.g. `POST /api/events`) must send `X-Admin-Token: <token>` (or `Authorization: Bearer <token>`); otherwise the
+response is `401`. `GET /api/meta` reports `adminTokenRequired`.
+
 * `GET /api/admin/jobs` → `[{"id":1,"jobType":"DEMO_LOAD","status":"SUCCEEDED","log":"...","startedAt":"...","finishedAt":"..."}]`
 * `POST /api/admin/demo/load` → job — loads the synthetic demo dataset and runs the full pipeline.
 * `POST /api/admin/pipeline/run` → job — ingest configured sources, evaluate, issue forecasts.

@@ -54,3 +54,11 @@ civalpha:
     provider: ${CIVALPHA_LLM_PROVIDER:none}
     model: ${CIVALPHA_LLM_MODEL:claude-opus-5-5}
     api-key: ${ANTHROPIC_API_KEY:}
+  security:
+    # When set, /api/admin/** and every non-GET /api request require this token (X-Admin-Token or Authorization: Bearer).
+    admin-token: ${CIVALPHA_ADMIN_TOKEN:}
+  schedule:
+    # Spring cron (sec min hour day month weekday); "-" disables. Example: "0 30 22 * * MON-FRI" = after the US close.
+    pipeline-cron: ${CIVALPHA_PIPELINE_CRON:-}
+    outcomes-cron: ${CIVALPHA_OUTCOMES_CRON:-}
+    zone: ${CIVALPHA_SCHEDULE_ZONE:America/New_York}

@@ -7,6 +7,8 @@ export interface Meta {
   demoDataPresent: boolean;
   llmEnabled: boolean;
   secMode: string;
+  /** True when the backend requires X-Admin-Token for admin and write requests. */
+  adminTokenRequired?: boolean;
   dataCutoff: string | null;
   target: string;
   disclaimers: string[];

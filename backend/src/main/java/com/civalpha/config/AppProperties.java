@@ -13,7 +13,9 @@ public record AppProperties(
         Demo demo,
         Fred fred,
         Events events,
-        Llm llm) {
+        Llm llm,
+        Security security,
+        Schedule schedule) {
 
     public record Storage(String documentsDir, String importsDir) {}
 
@@ -31,6 +33,14 @@ public record AppProperties(
     }
 
     public record Events(boolean federalRegisterEnabled, boolean fedRssEnabled, List<String> newsFeeds) {}
+
+    /** adminToken: when set, admin endpoints and all write requests need it (header X-Admin-Token or Bearer). */
+    public record Security(String adminToken) {
+        public boolean enabled() { return adminToken != null && !adminToken.isBlank(); }
+    }
+
+    /** Spring cron expressions ("-" disables). Times are evaluated in `zone`. */
+    public record Schedule(String pipelineCron, String outcomesCron, String zone) {}
 
     public record Llm(String provider, String model, String apiKey) {
         public boolean enabled() { return "anthropic".equalsIgnoreCase(provider) && apiKey != null && !apiKey.isBlank(); }
