@@ -541,12 +541,15 @@ export interface AccuracyResponse {
   /** LIVE-issued forecasts only (published before their outcome window opened). */
   issued: Partial<Record<ModelKind, IssuedAccuracy>> | null;
   /** Same statistics split by issue mode; REPLAY = published after its data cutoff. */
-  issuedByMode?: Partial<Record<'LIVE' | 'REPLAY', Partial<Record<ModelKind, IssuedAccuracy>>>> | null;
+  issuedByMode?: Partial<
+    Record<'LIVE' | 'REPLAY', Partial<Record<ModelKind, IssuedAccuracy>>>
+  > | null;
 }
 
 // ---------- Strategy lab ----------
 
-export type StrategyFamily = 'BENCHMARK' | 'TREND' | 'MEAN_REVERSION' | 'FUNDAMENTAL' | 'EVENT' | 'AI';
+export type StrategyFamily =
+  'BENCHMARK' | 'TREND' | 'MEAN_REVERSION' | 'FUNDAMENTAL' | 'EVENT' | 'AI';
 
 export interface StrategyMetrics {
   start: string;
@@ -589,7 +592,13 @@ export interface StrategyResult {
   strategyKey: string;
   family: StrategyFamily;
   name: string;
-  description: { entry: string; exit: string; origin: string; sizing: string; trailingStop?: number };
+  description: {
+    entry: string;
+    exit: string;
+    origin: string;
+    sizing: string;
+    trailingStop?: number;
+  };
   params: Record<string, unknown>;
   metrics: StrategyMetrics;
   equity: EquityPoint[];
@@ -667,7 +676,13 @@ export interface AiDecision {
   rank: number;
   factors: DecisionFactor[];
   ruleVotes: Record<string, boolean>;
-  model: { algorithm: string; trainedThrough: string; nTrain: number; horizon: number; codeVersion: string };
+  model: {
+    algorithm: string;
+    trainedThrough: string;
+    nTrain: number;
+    horizon: number;
+    codeVersion: string;
+  };
   issuedAt: string;
   explanation: string | null;
   explanationModel: string | null;
@@ -710,7 +725,13 @@ export interface TmStock {
   /** horizon -> model kind -> P(beat the sector ETF) */
   odds?: Record<string, Partial<Record<ModelKind, number>>>;
   range?: Record<string, TmRange>;
-  ai?: { action: 'ENTER' | 'STAY_OUT'; probability: number; rank: number; weight: number; factors: DecisionFactor[] };
+  ai?: {
+    action: 'ENTER' | 'STAY_OUT';
+    probability: number;
+    rank: number;
+    weight: number;
+    factors: DecisionFactor[];
+  };
   /** horizon -> outcome, null while it is not known yet */
   actual: Record<string, TmActual | null>;
   path: { date: string; stock: number; benchmark: number | null }[];
@@ -719,9 +740,36 @@ export interface TmStock {
 export interface TmHorizonSummary {
   resolved: number;
   endDate: string | null;
-  odds?: Partial<Record<ModelKind, { n: number; hitRate: number; brier: number; brierBaseRate: number; auc: number | null; topMinusBottomExcess: number | null }>>;
-  range?: { n: number; coverage: number; naiveCoverage: number; target: number; medianAbsError: number; naiveMedianAbsError: number; avgWidth: number; naiveWidth: number };
-  ai?: { universeReturn: number; picks: string[]; picksReturn?: number; excessVsUniverse?: number; picksBeatSector?: number };
+  odds?: Partial<
+    Record<
+      ModelKind,
+      {
+        n: number;
+        hitRate: number;
+        brier: number;
+        brierBaseRate: number;
+        auc: number | null;
+        topMinusBottomExcess: number | null;
+      }
+    >
+  >;
+  range?: {
+    n: number;
+    coverage: number;
+    naiveCoverage: number;
+    target: number;
+    medianAbsError: number;
+    naiveMedianAbsError: number;
+    avgWidth: number;
+    naiveWidth: number;
+  };
+  ai?: {
+    universeReturn: number;
+    picks: string[];
+    picksReturn?: number;
+    excessVsUniverse?: number;
+    picksBeatSector?: number;
+  };
 }
 
 export interface TimeMachineRunSummary {
@@ -785,11 +833,39 @@ export interface UniverseResponse {
   productIndustries: string[];
 }
 
+/** @deprecated the Universe page uses CompanyProfile (GET /universe/enrich). */
 export interface SecMatch {
   symbol: string;
   cik: string;
   name: string;
   source: string;
+}
+
+/** Everything the backend could find out about a ticker from SEC EDGAR, to prefill a new universe member. */
+export interface CompanyProfile {
+  symbol: string;
+  cik: string | null;
+  name: string | null;
+  source: string | null;
+  exchange: string | null;
+  sic: string | null;
+  sicDescription: string | null;
+  formerNames: string[];
+  /** Suggested from the SIC code; null when unknown. */
+  sector: string | null;
+  benchmarkSymbol: string | null;
+  industry: string | null;
+  sectorConfidence: 'high' | 'review' | null;
+  sectorNote: string | null;
+  /** Candidate sectors when the SIC code is ambiguous (suggestion first); empty when it is clear. */
+  sectorAlternatives: { sector: string; benchmarkSymbol: string }[];
+  /** Every sector the platform knows, with its benchmark ETF. */
+  sectorBenchmarks: Record<string, string>;
+  /** Set when this CIK or ticker is already a company in the database. */
+  existing: { companyId: number; symbol: string; active: boolean } | null;
+  warnings: string[];
+  /** Whether a price provider is configured (so a price download can be started on add). */
+  priceProviderEnabled: boolean;
 }
 
 export interface AddCompanyRequest {
@@ -801,11 +877,12 @@ export interface AddCompanyRequest {
   benchmarkSymbol: string;
   memberSince: string | null;
   ingestSec: boolean;
+  syncPrices?: boolean;
 }
 
 export interface AddCompanyResponse {
   id: number;
   symbol: string;
   nextSteps: string[];
-  job?: Job;
+  jobs: Job[];
 }

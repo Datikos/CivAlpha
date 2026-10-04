@@ -1,16 +1,20 @@
 """Manage the research universe: add, edit, remove/restore, change ticker, delete unused companies."""
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import date
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from ..errors import NotFound, Unavailable
+from ..errors import BadRequest, NotFound, Unavailable
 from ..events.vocabulary import product_for_industry
 from ..jobs import Jobs
+from .. import sectors
 from ..rows import camel, camel_all
 from ..sec import SecTickerLookup
+from ..sec.profile import CompanyProfiler
+from ..settings import settings
 from ..sql import db
 from ..universe import UniverseService
 
@@ -60,6 +64,19 @@ def lookup(symbol: str):
     return {"symbol": m.symbol, "cik": m.cik, "name": m.name, "source": m.source}
 
 
+@router.get("/enrich")
+def enrich(symbol: str):
+    """Everything EDGAR knows about a ticker, plus a suggested sector / benchmark ETF, to prefill the add form."""
+    sym = symbol.upper().strip()
+    if not sym:
+        raise BadRequest("symbol is required")
+    p = CompanyProfiler(db(), _lookup)
+    out = camel(asdict(p.profile(sym)))
+    out["priceProviderEnabled"] = settings().prices.enabled
+    out["sectorBenchmarks"] = dict(sectors.SECTOR_ETF)    # every sector the form can offer, with its benchmark ETF
+    return out
+
+
 class AddIn(BaseModel):
     symbol: str | None = None
     name: str | None = None
@@ -69,6 +86,7 @@ class AddIn(BaseModel):
     benchmarkSymbol: str | None = None
     memberSince: date | None = None
     ingestSec: bool | None = None
+    syncPrices: bool | None = None
 
 
 @router.post("/companies")
@@ -77,16 +95,19 @@ def add(body: AddIn):
     cid = u.add(body.symbol, body.name, body.cik, body.sector, body.industry, body.benchmarkSymbol, body.memberSince)
     sym = body.symbol.upper().strip()
     bench = body.benchmarkSymbol.upper().strip()
-    out: dict = {"id": cid, "symbol": sym}
-    nxt = [f"Import daily prices for {sym} (at least ~6 months of history is needed for features)."]
-    if u.benchmark_symbols() and db().scalar("SELECT count(*) FROM price_bar WHERE company_id IS NULL AND symbol = :b", b=bench) == 0:
-        nxt.append(f"Import prices for benchmark {bench} too (none loaded yet).")
+    jobs: list[dict] = []
+    nxt: list[str] = []
+    if body.syncPrices and settings().prices.enabled:
+        jobs.append(camel(Jobs().submit("PRICE_SYNC", {"reason": f"{sym} added"})))
+    else:
+        nxt.append(f"Import daily prices for {sym} (at least ~6 months of history is needed for features).")
+        if db().scalar("SELECT count(*) FROM price_bar WHERE company_id IS NULL AND symbol = :b", b=bench) == 0:
+            nxt.append(f"Import prices for benchmark {bench} too (none loaded yet).")
     if body.ingestSec:
-        out["job"] = camel(Jobs().submit("SEC_INGEST", {"symbol": body.symbol, "companyId": cid}))
+        jobs.append(camel(Jobs().submit("SEC_INGEST", {"symbol": sym, "companyId": cid})))
     else:
         nxt.append("Ingest SEC filings (Data & pipeline → SEC ingest) so fundamentals and exposures are available.")
-    out["nextSteps"] = nxt
-    return out
+    return {"id": cid, "symbol": sym, "jobs": jobs, "nextSteps": nxt}
 
 
 class EditIn(BaseModel):

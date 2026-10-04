@@ -323,8 +323,12 @@ response is `401`. `GET /api/meta` reports `adminTokenRequired`.
   "memberSince":"2019-01-02","removedOn":null,"priceCount":1950,"lastPriceDate":"2026-10-02","filingCount":70,"forecastCount":12,
   "deletable":false}],"benchmarks":["XLK"],"sectors":["Technology"],"industries":["SEMICONDUCTORS"],"productIndustries":["SEMICONDUCTORS"]}`
 * `GET /api/admin/universe/lookup?symbol=BDSX` → `{"symbol","cik","name","source"}` from SEC company_tickers.json (404 if unknown)
-* `POST /api/admin/universe/companies` body `{"symbol","name","cik","sector","industry","benchmarkSymbol","memberSince","ingestSec"}`
-  → `{"id","symbol","nextSteps":[...],"job"?}`
+* `GET /api/admin/universe/enrich?symbol=NVDA` → `{"symbol","cik","name","source","exchange","sic","sicDescription","formerNames",
+  "sector","benchmarkSymbol","industry","sectorConfidence":"high"|"review"|null,"sectorNote","existing":{"companyId","symbol","active"}|null,
+  "sectorAlternatives":[{"sector","benchmarkSymbol"},…],"sectorBenchmarks":{"Technology":"XLK",…},"warnings":[...],"priceProviderEnabled"}` — everything EDGAR knows about a ticker plus a sector / benchmark ETF suggested from its SIC
+  code, to prefill the add form. Never fails for an unknown ticker or an unreachable source: missing fields are null and explained in `warnings`.
+* `POST /api/admin/universe/companies` body `{"symbol","name","cik","sector","industry","benchmarkSymbol","memberSince","ingestSec","syncPrices"}`
+  → `{"id","symbol","jobs":[job,…],"nextSteps":[…]}`; `ingestSec` queues a SEC_INGEST job, `syncPrices` a PRICE_SYNC job (when a price provider is configured)
 * `PUT /api/admin/universe/companies/{id}` body `{"name","sector","industry","benchmarkSymbol"}` (omitted fields unchanged)
 * `POST /api/admin/universe/companies/{id}/remove` / `/restore` body `{"effectiveDate"}` (optional, default today)
 * `POST /api/admin/universe/companies/{id}/ticker` body `{"symbol","effectiveDate"}`

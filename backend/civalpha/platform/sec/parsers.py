@@ -76,6 +76,13 @@ class Submissions:
     tickers: list[str]
     filings: list[FilingMeta]
     older_pages: list[FilePage]
+    # registrant profile (prefills a new universe member)
+    exchanges: list[str] = field(default_factory=list)
+    sic: str | None = None
+    sic_description: str | None = None
+    state_of_incorporation: str | None = None
+    fiscal_year_end: str | None = None
+    former_names: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------------------------------- JSON helpers
@@ -132,7 +139,11 @@ def parse_submissions(b: bytes) -> Submissions:
     tickers = [as_string(t) for t in _list(root.get("tickers"))]
     pages = [FilePage(as_string(_obj(f).get("name")), _date(_obj(f).get("filingFrom")), _date(_obj(f).get("filingTo")))
              for f in _list(filings.get("files"))]
-    return Submissions(as_string(root.get("cik")), as_string(root.get("name")), tickers, out, pages)
+    exchanges = [as_string(e) for e in _list(root.get("exchanges")) if as_string(e)]
+    former = [as_string(_obj(n).get("name")) for n in _list(root.get("formerNames"))]
+    return Submissions(as_string(root.get("cik")), as_string(root.get("name")), tickers, out, pages,
+                       exchanges, _text(root.get("sic")), _text(root.get("sicDescription")),
+                       _text(root.get("stateOfIncorporation")), _text(root.get("fiscalYearEnd")), [n for n in former if n])
 
 
 def parse_submissions_page(b: bytes) -> list[FilingMeta]:

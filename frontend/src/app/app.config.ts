@@ -5,6 +5,7 @@ import {
   withComponentInputBinding,
   withInMemoryScrolling,
   withRouterConfig,
+  withViewTransitions,
 } from '@angular/router';
 import { routes } from './app.routes';
 import { adminTokenInterceptor } from './core/admin-token';
@@ -18,6 +19,7 @@ export const appConfig: ApplicationConfig = {
       withComponentInputBinding(),
       withRouterConfig({ paramsInheritanceStrategy: 'always' }),
       withInMemoryScrolling({ scrollPositionRestoration: 'top', anchorScrolling: 'enabled' }),
+      withViewTransitions({ skipInitialTransition: true }),
     ),
   ],
 };

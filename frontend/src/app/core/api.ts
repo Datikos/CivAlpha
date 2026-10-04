@@ -4,6 +4,7 @@ import { Observable } from 'rxjs';
 import {
   AddCompanyRequest,
   AddCompanyResponse,
+  CompanyProfile,
   Job,
   ModelKind,
   NewEventRequest,
@@ -103,24 +104,41 @@ export class ApiService {
     return this.http.get<SecMatch>(withQuery(`${BASE}/admin/universe/lookup`, { symbol }));
   }
 
+  /** Name, CIK, exchange and a suggested sector / benchmark for a ticker, from SEC EDGAR. */
+  enrichSymbol(symbol: string): Observable<CompanyProfile> {
+    return this.http.get<CompanyProfile>(withQuery(`${BASE}/admin/universe/enrich`, { symbol }));
+  }
+
   addCompany(body: AddCompanyRequest): Observable<AddCompanyResponse> {
     return this.http.post<AddCompanyResponse>(`${BASE}/admin/universe/companies`, body);
   }
 
-  editCompany(id: number, body: { name?: string; sector?: string; industry?: string; benchmarkSymbol?: string }): Observable<unknown> {
+  editCompany(
+    id: number,
+    body: { name?: string; sector?: string; industry?: string; benchmarkSymbol?: string },
+  ): Observable<unknown> {
     return this.http.put(`${BASE}/admin/universe/companies/${id}`, body);
   }
 
   removeCompany(id: number, effectiveDate?: string | null): Observable<unknown> {
-    return this.http.post(`${BASE}/admin/universe/companies/${id}/remove`, effectiveDate ? { effectiveDate } : {});
+    return this.http.post(
+      `${BASE}/admin/universe/companies/${id}/remove`,
+      effectiveDate ? { effectiveDate } : {},
+    );
   }
 
   restoreCompany(id: number, effectiveDate?: string | null): Observable<unknown> {
-    return this.http.post(`${BASE}/admin/universe/companies/${id}/restore`, effectiveDate ? { effectiveDate } : {});
+    return this.http.post(
+      `${BASE}/admin/universe/companies/${id}/restore`,
+      effectiveDate ? { effectiveDate } : {},
+    );
   }
 
   changeTicker(id: number, symbol: string, effectiveDate?: string | null): Observable<unknown> {
-    return this.http.post(`${BASE}/admin/universe/companies/${id}/ticker`, { symbol, effectiveDate: effectiveDate || null });
+    return this.http.post(`${BASE}/admin/universe/companies/${id}/ticker`, {
+      symbol,
+      effectiveDate: effectiveDate || null,
+    });
   }
 
   deleteCompany(id: number): Observable<unknown> {
@@ -163,6 +181,9 @@ export function errorMessage(err: unknown): string {
  * Safe read of a resource value: `value()` throws while a resource is in the error state,
  * so computed views go through this helper.
  */
-export function valueOf<T>(r: { hasValue(): boolean; value(): T }): Exclude<T, undefined> | undefined {
+export function valueOf<T>(r: {
+  hasValue(): boolean;
+  value(): T;
+}): Exclude<T, undefined> | undefined {
   return r.hasValue() ? (r.value() as Exclude<T, undefined>) : undefined;
 }

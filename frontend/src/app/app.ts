@@ -1,174 +1,102 @@
-import { Component, inject } from '@angular/core';
-import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { isPlatformBrowser } from '@angular/common';
+import { Component, HostListener, PLATFORM_ID, effect, inject, signal } from '@angular/core';
+import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { filter } from 'rxjs';
 import { MetaService } from './core/meta.service';
+import { NAV_GROUPS } from './core/nav';
+import { ThemePref, ThemeService } from './core/theme.service';
+import { CommandPalette } from './shared/command-palette';
+import { Icon } from './shared/icon';
 
+const MOBILE = '(max-width: 900px)';
+
+/**
+ * App shell: a grouped sidebar on wide screens (collapsible to icons), a top bar with a
+ * drawer on narrow ones, a ⌘K palette, and a theme switch. The sidebar never scrolls
+ * horizontally: every section is visible at once.
+ */
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet, RouterLink, RouterLinkActive],
-  template: `
-    <a class="skip" href="#main">Skip to content</a>
-    <header class="topbar">
-      <div class="container topbar-inner">
-        <a routerLink="/" class="brand" aria-label="CivAlpha home">
-          <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M3 18 L9 11 L13 14 L21 5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
-            <circle cx="21" cy="5" r="2.2" fill="currentColor" />
-          </svg>
-          CivAlpha
-        </a>
-        <nav class="nav" aria-label="Main">
-          @for (l of links; track l.path) {
-            <a
-              [routerLink]="l.path"
-              routerLinkActive="active"
-              [routerLinkActiveOptions]="{ exact: l.exact }"
-              >{{ l.label }}</a
-            >
-          }
-        </nav>
-      </div>
-    </header>
-
-    @if (meta.resource.error()) {
-      <div class="api-down" role="alert">
-        <div class="container">
-          The CivAlpha API is not reachable right now. Pages will show errors until the backend is available.
-        </div>
-      </div>
-    }
-
-    <main id="main" class="container main">
-      <router-outlet />
-    </main>
-
-    <footer class="footer">
-      <div class="container">
-        @if (meta.meta(); as m) {
-          <ul class="disclaimers">
-            @for (d of m.disclaimers; track $index) {
-              <li>{{ d }}</li>
-            }
-          </ul>
-          <p class="muted small">
-            Data cutoff {{ m.dataCutoff ?? '—' }} · SEC EDGAR {{ m.secConfigured ? 'configured' : 'not configured' }} · LLM extraction
-            {{ m.llmEnabled ? 'enabled' : 'disabled' }}
-          </p>
-        } @else {
-          <ul class="disclaimers">
-            <li>Research software. Not investment advice.</li>
-          </ul>
-        }
-        <p class="muted small">
-          Recorded facts are shown neutrally; model estimates carry an
-          <span class="badge badge-estimated">ESTIMATED</span> badge; forecasts are shown as
-          <span class="prob">probabilities</span> with horizon, interval and publication time.
-        </p>
-      </div>
-    </footer>
-  `,
-  styles: `
-    .skip {
-      position: absolute;
-      left: -999px;
-    }
-    .skip:focus {
-      left: 8px;
-      top: 8px;
-      z-index: 10;
-      background: var(--surface);
-      padding: 0.3rem 0.6rem;
-    }
-    .topbar {
-      background: var(--surface);
-      border-bottom: 1px solid var(--border);
-      position: sticky;
-      top: 0;
-      z-index: 20;
-    }
-    .topbar-inner {
-      display: flex;
-      align-items: center;
-      gap: 1.25rem;
-      min-height: 54px;
-      flex-wrap: wrap;
-    }
-    .brand {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.45rem;
-      font-weight: 700;
-      font-size: 1.1rem;
-      color: var(--ink);
-      text-decoration: none;
-    }
-    .brand svg {
-      color: var(--series-1);
-    }
-    .nav {
-      display: flex;
-      gap: 0.15rem;
-      overflow-x: auto;
-      flex: 1;
-      min-width: 0;
-    }
-    .nav a {
-      padding: 0.35rem 0.7rem;
-      border-radius: 6px;
-      color: var(--ink-2);
-      white-space: nowrap;
-      font-weight: 500;
-      font-size: 0.92rem;
-    }
-    .nav a:hover {
-      text-decoration: none;
-      background: var(--surface-2);
-    }
-    .nav a.active {
-      color: var(--ink);
-      background: var(--surface-2);
-    }
-    @media (max-width: 640px) {
-      .nav {
-        flex-wrap: wrap;
-        flex-basis: 100%;
-        padding-bottom: 0.4rem;
-      }
-    }
-    .api-down {
-      background: var(--bad-bg);
-      color: var(--bad-ink);
-      font-size: 0.88rem;
-      padding: 0.4rem 0;
-    }
-    .main {
-      min-height: 70vh;
-      padding-bottom: 2rem;
-    }
-    .footer {
-      border-top: 1px solid var(--border);
-      background: var(--surface);
-      padding: 1.25rem 0 1.5rem;
-      font-size: 0.86rem;
-      color: var(--ink-2);
-    }
-    .disclaimers {
-      margin: 0 0 0.6rem;
-      padding-left: 1.1rem;
-    }
-  `,
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, Icon, CommandPalette],
+  templateUrl: './app.html',
+  styleUrl: './app.css',
+  host: {
+    '[class.rail]': 'collapsed()',
+    '[class.drawer-open]': 'drawer()',
+  },
 })
 export class App {
   protected readonly meta = inject(MetaService);
-  protected readonly links = [
-    { path: '/', label: 'Current forecasts', exact: true },
-    { path: '/companies', label: 'Companies', exact: false },
-    { path: '/events', label: 'Policy events', exact: false },
-    { path: '/forecasts/history', label: 'Forecast history', exact: false },
-    { path: '/accuracy', label: 'Accuracy', exact: false },
-    { path: '/strategies', label: 'Strategies', exact: false },
-    { path: '/decisions', label: 'AI decisions', exact: false },
-    { path: '/timemachine', label: 'Time machine', exact: false },
-    { path: '/universe', label: 'Universe', exact: false },
-    { path: '/admin', label: 'Data & pipeline', exact: false },
-  ];
+  protected readonly theme = inject(ThemeService);
+  protected readonly groups = NAV_GROUPS;
+
+  /** Sidebar reduced to an icon rail (remembered per browser). */
+  protected readonly collapsed = signal(readFlag('civalpha.rail'));
+  /** Mobile drawer. */
+  protected readonly drawer = signal(false);
+  protected readonly palette = signal(false);
+  protected readonly isMac =
+    isPlatformBrowser(inject(PLATFORM_ID)) && /Mac|iPhone|iPad/.test(navigator.platform);
+
+  private readonly router = inject(Router);
+
+  constructor() {
+    this.router.events
+      .pipe(filter((e) => e instanceof NavigationEnd))
+      .subscribe(() => this.drawer.set(false));
+    effect(() => writeFlag('civalpha.rail', this.collapsed()));
+    effect(() => {
+      document.body.style.overflow = this.drawer() ? 'hidden' : '';
+    });
+  }
+
+  protected toggleRail(): void {
+    this.collapsed.update((v) => !v);
+  }
+
+  protected setTheme(p: ThemePref): void {
+    this.theme.pref.set(p);
+  }
+
+  @HostListener('document:keydown', ['$event'])
+  protected onKey(e: KeyboardEvent): void {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      this.palette.update((v) => !v);
+    } else if (e.key === 'Escape' && this.drawer()) {
+      this.drawer.set(false);
+    } else if (e.key === '/' && !this.palette() && !isTyping(e.target)) {
+      e.preventDefault();
+      this.palette.set(true);
+    }
+  }
+
+  @HostListener('window:resize')
+  protected onResize(): void {
+    if (this.drawer() && !matchMedia(MOBILE).matches) this.drawer.set(false);
+  }
+}
+
+function isTyping(t: EventTarget | null): boolean {
+  const el = t as HTMLElement | null;
+  if (!el) return false;
+  const tag = el.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+}
+
+function readFlag(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeFlag(key: string, v: boolean): void {
+  try {
+    if (v) localStorage.setItem(key, '1');
+    else localStorage.removeItem(key);
+  } catch {
+    // storage unavailable: forget on reload
+  }
 }

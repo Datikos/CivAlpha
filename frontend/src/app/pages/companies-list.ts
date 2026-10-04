@@ -29,7 +29,12 @@ import { UI } from '../shared/ui';
         </label>
         <label class="field">
           Filter
-          <input type="search" placeholder="Symbol, name or sector" [ngModel]="q()" (ngModelChange)="q.set($event)" />
+          <input
+            type="search"
+            placeholder="Symbol, name or sector"
+            [ngModel]="q()"
+            (ngModelChange)="q.set($event)"
+          />
         </label>
       </div>
     </div>
@@ -65,7 +70,9 @@ import { UI } from '../shared/ui';
               @for (r of rows(); track r.c.id) {
                 <tr>
                   <td class="nowrap">
-                    <a [routerLink]="['/companies', r.c.symbol]"><strong>{{ r.c.symbol }}</strong></a>
+                    <a [routerLink]="['/companies', r.c.symbol]"
+                      ><strong>{{ r.c.symbol }}</strong></a
+                    >
                   </td>
                   <td>{{ r.c.name }}</td>
                   <td>{{ r.c.sector }}</td>
@@ -78,14 +85,23 @@ import { UI } from '../shared/ui';
                   <td class="nowrap">
                     <app-dividend-badge [d]="r.c.dividend" />
                     @if (r.c.dividend?.trailingYield; as y) {
-                      <div class="small muted" title="Dividends over the last 12 months / last close">{{ y | pct: 2 }} yield</div>
+                      <div
+                        class="small muted"
+                        title="Dividends over the last 12 months / last close"
+                      >
+                        {{ y | pct: 2 }} yield
+                      </div>
                     }
                   </td>
                   @for (cell of r.fc; track cell.kind) {
                     <td>
                       @if (cell.f; as f) {
                         <a [routerLink]="['/forecasts', f.id]" class="plain-link">
-                          <app-forecast-prob [f]="f" />
+                          <app-forecast-prob [f]="f" [withContext]="false" />
+                          <div class="small muted nowrap">
+                            {{ f.horizonTradingDays }} d · as of {{ f.asOfDate }} ·
+                            {{ f.issuedAt | utc }}
+                          </div>
                         </a>
                       } @else if (cell.ref; as ref) {
                         <a [routerLink]="['/forecasts', ref.id]">as of {{ ref.asOfDate }} — open</a>
