@@ -55,4 +55,12 @@ class PriceProvidersTest {
         assertThat(PriceSyncService.lastCompletedSession(ZonedDateTime.of(2026, 10, 2, 17, 0, 0, 0, ny))).isEqualTo(LocalDate.parse("2026-10-02"));
         assertThat(PriceProvider.vendorSymbol("brk.b")).isEqualTo("BRK-B");
     }
+
+    @Test
+    void aFridayBarIsCurrentOverTheWeekend() {
+        assertThat(PriceSyncService.latestWeekday(java.time.LocalDate.parse("2026-10-03"))).isEqualTo("2026-10-02");
+        assertThat(PriceSyncService.latestWeekday(java.time.LocalDate.parse("2026-10-04"))).isEqualTo("2026-10-02");
+        assertThat(PriceSyncService.latestWeekday(java.time.LocalDate.parse("2026-10-05"))).isEqualTo("2026-10-05");
+    }
 }
+

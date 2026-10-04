@@ -376,4 +376,40 @@ class PlatformIntegrationTest {
         assertThatThrownBy(() -> jdbc.sql("DELETE FROM strategy_decision WHERE id = :id").param("id", id).update())
                 .hasMessageContaining("immutable");
     }
+
+    @Test
+    @org.springframework.transaction.annotation.Transactional
+    void priceSyncStopsAtTheRateLimitAndSkipsSymbolsThatAreCurrent() {
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicBoolean limited = new java.util.concurrent.atomic.AtomicBoolean(true);
+        com.civalpha.market.PriceProvider fake = new com.civalpha.market.PriceProvider() {
+            public String name() { return "fake"; }
+            public boolean splitAdjusted() { return false; }
+            public Series fetch(String symbol, LocalDate from, LocalDate to) {
+                if (calls.incrementAndGet() == 2 && limited.get()) throw new RateLimited("fake request limit reached");
+                var bar = new com.civalpha.market.PriceBarRow(symbol, to, null, null, null, new java.math.BigDecimal("100"), 1L);
+                return new Series(java.util.List.of(bar), java.util.List.of(), "[]".getBytes(), "application/json", "https://fake/" + symbol);
+            }
+        };
+        java.util.List<String> log = new java.util.ArrayList<>();
+        // the second request is refused: the sync stops instead of spending the rest of the quota
+        var first = priceSync.sync(fake, log::add);
+        assertThat(calls.get()).isEqualTo(2);
+        assertThat(first.inserted()).isEqualTo(1);
+        assertThat(first.failed()).isEqualTo(first.symbols() - 1);
+        assertThat(log).anyMatch(l -> l.contains("fake request limit reached") && l.contains("next run"));
+
+        // next run: every symbol is fetched once; the one already current is skipped without a request
+        limited.set(false);
+        calls.set(10);
+        var second = priceSync.sync(fake, log::add);
+        assertThat(calls.get() - 10).isEqualTo(second.symbols() - 1);
+        assertThat(second.failed()).isZero();
+
+        // a run with everything current makes no requests at all
+        calls.set(10);
+        assertThat(priceSync.sync(fake, log::add).inserted()).isZero();
+        assertThat(calls.get()).isEqualTo(10);
+    }
 }
+

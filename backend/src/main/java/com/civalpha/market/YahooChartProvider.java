@@ -53,6 +53,7 @@ public class YahooChartProvider implements PriceProvider {
         HttpResponse<byte[]> r = http.send(HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(30))
                 .header("User-Agent", "Mozilla/5.0 (CivAlpha research)").GET().build(), HttpResponse.BodyHandlers.ofByteArray());
         if (r.statusCode() == 404) throw new IllegalArgumentException("unknown symbol at Yahoo: " + symbol);
+        if (r.statusCode() == 429) throw new RateLimited("Yahoo is rate-limiting requests");
         if (r.statusCode() != 200) throw new IllegalStateException("Yahoo HTTP " + r.statusCode());
         return parse(om, r.body(), symbol.toUpperCase(), url);
     }
