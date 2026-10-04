@@ -16,7 +16,7 @@ Requires Docker with Compose v2. The stack uses about 0.8 GB of RAM while idle a
 
 ```bash
 cp .env.example .env            # optional; everything works with defaults
-docker compose up -d --build    # postgres, ml, backend, frontend
+docker compose up -d --build    # postgres, api, worker, frontend
 open http://localhost:8088      # or browse to it
 ```
 
@@ -42,7 +42,7 @@ curl -X POST http://localhost:8088/api/admin/demo/load
 Other commands:
 
 ```bash
-docker compose logs -f backend ml   # follow logs
+docker compose logs -f api worker   # follow logs
 docker compose down                 # stop (data is kept in volumes)
 docker compose down -v              # stop and delete the database and stored documents
 ```
@@ -75,32 +75,38 @@ Manage which stocks are tracked on the **Universe** page (see below).
 ```
             ┌──────────── nginx + Angular (frontend :8088) ────────────┐
             │  pages: forecasts, companies, filings, exposure, events, │
-            │         forecast detail/history, accuracy, admin         │
+            │  strategies, AI decisions, time machine, accuracy, admin │
             └───────────────────────────┬──────────────────────────────┘
                                         │ /api
 ┌───────────────────────────────────────▼──────────────────────────────┐
-│ backend — Java 21 / Spring Boot 4 (ingestion, API, orchestration)    │
-│  SEC client (live: UA + ≤10 rps, or fixtures) · XBRL/companyfacts    │
-│  parsers · passage extraction · exposure derivation · CSV prices ·   │
-│  FRED/ALFRED · Federal Register / Fed RSS / news RSS · event dedup · │
-│  immutable forecast store · jobs · optional LLM provider             │
-└──────────────┬───────────────────────────────────────┬───────────────┘
-               │ JDBC (Flyway owns schema)             │ HTTP (internal)
-┌──────────────▼──────────────┐      ┌─────────────────▼───────────────┐
-│ PostgreSQL 16               │◄─────┤ ml — Python (FastAPI, pandas,   │
-│ structured data             │ SQL  │ scikit-learn): point-in-time    │
-└─────────────────────────────┘      │ features, logistic models,      │
-  volume civdata:/data               │ walk-forward evaluation         │
-    documents/  original sources (content-addressed)  ◄─ backend writes
-    demo/       generated demo inputs                  ◄─ ml writes
+│ api — Python (FastAPI): REST API, admin token, queues jobs;          │
+│       applies pending database migrations on start                   │
+└───────────────────────────────────────┬──────────────────────────────┘
+                                        │ pipeline_job table (queue + log)
+┌───────────────────────────────────────▼──────────────────────────────┐
+│ worker — Python, same image: runs jobs one at a time + schedules     │
+│  ingestion: SEC client (live: UA + ≤10 rps, or fixtures) · XBRL /    │
+│  companyfacts parsers · passages · exposures · prices (CSV, Tiingo,  │
+│  Yahoo) · FRED/ALFRED · Federal Register / Fed RSS / news · dedup    │
+│  models: point-in-time features · logistic models · walk-forward     │
+│  evaluation · strategy lab · time machine · optional LLM (Claude)    │
+└───────────────────────────────────────┬──────────────────────────────┘
+                                        │ SQL
+                         ┌──────────────▼──────────────┐
+                         │ PostgreSQL 16               │
+                         └─────────────────────────────┘
+  volume civdata:/data
+    documents/  original sources (content-addressed)
+    demo/       generated demo inputs
     imports/    CSV drop folder (prices*.csv, corporate_actions*.csv)
+    uploads/    CSV uploads waiting for the worker
 ```
 
-There are four services and no Kafka, Redis, graph database or Kubernetes. Long steps run as background jobs
-with a log stored in Postgres. The ML service writes model versions, evaluations and outcomes. Only the backend
-writes forecasts.
+One Python codebase (`backend/civalpha`) runs as two processes from one image: `api` answers requests and queues
+work; `worker` runs the queued jobs (ingestion, training, backtests) so long steps never slow the API down. There is
+no Kafka, Redis, graph database or Kubernetes. Forecasts and AI decisions are append-only (database triggers).
 
-## Data model (PostgreSQL, `backend/src/main/resources/db/migration`)
+## Data model (PostgreSQL, `db/migration`)
 
 | Area | Tables | Notes |
 |---|---|---|
@@ -112,7 +118,7 @@ writes forecasts.
 | Events | `policy_event`, `event_source`, `event_target`, `policy_actor`, `actor_record` | Every event links to stored evidence. `evidence_status` is `OFFICIAL` or `NEWS_ONLY`. Actor profiles hold documented actions and votes only. |
 | Exposure | `company_exposure` | Each exposure records a target (country, product or interest rate), a channel and a share. `basis` is `DIRECTLY_REPORTED` or `ESTIMATED`, with a confidence and a method (`XBRL_DIMENSION`, `XBRL_RATIO`, `RULE_KEYWORD`, `SECTOR_MAP`, `LLM`). Each one links to a filing plus a passage or fact, and becomes available at `available_at` (the filing's acceptance time). |
 | Models | `model_version`, `forecast`, `forecast_outcome`, `model_evaluation`, `backtest_prediction` | A database trigger rejects `UPDATE` and `DELETE` on `forecast`. Outcomes are stored in a separate table. |
-| Strategies | `strategy_run`, `strategy_result`, `strategy_trade`, `strategy_decision`, `decision_explanation` | Backtest runs are written by the ML service. The AI's daily decisions are written by the backend and are append-only (trigger); language-model explanations live in their own table. |
+| Strategies | `strategy_run`, `strategy_result`, `strategy_trade`, `strategy_decision`, `decision_explanation` | Backtest runs, decisions and explanations are written by the worker; decisions are append-only (trigger); language-model explanations live in their own table. |
 
 How an event is linked to a company:
 **event → target (country, sector, product or cost) → company exposure → supporting filing passage or XBRL fact**.
@@ -131,7 +137,7 @@ How an event is linked to a company:
     its sources.
   * The interval is the 10th–90th percentile across 30 date-block bootstrap refits. It reflects estimation
     uncertainty only.
-* **No look-ahead.** All inputs for as-of time `T` are read point-in-time (`ml/civalpha_ml/pit.py`):
+* **No look-ahead.** All inputs for as-of time `T` are read point-in-time (`backend/civalpha/pit.py`):
   * prices for dates ≤ T;
   * facts and exposures accepted ≤ T, with the latest acceptance winning, so an amendment counts only after it
     is accepted;
@@ -169,7 +175,7 @@ strategies on the same data, the same out-of-sample window and the same costs. T
 * **The AI decides.** The model estimates the probability that a stock beats its sector ETF over the next 10 trading days.
   It enters when p ≥ 0.55 and the stock ranks in the top 8, and exits when p < 0.48. It is retrained every 63 trading days,
   walk-forward, only on outcomes known before each refit.
-* **Financial reports.** `ml/civalpha_ml/fundamentals.py` turns the XBRL facts of every 10-Q/10-K into a profile:
+* **Financial reports.** `backend/civalpha/fundamentals.py` turns the XBRL facts of every 10-Q/10-K into a profile:
   * **Growth:** revenue growth acceleration.
   * **Surprise:** earnings surprise and revenue surprise, standardized against the same quarter a year earlier. This
     is a seasonal random walk with no analyst estimates (Bernard & Thomas).
@@ -195,7 +201,7 @@ strategies on the same data, the same out-of-sample window and the same costs. T
   With `CIVALPHA_LLM_PROVIDER=anthropic`, Claude writes a short plain-language explanation for ENTER/EXIT actions. The
   explanation is stored separately and never changes the decision.
 
-Code: `ml/civalpha_ml/strategies/` (`rules.py`, `ai.py`, `backtest.py`, `stats.py`). `ml/tests/test_strategies.py` covers:
+Code: `backend/civalpha/strategies/` (`rules.py`, `ai.py`, `backtest.py`, `stats.py`). `backend/tests/test_strategies.py` covers:
 * look-ahead, for every strategy;
 * the AI's training purge;
 * cost accounting;
@@ -217,7 +223,7 @@ It then compares these with what actually happened:
 * how many actual returns fell inside the band, against a naive band.
 
 A chart shows the real price path inside the forecast band. One date is one draw, so use the walk-forward accuracy and the
-strategy lab for evidence. The code is `ml/civalpha_ml/timemachine.py`; `ml/tests/test_timemachine.py` checks that
+strategy lab for evidence. The code is `backend/civalpha/timemachine.py`; `backend/tests/test_timemachine.py` checks that
 changing every later price leaves the predictions untouched.
 
 ## Sources and credentials
@@ -271,10 +277,11 @@ If you choose a benchmark ETF that is new to the universe, its prices are downlo
   `Authorization: Bearer <token>`. Read-only pages stay public. The **Data & pipeline** page asks for the token
   and keeps it for the browser tab only. Without a token everything is open, which is why the UI binds to
   `127.0.0.1` by default (`CIVALPHA_BIND`).
-* **Schedule.** `CIVALPHA_PIPELINE_CRON` and `CIVALPHA_OUTCOMES_CRON` take Spring cron expressions
-  (`sec min hour day month weekday`), evaluated in `CIVALPHA_SCHEDULE_ZONE` (default `America/New_York`). `-` turns
-  a schedule off, which is the default. Example: `0 30 22 * * MON-FRI` runs the pipeline after the US close.
-  Scheduled runs are logged like manual jobs and are skipped while a job of the same type is still running.
+* **Schedule.** `CIVALPHA_PIPELINE_CRON` and `CIVALPHA_OUTCOMES_CRON` take cron expressions evaluated by the worker
+  in `CIVALPHA_SCHEDULE_ZONE` (default `America/New_York`). Six fields mean seconds first
+  (`sec min hour day month weekday`); five fields are standard cron. `-` turns a schedule off, which is the default.
+  Example: `0 30 22 * * MON-FRI` runs the pipeline after the US close. Scheduled runs are logged like manual jobs
+  and are skipped while a job of the same type is queued or running.
 
 ## Environment variables
 
@@ -299,24 +306,32 @@ sector benchmarks and ticker history) is set in `config/universe.yml`. Edit it t
 ## Tests
 
 ```bash
-# Python: point-in-time joins, revisions, vintages, leakage, returns, walk-forward and costs
-cd ml && python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements-dev.txt && pytest
-
-# Java: SEC parsers (incl. XXE), passage rules, dedup, FOMC parsing, ticker resolution, plus a
-# Testcontainers suite (needs Docker) covering ticker changes, revised filings, forecast immutability and
-# versioning, and API smoke tests
-cd backend && mvn test
+cd backend && python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements-dev.txt && pytest
 ```
 
+The suite covers:
+* the models: point-in-time joins, revisions, vintages, leakage, returns, walk-forward and costs, strategies,
+  fundamentals and the time machine;
+* the platform: SEC parsers (incl. XXE), passage rules, dedup, FOMC parsing, ticker resolution, price providers
+  and sync;
+* a Testcontainers PostgreSQL suite (needs Docker) for migrations, ticker changes, revised filings, price
+  versioning, forecast and decision immutability, and API smoke tests.
+
 GitHub Actions (`.github/workflows/ci.yml`) runs on every pull request and every push to `main`. It runs the
-Python tests, the backend tests (and fails if the Testcontainers suite was skipped), the Angular production
-build, and a `docker compose config` check.
+Python tests (and fails if the database tests could not run), the Angular production build, and a
+`docker compose config` check.
+
+## Database migrations
+
+`db/migration/V<n>__<name>.sql` files are applied in order by `python -m civalpha.platform.migrate`, which the `api`
+service runs on start. It uses Flyway's history table and checksums, so databases created before the move to
+Python continue without any manual step. Never edit an applied migration; add the next `V<n+1>` file.
 
 ## Layout
 
 ```
-backend/   Spring Boot service (Flyway schema in src/main/resources/db/migration)
-ml/        Python ML service (civalpha_ml/pit.py, features.py, model.py, evaluation.py, demo/generate.py)
+backend/   Python: civalpha/ (models, strategies, time machine) and civalpha/platform/ (API, worker, ingestion)
+db/        migration/ (SQL schema migrations)
 frontend/  Angular UI (served by nginx, proxies /api)
 config/    universe.yml
 docs/      api.md (REST contract)
@@ -346,4 +361,4 @@ scripts/   demo.sh
   * Live, real-data accuracy can only build up over time.
 * **Operations.**
   * Admin protection is a single shared token. Real multi-user access needs proper authentication and roles.
-  * The scheduler runs inside the backend, so a missed run while the stack is down is not caught up.
+  * The scheduler runs inside the worker, so a missed run while the stack is down is not caught up.

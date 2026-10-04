@@ -1,6 +1,32 @@
-# CivAlpha local stack: PostgreSQL + Spring Boot backend + Python ML service + Angular UI (nginx).
+# CivAlpha local stack: PostgreSQL + Python API + Python worker + Angular UI (nginx).
 # Usage: cp .env.example .env && docker compose up -d --build   -> http://localhost:8088
 name: civalpha
+
+x-app-env: &app-env
+  DATABASE_URL: postgresql+psycopg://civalpha:${POSTGRES_PASSWORD:-civalpha}@postgres:5432/civalpha
+  CIVALPHA_UNIVERSE_FILE: /config/universe.yml
+  CIVALPHA_DOCUMENTS_DIR: /data/documents
+  CIVALPHA_IMPORTS_DIR: /data/imports
+  CIVALPHA_DEMO_DIR: /data/demo
+  CIVALPHA_SEC_FIXTURE_DIR: /data/demo/sec
+  CIVALPHA_SEC_MODE: ${CIVALPHA_SEC_MODE:-fixture}
+  SEC_USER_AGENT: ${SEC_USER_AGENT:-}
+  SEC_MAX_RPS: ${SEC_MAX_RPS:-5}
+  SEC_LOOKBACK_YEARS: ${SEC_LOOKBACK_YEARS:-6}
+  FRED_API_KEY: ${FRED_API_KEY:-}
+  EVENTS_FEDERAL_REGISTER_ENABLED: ${EVENTS_FEDERAL_REGISTER_ENABLED:-false}
+  EVENTS_FED_RSS_ENABLED: ${EVENTS_FED_RSS_ENABLED:-false}
+  EVENTS_NEWS_FEEDS: ${EVENTS_NEWS_FEEDS:-}
+  CIVALPHA_LLM_PROVIDER: ${CIVALPHA_LLM_PROVIDER:-none}
+  CIVALPHA_LLM_MODEL: ${CIVALPHA_LLM_MODEL:-claude-opus-5-5}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  CIVALPHA_ADMIN_TOKEN: ${CIVALPHA_ADMIN_TOKEN:-}
+  CIVALPHA_PRICE_PROVIDER: ${CIVALPHA_PRICE_PROVIDER:-none}
+  TIINGO_API_KEY: ${TIINGO_API_KEY:-}
+  CIVALPHA_PRICE_HISTORY_START: ${CIVALPHA_PRICE_HISTORY_START:-2019-01-02}
+  CIVALPHA_PIPELINE_CRON: ${CIVALPHA_PIPELINE_CRON:--}
+  CIVALPHA_OUTCOMES_CRON: ${CIVALPHA_OUTCOMES_CRON:--}
+  CIVALPHA_SCHEDULE_ZONE: ${CIVALPHA_SCHEDULE_ZONE:-America/New_York}
 
 services:
   postgres:
@@ -19,11 +45,14 @@ services:
     mem_limit: 512m
     restart: unless-stopped
 
-  ml:
-    build: ./ml
-    environment:
-      DATABASE_URL: postgresql+psycopg://civalpha:${POSTGRES_PASSWORD:-civalpha}@postgres:5432/civalpha
-      UNIVERSE_FILE: /config/universe.yml
+  # REST API; applies pending database migrations before it starts
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: civalpha-app:local
+    environment: *app-env
+    command: ["sh", "-c", "python -m civalpha.platform.migrate && exec uvicorn civalpha.platform.app:app --host 0.0.0.0 --port 8000 --workers 2 --proxy-headers"]
     volumes:
       - civdata:/data
       - ./config:/config:ro
@@ -34,54 +63,22 @@ services:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
       timeout: 5s
-      retries: 12
-    mem_limit: 1536m
+      retries: 18
+    mem_limit: 768m
     restart: unless-stopped
 
-  backend:
-    build: ./backend
-    environment:
-      DATABASE_URL: jdbc:postgresql://postgres:5432/civalpha
-      DATABASE_USER: civalpha
-      DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-civalpha}
-      CIVALPHA_ML_URL: http://ml:8000
-      CIVALPHA_UNIVERSE_FILE: /config/universe.yml
-      CIVALPHA_DOCUMENTS_DIR: /data/documents
-      CIVALPHA_IMPORTS_DIR: /data/imports
-      CIVALPHA_DEMO_DIR: /data/demo
-      CIVALPHA_SEC_FIXTURE_DIR: /data/demo/sec
-      CIVALPHA_SEC_MODE: ${CIVALPHA_SEC_MODE:-fixture}
-      SEC_USER_AGENT: ${SEC_USER_AGENT:-}
-      SEC_MAX_RPS: ${SEC_MAX_RPS:-5}
-      SEC_LOOKBACK_YEARS: ${SEC_LOOKBACK_YEARS:-6}
-      FRED_API_KEY: ${FRED_API_KEY:-}
-      EVENTS_FEDERAL_REGISTER_ENABLED: ${EVENTS_FEDERAL_REGISTER_ENABLED:-false}
-      EVENTS_FED_RSS_ENABLED: ${EVENTS_FED_RSS_ENABLED:-false}
-      EVENTS_NEWS_FEEDS: ${EVENTS_NEWS_FEEDS:-}
-      CIVALPHA_LLM_PROVIDER: ${CIVALPHA_LLM_PROVIDER:-none}
-      CIVALPHA_LLM_MODEL: ${CIVALPHA_LLM_MODEL:-claude-opus-5-5}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      CIVALPHA_ADMIN_TOKEN: ${CIVALPHA_ADMIN_TOKEN:-}
-      CIVALPHA_PRICE_PROVIDER: ${CIVALPHA_PRICE_PROVIDER:-none}
-      TIINGO_API_KEY: ${TIINGO_API_KEY:-}
-      CIVALPHA_PRICE_HISTORY_START: ${CIVALPHA_PRICE_HISTORY_START:-2019-01-02}
-      CIVALPHA_PIPELINE_CRON: ${CIVALPHA_PIPELINE_CRON:--}
-      CIVALPHA_OUTCOMES_CRON: ${CIVALPHA_OUTCOMES_CRON:--}
-      CIVALPHA_SCHEDULE_ZONE: ${CIVALPHA_SCHEDULE_ZONE:-America/New_York}
+  # background jobs (ingestion, model training, backtests) and the optional schedules
+  worker:
+    image: civalpha-app:local
+    environment: *app-env
+    command: ["python", "-m", "civalpha.platform.worker"]
     volumes:
       - civdata:/data
       - ./config:/config:ro
     depends_on:
-      postgres:
+      api:
         condition: service_healthy
-      ml:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/8080' || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 18
-    mem_limit: 768m
+    mem_limit: 2g
     restart: unless-stopped
 
   frontend:
@@ -89,11 +86,11 @@ services:
     ports:
       - "${CIVALPHA_BIND:-127.0.0.1}:${CIVALPHA_PORT:-8088}:80"   # localhost only by default: admin endpoints have no authentication
     depends_on:
-      backend:
+      api:
         condition: service_healthy
     mem_limit: 64m
     restart: unless-stopped
 
 volumes:
   pgdata:
-  civdata:   # original source documents (/data/documents), generated demo inputs (/data/demo), CSV drop folder (/data/imports)
+  civdata:   # original source documents (/data/documents), generated demo inputs (/data/demo), CSV drop folder (/data/imports), uploads (/data/uploads)
