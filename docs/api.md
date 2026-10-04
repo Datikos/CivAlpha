@@ -339,58 +339,47 @@ Errors are `{"error": "explanation"}` with status 400 (invalid request) or 404 (
 
 ## MCP (Model Context Protocol)
 
-`POST /mcp` (Streamable HTTP, stateless, JSON responses) serves the same data and actions to MCP clients; `GET /mcp`
-opens the optional event stream. Over the UI it is `http://localhost:8088/mcp`. The API rejects a `Host` header that is
-not localhost unless it is listed in `CIVALPHA_MCP_ALLOWED_HOSTS` (DNS-rebinding protection). Management tools follow
-the admin-token rule above: send `X-Admin-Token` (or `Authorization: Bearer`) with the MCP requests.
+`POST /mcp` (Streamable HTTP, stateless, JSON responses) serves the same data and actions to MCP clients. Through the UI
+it is `http://localhost:8088/mcp`; it answers `503` until the MCP transport has started with the API. The endpoint
+rejects a `Host` or `Origin` that is not localhost/127.0.0.1 unless listed in `CIVALPHA_MCP_ALLOWED_HOSTS` /
+`CIVALPHA_MCP_ALLOWED_ORIGINS` (DNS-rebinding protection). Job tools follow the admin-token rule above: send
+`X-Admin-Token` (or `Authorization: Bearer`) with the MCP requests. A local stdio run
+(`python -m civalpha.platform.mcp_server`) is trusted like any local process.
 
-Tool results are the JSON shapes of the REST endpoints they wrap (also returned as `structuredContent`); a 400/404/503
-error becomes a tool error with the same message.
+Tools call the same code as the REST endpoints and return condensed JSON (also as `structuredContent`; lists as
+`{"result": [...]}`). A 400/404 error becomes a tool error with the same message, e.g.
+`Error executing tool get_company: unknown symbol NOPE`.
 
-| Tool | REST equivalent | Notes |
+| Tool | REST equivalent | Returns / notes |
 |---|---|---|
-| `get_status` | `GET /api/meta` | |
+| `get_status` | `GET /api/meta` + companies + strategy run | target, disclaimers, sources, data cutoff, symbols, strategy-lab summary |
 | `list_companies` | `GET /api/companies` | |
-| `get_company(symbol)` | `GET /api/companies/{symbol}` | former tickers resolve |
-| `get_financials(symbol, as_of?)` | `GET /api/companies/{symbol}/financials` | |
-| `get_prices(symbol, from_date?)` | `GET /api/companies/{symbol}/prices` | default: one year |
+| `get_company(symbol)` | `GET /api/companies/{symbol}` (+ prices, decisions) | key facts, 1/3/12-month returns vs sector ETF, latest forecasts, AI decision; former tickers resolve |
+| `get_financials(symbol, as_of_date?, quarters?)` | `GET /api/companies/{symbol}/financials` | last `quarters` points per series (default 8) |
+| `get_prices(symbol, from_date?)` | `GET /api/companies/{symbol}/prices` | summary: first/last/high/low, returns, corporate actions |
 | `get_dividends(symbol)` | `GET /api/companies/{symbol}/dividends` | |
-| `list_filings(symbol)` / `get_filing(filing_id)` | `GET /api/companies/{symbol}/filings`, `GET /api/filings/{id}` | |
-| `get_exposures(symbol, as_of?)` | `GET /api/companies/{symbol}/exposures` | |
-| `list_events(category?)` / `get_event(event_id)` | `GET /api/events`, `GET /api/events/{id}` | |
+| `list_filings(symbol, limit?)` / `get_filing(filing_id, max_passages?)` | `GET /api/companies/{symbol}/filings`, `GET /api/filings/{id}` | passages truncated to 600 characters |
+| `get_exposures(symbol, as_of_date?, limit?)` | `GET /api/companies/{symbol}/exposures` | |
+| `list_events(category?, limit?)` / `get_event(event_id)` | `GET /api/events`, `GET /api/events/{id}` | `category`: TRADE_TARIFF or MONETARY_POLICY |
 | `get_current_forecasts` / `get_forecast_history(symbol?, model_kind?, limit?)` / `get_forecast(forecast_id)` | `GET /api/forecasts/*` | |
 | `get_accuracy` | `GET /api/accuracy` | |
-| `get_strategies(include_equity?)` / `get_strategy(key, trade_limit?, include_equity?)` | `GET /api/strategies`, `GET /api/strategies/{key}` | equity curves omitted unless asked |
-| `get_decisions(as_of_date?)` | `GET /api/decisions` | |
-| `list_time_machine_runs` / `get_time_machine_run(run_id, include_paths?)` | `GET /api/timemachine`, `GET /api/timemachine/{id}` | daily paths omitted unless asked |
-| `investment_candidates(as_of_date?, limit?)` | — | see below |
-| `list_jobs` / `get_job(job_id)` | `GET /api/admin/jobs` | admin |
-| `run_pipeline`, `sync_prices`, `ingest_sec_filings(symbol)`, `issue_forecasts(as_of_date?)`, `evaluate_models`, `resolve_outcomes`, `backtest_strategies`, `decide_strategy(as_of_date?)`, `run_time_machine(as_of_date)` | `POST /api/admin/**` | admin; each returns the queued job |
-| `get_universe`, `lookup_company(symbol)` | `GET /api/admin/universe`, `GET /api/admin/universe/enrich` | admin |
-| `add_company(...)`, `edit_company(...)`, `remove_company(...)`, `restore_company(...)`, `change_ticker(...)`, `delete_company(company_id, confirm)` | `/api/admin/universe/companies*` | admin; delete needs `confirm: true` |
-| `add_event(...)` | `POST /api/events` | admin; `source_url` mandatory |
+| `get_strategies` / `get_strategy(key, trades?)` | `GET /api/strategies`, `GET /api/strategies/{key}` | no equity curves |
+| `get_decisions(as_of_date?)` | `GET /api/decisions` | top 3 factors and the rules holding each stock |
+| `list_time_machine_runs` / `get_time_machine_run(run_id, horizon?)` | `GET /api/timemachine`, `GET /api/timemachine/{id}` | per-stock prediction vs actual for one horizon |
+| `investment_candidates` | — | see below |
+| `list_jobs(limit?)` / `get_job(job_id, wait_seconds?)` | `GET /api/admin/jobs` | admin |
+| `run_pipeline`, `update_prices`, `ingest_sec_filings(symbol)`, `evaluate_models`, `issue_forecasts(as_of_date?)`, `run_strategy_backtest`, `make_ai_decisions(as_of_date?)`, `run_time_machine(as_of_date)`, `resolve_outcomes` | `POST /api/admin/**` | admin; each takes `wait_seconds?` (max 600) and returns the job with its log tail |
 
 `investment_candidates` returns:
 ```json
-{ "asOfDate": "2026-09-30", "decisionDates": ["2026-09-30", "..."], "universeSize": 24,
-  "ranking": "AI decision (ENTER, HOLD, STAY_OUT, EXIT, none) then AI probability, then AUGMENTED forecast probability",
-  "candidates": [{ "symbol": "NVDA", "name": "NVIDIA Corporation", "sector": "Technology", "benchmarkSymbol": "XLK",
-      "latestClose": 182.1, "latestCloseDate": "2026-09-30",
-      "ai": {"action": "ENTER", "probability": 0.61, "entryP": 0.55, "exitP": 0.48, "rank": 1, "weight": 0.125,
-             "topFactors": [{"feature": "mom_12_1", "label": "12-1 month momentum", "kind": "TECHNICAL", "value": 0.42, "median": 0.11, "contribution": 0.031, "direction": "UP"}],
-             "ruleVotesFor": 5, "ruleVotesTotal": 9, "explanation": null},
-      "forecasts": {"AUGMENTED": {"id": 11, "probability": 0.56, "probLow": 0.49, "probHigh": 0.62, "asOfDate": "2026-09-30", "horizonTradingDays": 21, "issuedAt": "..."},
-                    "BASELINE": {"...": "..."}},
-      "dividend": {"status": "NONE", "frequency": null, "trailingYield": null, "indicatedYield": null, "lastExDate": null, "yearsPaid": 0} }],
-  "evidence": {
-    "accuracy": {"evaluationVerdict": "...", "dataCutoff": "2026-09-30", "metrics": {"BASELINE": {"brier": 0.249, "...": 0}, "AUGMENTED": {}},
-                 "comparison": {"brierDiff": -0.004, "ciLow": -0.007, "ciHigh": -0.001}, "liveIssued": {"AUGMENTED": {"issued": 50, "resolved": 24, "brier": 0.24, "hitRate": 0.55}}},
-    "strategyLab": {"runAt": "...", "dataCutoff": "2026-09-30",
-                    "aiStrategy": {"strategyKey": "AI_GBM", "name": "...", "family": "AI", "verdict": "Beats buy-and-hold after costs: NOT supported", "supported": false,
-                                   "metrics": {"years": 5.2, "cagr": 0.07, "sharpe": 0.5, "maxDrawdown": -0.2, "excessReturn": 0.01, "excessCiLow": -0.03, "excessCiHigh": 0.05, "deflatedSharpe": 0.3, "trades": 120, "winRate": 0.48}},
-                    "supported": [], "all": ["...one summary per strategy..."]} },
-  "howToRead": ["..."], "disclaimers": ["Research software. Not investment advice. ...", "..."] }
+{ "universeSize": 25,
+  "candidates": [{ "symbol": "PEP", "name": "PepsiCo, Inc.", "sector": "Consumer Staples",
+      "pBeatSectorAugmented": 0.53, "pBeatSectorBaseline": 0.51,
+      "aiAction": "ENTER", "aiProbability": 0.57, "aiRank": 1, "rulesHolding": ["SMA_50_200", "QUALITY_GROWTH"],
+      "dividend": {"status": "REGULAR", "trailingYield": 0.031, "indicatedYield": 0.032, "yearsPaid": 8} }],
+  "evidence": {"accuracy": "Walk-forward, 4650 out-of-sample predictions per model. ...",
+               "strategyLab": {"summary": "17 strategies backtested ...", "verdicts": [{"strategyKey": "AI_GBM", "name": "...", "verdict": "Beats buy-and-hold after costs: NOT supported"}]}},
+  "disclaimers": ["Research software. Not investment advice. ...", "..."] }
 ```
-Companies without a decision that day have `ai: null` and sort last. Resources: `civalpha://about` (text/markdown) and
-`civalpha://status` (JSON, same as `get_status`). Prompt: `investment_review(symbol?, as_of_date?)`.
-
+Candidates are sorted by the AI probability (else the AUGMENTED forecast probability). Resources: `civalpha://about`
+(text) and `civalpha://status` (JSON, same as `get_status`). Prompt: `investment_review(symbol)`.

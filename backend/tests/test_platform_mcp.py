@@ -35,11 +35,13 @@ def call(c, name, arguments=None, headers=None):
 def test_tools_resources_and_prompts_are_listed(mcp):
     tools = {t["name"]: t for t in rpc(mcp, "tools/list")["tools"]}
     for name in ("get_status", "get_company", "get_exposures", "get_forecast", "get_accuracy", "get_strategies", "get_decisions",
-                 "investment_candidates", "run_pipeline", "add_company", "add_event", "delete_company"):
+                 "investment_candidates", "run_pipeline", "run_time_machine", "update_prices"):
         assert name in tools, name
+    # read and safe actions only: universe changes and new events stay in the UI / REST API
+    assert not {"add_company", "add_event", "delete_company"} & set(tools)
     assert tools["get_company"]["annotations"]["readOnlyHint"] is True
     assert tools["run_pipeline"]["annotations"]["readOnlyHint"] is False
-    assert tools["delete_company"]["annotations"]["destructiveHint"] is True
+    assert not any(t["annotations"]["destructiveHint"] for t in tools.values())
     assert "ctx" not in tools["run_pipeline"]["inputSchema"].get("properties", {})      # the context is injected, not an argument
     assert {str(r["uri"]) for r in rpc(mcp, "resources/list")["resources"]} == {"civalpha://about", "civalpha://status"}
     assert "not investment advice" in rpc(mcp, "resources/read", {"uri": "civalpha://about"})["contents"][0]["text"]
@@ -80,11 +82,8 @@ def test_domain_errors_become_tool_errors(mcp):
     assert "category must be one of" in err
     err, _ = call(mcp, "run_time_machine", {"as_of_date": "2999-01-01"})
     assert "past date" in err
-    err, _ = call(mcp, "add_event", {"category": "TRADE_TARIFF", "event_type": "TARIFF_IMPOSED", "title": "x", "event_date": "2026-01-01",
-                                     "published_at": "2026-01-01T00:00:00Z", "source_url": "ftp://nope"})
-    assert "source.url" in err
-    err, _ = call(mcp, "delete_company", {"company_id": 1})
-    assert "confirm=true" in err
+    err, _ = call(mcp, "ingest_sec_filings", {"symbol": "NOPE"})
+    assert "unknown symbol" in err
 
 
 def test_management_tools_queue_jobs_and_follow_the_admin_token_rule(mcp, monkeypatch):

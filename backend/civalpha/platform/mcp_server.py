@@ -1,100 +1,99 @@
-"""CivAlpha MCP server: lets Claude (or any MCP client) read the platform and start its jobs.
+"""CivAlpha MCP server: Claude (or any MCP client) can read the platform and start its jobs.
 
-Runs as the `mcp` service (streamable HTTP, stateless) behind nginx at http://localhost:8088/mcp:
+Served by the API process at /mcp (streamable HTTP, stateless), so through nginx at http://localhost:8088/mcp:
 
     claude mcp add --transport http civalpha http://localhost:8088/mcp
 
-It is a thin client of the REST API (CIVALPHA_API_URL, default http://api:8000), so it sees exactly what the UI
-sees. Read tools condense API responses for a language model (summaries instead of long series). Action tools queue
-the same jobs as the Data & pipeline page and can optionally wait for them. When CIVALPHA_ADMIN_TOKEN is set, every
-MCP request must carry it (X-Admin-Token or Authorization: Bearer), like the admin API.
-
-Run: uvicorn civalpha.platform.mcp_server:app --host 0.0.0.0 --port 8001
+Tools call the same code as the REST endpoints, in-process, and condense the answers for a language model (summaries
+instead of long series). Research tools are public like the read API; job tools follow the admin-token rule: when
+CIVALPHA_ADMIN_TOKEN is set, an HTTP client must send it (X-Admin-Token or Authorization: Bearer). A local stdio run
+(python -m civalpha.platform.mcp_server) is trusted like any other process on the machine.
 """
 from __future__ import annotations
 
+import contextlib
+import functools
 import hmac
-import os
+import json
 import time
 from datetime import date
-from typing import Any
 
-import httpx
-from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
+from starlette.routing import Route
 
+from .api import admin, events as events_api, read
+from .errors import BadRequest, NotFound, Problem, Unavailable
+from .jobs import Jobs
+from .rows import camel
 from .settings import settings
 
-API_URL = os.environ.get("CIVALPHA_API_URL", "http://api:8000").rstrip("/")
 READ = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
 ACTION = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=True)
 ACTIVE = ("QUEUED", "RUNNING")
 MAX_WAIT = 600
+CATEGORIES = ("TRADE_TARIFF", "MONETARY_POLICY")
 
-INSTRUCTIONS = """CivAlpha is a research platform on real data for US-listed stocks: SEC filings (XBRL facts, passages,
-exposures), daily prices, macro data and official trade/tariff and monetary-policy events. It forecasts the probability
-that a stock beats its sector benchmark ETF over 21 trading days, backtests classic and AI trading strategies, records
-the AI strategy's daily ENTER/EXIT/HOLD/STAY_OUT decisions, and can replay forecasts from a past date (time machine).
-It is research software, not investment advice: always quote the verdicts and uncertainty the tools return, and do
-not claim profitability the platform itself does not support. Start with platform_status. Action tools queue
-background jobs; use job_status to follow them, or pass wait_seconds to wait for the result."""
+ABOUT = """CivAlpha is a research platform on real data for US-listed stocks: SEC filings (XBRL facts, passages and
+exposures), daily prices, dividends, macro data and official trade/tariff and monetary-policy events.
+
+It forecasts one target: the probability that a stock's total return over the next 21 trading days beats its sector
+benchmark ETF (BASELINE model: prices and fundamentals; AUGMENTED: plus policy events and macro). It backtests classic
+trading rules and an AI strategy on one out-of-sample window, records the AI strategy's daily ENTER / EXIT / HOLD /
+STAY_OUT decisions, and can replay forecasts from a past date and score them against what happened (time machine).
+
+This is research software and not investment advice. It places no orders. Quote the verdicts, intervals and caveats
+the tools return; never claim profitability the platform itself does not support. Start with get_status."""
 
 
-class ApiError(ToolError):
-    """An error whose message is shown to the model (API errors, bad arguments, API unreachable)."""
+def require_admin(ctx) -> None:
+    """Job tools: with an admin token configured, an HTTP client must present it. No transport or no HTTP headers
+    (stdio, direct calls) means a local operator, who is trusted like any other process on the machine."""
+    token = settings().admin_token
+    if not token or ctx is None:
+        return
+    headers = getattr(ctx, "headers", None)
+    if headers is None:
+        return
+    h = {str(k).lower(): v for k, v in dict(headers).items()}
+    presented = h.get("x-admin-token")
+    auth = h.get("authorization") or ""
+    if presented is None and auth.startswith("Bearer "):
+        presented = auth[7:].strip()
+    if presented is None or not hmac.compare_digest(token.encode(), str(presented).encode()):
+        raise ToolError("admin token required (X-Admin-Token header)")
 
 
-class Api:
-    """REST client for the CivAlpha API (sends the admin token when one is configured)."""
-
-    def __init__(self, base_url: str = API_URL, token: str | None = None, transport: httpx.BaseTransport | None = None):
-        token = settings().admin_token if token is None else token
-        headers = {"X-Admin-Token": token} if token else {}
-        self.http = httpx.Client(base_url=base_url, headers=headers, timeout=httpx.Timeout(120.0, connect=10.0), transport=transport)
-
-    def _check(self, r: httpx.Response) -> Any:
-        if r.status_code >= 400:
-            try:
-                body = r.json()
-                msg = body.get("error") or body.get("detail") or r.text
-            except ValueError:
-                msg = r.text
-            raise ApiError(f"CivAlpha API {r.status_code}: {msg}")
-        return r.json()
-
-    def _send(self, method: str, path: str, **kw) -> Any:
+def _domain(fn):
+    """Platform errors (unknown symbol, bad date, ...) become tool errors whose message the model sees."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
         try:
-            r = self.http.request(method, path, **kw)
-        except httpx.HTTPError as e:
-            raise ApiError(f"cannot reach the CivAlpha API at {self.http.base_url} ({type(e).__name__}); is the stack running?") from e
-        return self._check(r)
-
-    def get(self, path: str, **params) -> Any:
-        return self._send("GET", path, params={k: v for k, v in params.items() if v not in (None, "")})
-
-    def post(self, path: str, body: dict | None = None) -> Any:
-        return self._send("POST", path, json=body or {})
+            return fn(*args, **kwargs)
+        except (NotFound, BadRequest, Problem, Unavailable, ValueError, LookupError) as e:
+            raise ToolError(str(e)) from e
+    return wrapper
 
 
-def _date(s: str | None, name: str) -> str | None:
+def _date(s: str | None, name: str) -> date | None:
     if not s:
         return None
     try:
-        return date.fromisoformat(s).isoformat()
+        return date.fromisoformat(s)
     except ValueError as e:
-        raise ApiError(f"{name} must be a date like 2026-06-30") from e
+        raise ToolError(f"{name} must be a date in the form YYYY-MM-DD") from e
 
 
 def _pick(d: dict, *keys: str) -> dict:
     return {k: d.get(k) for k in keys if k in d}
 
 
-def _ret(bars: list[dict], days: int) -> float | None:
-    if len(bars) <= days or not bars[-1].get("close") or not bars[-1 - days].get("close"):
+def _ret(bars: list[dict], days: int, key: str = "close") -> float | None:
+    if len(bars) <= days or not bars[-1].get(key) or not bars[-1 - days].get(key):
         return None
-    return round(bars[-1]["close"] / bars[-1 - days]["close"] - 1, 4)
+    return round(bars[-1][key] / bars[-1 - days][key] - 1, 4)
 
 
 def _job(j: dict, log_lines: int = 15) -> dict:
@@ -102,74 +101,150 @@ def _job(j: dict, log_lines: int = 15) -> dict:
     return {**_pick(j, "id", "jobType", "status", "startedAt", "finishedAt", "params"), "logTail": lines[-log_lines:]}
 
 
-def build(api: Api | None = None) -> MCPServer:
-    api = api or Api()
-    server = MCPServer(name="civalpha", title="CivAlpha", instructions=INSTRUCTIONS, version="1.0.0")
+def _wait(job: dict, wait_seconds: int) -> dict:
+    deadline = time.monotonic() + max(0, min(int(wait_seconds or 0), MAX_WAIT))
+    while job.get("status") in ACTIVE and time.monotonic() < deadline:
+        time.sleep(2)
+        job = camel(Jobs().get(job["id"]))
+    out = _job(job)
+    if out["status"] in ACTIVE:
+        out["note"] = f"still {out['status'].lower()}; call get_job({job['id']}) to follow it"
+    return out
 
-    def wait(job: dict, wait_seconds: int) -> dict:
-        deadline = time.monotonic() + max(0, min(int(wait_seconds or 0), MAX_WAIT))
-        while job.get("status") in ACTIVE and time.monotonic() < deadline:
-            time.sleep(2)
-            job = next((j for j in api.get("/api/admin/jobs") if j["id"] == job["id"]), job)
-        out = _job(job)
-        if out["status"] in ACTIVE:
-            out["note"] = f"still {out['status'].lower()}; call job_status({job['id']}) to follow it"
-        return out
+
+def status() -> dict:
+    meta = read.meta()
+    companies = read.companies()
+    lab = read.strategies().get("run") or {}
+    return {**_pick(meta, "target", "disclaimers", "dataCutoff", "secConfigured", "fredEnabled", "priceProvider", "llmEnabled",
+                    "missingBenchmarks", "adminTokenRequired"),
+            "companies": len(companies), "symbols": [c["symbol"] for c in companies],
+            "strategyLab": _pick(lab, "runAt", "oosStart", "dataCutoff", "summary")}
+
+
+def build() -> MCPServer:
+    server = MCPServer(name="civalpha", title="CivAlpha", instructions=ABOUT, version="1.0.0")
+    tool_read = server.tool(annotations=READ)
+    tool_action = server.tool(annotations=ACTION)
+
+    # ------------------------------------------------------------------ resources and prompts
+    @server.resource("civalpha://about", name="about", description="What CivAlpha is and how to use its answers", mime_type="text/plain")
+    def about() -> str:
+        return ABOUT
+
+    @server.resource("civalpha://status", name="status", description="Data sources, data cutoff and universe", mime_type="application/json")
+    def status_resource() -> str:
+        return json.dumps(status(), default=str)
+
+    @server.prompt(name="investment_review", description="Review one stock with all of CivAlpha's evidence")
+    def investment_review(symbol: str) -> str:
+        s = symbol.upper().strip()
+        return (f"Review {s} using CivAlpha. Call get_company({s}), get_financials, get_exposures, get_dividends, the latest "
+                f"forecasts for {s} (get_current_forecasts, get_forecast for the explanation), get_decisions for the AI strategy, "
+                "and get_accuracy plus get_strategies for how much the models and strategies can be trusted. Then summarise: "
+                "what the filings say, how policy events reach the company, what the models expect and how uncertain that is, "
+                "and the evidence for and against. Quote the platform's verdicts and caveats; this is research, not advice.")
 
     # ------------------------------------------------------------------ overview
-    @server.tool(annotations=READ)
-    def platform_status() -> dict:
-        """Platform overview: configured data sources, latest data date, missing benchmark prices, universe size,
-        latest strategy-lab summary and the most recent background jobs. Call this first."""
-        meta = api.get("/api/meta")
-        companies = api.get("/api/companies")
-        lab = api.get("/api/strategies").get("run") or {}
-        jobs = api.get("/api/admin/jobs")[:5]
-        return {"meta": _pick(meta, "dataCutoff", "secConfigured", "fredEnabled", "priceProvider", "llmEnabled", "missingBenchmarks",
-                              "adminTokenRequired", "target", "disclaimers"),
-                "companies": len(companies), "symbols": [c["symbol"] for c in companies],
-                "strategyLab": _pick(lab, "runAt", "oosStart", "dataCutoff", "summary"),
-                "recentJobs": [_pick(j, "id", "jobType", "status", "startedAt", "finishedAt") for j in jobs]}
+    @tool_read
+    @_domain
+    def get_status() -> dict:
+        """Platform overview: forecast target, disclaimers, configured data sources, latest data date, missing benchmark
+        prices, universe and the latest strategy-lab summary. Call this first."""
+        return status()
 
-    @server.tool(annotations=READ)
+    @tool_read
+    @_domain
     def list_companies() -> list[dict]:
-        """All tracked companies with sector, benchmark ETF, latest close and latest forecast probabilities."""
-        return [{**_pick(c, "symbol", "name", "sector", "benchmarkSymbol", "cik", "latestClose", "latestCloseDate"),
+        """All tracked companies with sector, benchmark ETF, latest close, dividend summary and latest forecasts."""
+        return [{**_pick(c, "symbol", "name", "sector", "benchmarkSymbol", "cik", "latestClose", "latestCloseDate", "dividend"),
                  "latestForecasts": {k: _pick(v, "probability", "asOfDate") for k, v in (c.get("latestForecasts") or {}).items()}}
-                for c in api.get("/api/companies")]
+                for c in read.companies()]
+
+    @tool_read
+    @_domain
+    def investment_candidates() -> dict:
+        """Every tracked stock ranked by the evidence CivAlpha has: latest forecast probabilities, the AI strategy's latest
+        decision, which classic rules hold it, and dividend status, with the evidence on how trustworthy that is
+        (model accuracy, strategy-lab verdicts). A screening aid for research, not a recommendation."""
+        decisions = {d["symbol"]: d for d in read.decisions(None).get("decisions", [])}
+        acc = (read.accuracy().get("evaluation") or {})
+        lab = read.strategies()
+        cands = []
+        for c in read.companies():
+            f = c.get("latestForecasts") or {}
+            d = decisions.get(c["symbol"]) or {}
+            cands.append({"symbol": c["symbol"], "name": c.get("name"), "sector": c.get("sector"),
+                          "pBeatSectorAugmented": (f.get("AUGMENTED") or {}).get("probability"),
+                          "pBeatSectorBaseline": (f.get("BASELINE") or {}).get("probability"),
+                          "aiAction": d.get("action"), "aiProbability": d.get("probability"), "aiRank": d.get("rank"),
+                          "rulesHolding": sorted(k for k, v in (d.get("ruleVotes") or {}).items() if v),
+                          "dividend": _pick(c.get("dividend") or {}, "status", "trailingYield", "indicatedYield", "yearsPaid")})
+        cands.sort(key=lambda x: -(x["aiProbability"] if x["aiProbability"] is not None else x["pBeatSectorAugmented"] or 0))
+        return {"universeSize": len(cands), "candidates": cands,
+                "evidence": {"accuracy": acc.get("verdict"),
+                             "strategyLab": {"summary": (lab.get("run") or {}).get("summary"),
+                                             "verdicts": [_pick(r, "strategyKey", "name", "verdict") for r in lab.get("results", [])]}},
+                "disclaimers": read.DISCLAIMERS}
 
     # ------------------------------------------------------------------ companies
-    @server.tool(annotations=READ)
-    def company_profile(symbol: str) -> dict:
+    @tool_read
+    @_domain
+    def get_company(symbol: str) -> dict:
         """One company: identity and ticker history, latest as-filed key facts, price performance vs its sector ETF,
-        latest forecasts and the AI strategy's latest decision for it. `symbol` may be a former ticker (e.g. FB)."""
-        c = api.get(f"/api/companies/{symbol}")
-        p = api.get(f"/api/companies/{symbol}/prices")
-        bars = p.get("bars") or []
-        bench = [{"close": b.get("benchmarkClose")} for b in bars]
-        perf = {f"{n}": {"stock": _ret(bars, d), "benchmark": _ret(bench, d)} for n, d in (("1m", 21), ("3m", 63), ("12m", 252))}
-        latest = next((f for f in [x for x in api.get("/api/companies") if x["symbol"] == c["symbol"]]), {}).get("latestForecasts", {})
-        dec = next((d for d in api.get("/api/decisions").get("decisions", []) if d.get("symbol") == c["symbol"]), None)
+        latest forecasts and the AI strategy's latest decision. `symbol` may be a former ticker (e.g. FB)."""
+        c = read.company(symbol)
+        bars = read.company_prices(symbol, None).get("bars") or []
+        perf = {n: {"stock": _ret(bars, d), "benchmark": _ret(bars, d, "benchmarkClose")} for n, d in (("1m", 21), ("3m", 63), ("12m", 252))}
+        latest = next((x.get("latestForecasts") for x in read.companies() if x["symbol"] == c["symbol"]), {})
+        dec = next((d for d in read.decisions(None).get("decisions", []) if d.get("symbol") == c["symbol"]), None)
         return {**_pick(c, "symbol", "name", "sector", "industry", "benchmarkSymbol", "tickerHistory", "cikHistory"),
                 "keyFacts": [_pick(f, "label", "value", "unit", "periodEnd", "fiscalPeriod", "formType", "filedDate") for f in c.get("keyFacts", [])],
                 "lastClose": bars[-1] if bars else None, "returns": perf, "latestForecasts": latest,
                 "aiDecision": None if dec is None else _pick(dec, "asOfDate", "action", "probability", "rank", "explanation")}
 
-    @server.tool(annotations=READ)
-    def company_financials(symbol: str, as_of: str | None = None, quarters: int = 8) -> dict:
+    @tool_read
+    @_domain
+    def get_financials(symbol: str, as_of_date: str | None = None, quarters: int = 8) -> dict:
         """As-filed financial statement series (revenue, gross profit, operating and net income, assets, liabilities,
-        debt, cash) with revisions flagged. `as_of` (YYYY-MM-DD) shows only what had been filed by then."""
-        r = api.get(f"/api/companies/{symbol}/financials", asOf=f"{_date(as_of, 'as_of')}T21:00:00Z" if as_of else None)
+        debt, cash) with revisions flagged. `as_of_date` (YYYY-MM-DD) shows only what had been filed by then."""
+        d = _date(as_of_date, "as_of_date")
+        r = read.financials(symbol, f"{d}T21:00:00Z" if d else None)
+        n = max(1, min(quarters, 40))
         return {"asOf": r.get("asOf"), "series": [
             {**_pick(s, "concept", "label", "unit"),
-             "points": [_pick(p, "periodEnd", "fiscalPeriod", "value", "revised", "originalValue", "formType", "filedDate")
-                        for p in s.get("points", [])][-max(1, min(quarters, 40)):]} for s in r.get("series", [])]}
+             "points": [_pick(p, "periodEnd", "fiscalPeriod", "value", "revised", "originalValue", "formType", "filedDate") for p in s.get("points", [])][-n:]}
+            for s in r.get("series", [])]}
 
-    @server.tool(annotations=READ)
-    def company_exposures(symbol: str, as_of: str | None = None, limit: int = 20) -> dict:
-        """The company's exposures to countries, products and interest rates derived from its SEC filings (with basis,
-        confidence and the supporting passage), and recent policy events that reach it through those exposures."""
-        r = api.get(f"/api/companies/{symbol}/exposures", asOf=f"{_date(as_of, 'as_of')}T21:00:00Z" if as_of else None)
+    @tool_read
+    @_domain
+    def get_prices(symbol: str, from_date: str | None = None) -> dict:
+        """Price summary since `from_date` (YYYY-MM-DD; default three years): first/last/high/low close, returns of the stock
+        and its sector ETF over 1, 3 and 12 months, and corporate actions (splits, dividends)."""
+        d = _date(from_date, "from_date")
+        p = read.company_prices(symbol, d.isoformat() if d else None)
+        bars = p.get("bars") or []
+        closes = [b["close"] for b in bars if b.get("close") is not None]
+        return {"symbol": p.get("symbol"), "benchmarkSymbol": p.get("benchmarkSymbol"), "bars": len(bars),
+                "first": bars[0] if bars else None, "last": bars[-1] if bars else None,
+                "high": max(closes) if closes else None, "low": min(closes) if closes else None,
+                "returns": {n: {"stock": _ret(bars, k), "benchmark": _ret(bars, k, "benchmarkClose")} for n, k in (("1m", 21), ("3m", 63), ("12m", 252))},
+                "corporateActions": p.get("corporateActions", [])[-20:]}
+
+    @tool_read
+    @_domain
+    def get_dividends(symbol: str) -> dict:
+        """Dividend profile: status (regular, special, none, cut), frequency, yield, indicated annual amount, years paid and
+        raised, recent payments and the payout ratio from filings."""
+        return read.company_dividends(symbol)
+
+    @tool_read
+    @_domain
+    def get_exposures(symbol: str, as_of_date: str | None = None, limit: int = 20) -> dict:
+        """The company's exposures to countries, products and interest rates derived from its SEC filings (basis,
+        confidence, supporting passage), and recent policy events that reach it through them."""
+        d = _date(as_of_date, "as_of_date")
+        r = read.exposures(symbol, f"{d}T21:00:00Z" if d else None)
         n = max(1, min(limit, 100))
         return {"asOf": r.get("asOf"),
                 "exposures": [{**_pick(e, "targetType", "targetCode", "channel", "share", "basis", "confidence", "method", "availableAt"),
@@ -178,37 +253,42 @@ def build(api: Api | None = None) -> MCPServer:
                 "eventPaths": [_pick(p, "eventId", "eventTitle", "eventCategory", "eventPublishedAt", "evidenceStatus", "targetType",
                                      "targetCode", "channel", "basis") for p in r.get("paths", [])[:n]]}
 
-    @server.tool(annotations=READ)
-    def company_filings(symbol: str, limit: int = 10) -> list[dict]:
+    @tool_read
+    @_domain
+    def list_filings(symbol: str, limit: int = 10) -> list[dict]:
         """The company's most recent SEC filings (10-K, 10-Q, 8-K, amendments) with acceptance times and links."""
         return [_pick(f, "id", "formType", "accessionNo", "periodOfReport", "filedDate", "acceptedAt", "amendsAccession", "url",
-                      "passageCount", "factCount") for f in api.get(f"/api/companies/{symbol}/filings")[:max(1, min(limit, 50))]]
+                      "passageCount", "factCount") for f in read.company_filings(symbol)[:max(1, min(limit, 50))]]
 
-    @server.tool(annotations=READ)
-    def filing_detail(filing_id: int, max_passages: int = 8) -> dict:
-        """One filing: metadata, extracted passages by topic (trade, geographic revenue, rates, debt, costs, risk) and
-        a sample of its XBRL facts."""
-        f = api.get(f"/api/filings/{filing_id}")
+    @tool_read
+    @_domain
+    def get_filing(filing_id: int, max_passages: int = 8) -> dict:
+        """One filing: metadata, extracted passages by topic (trade, geographic revenue, rates, debt, costs, risk) and a
+        sample of its XBRL facts."""
+        f = read.filing(filing_id)
         return {**_pick(f, "id", "companySymbol", "formType", "accessionNo", "periodOfReport", "acceptedAt", "url"),
-                "passages": [{**_pick(p, "section", "topic"), "text": (p.get("text") or "")[:600]}
-                             for p in f.get("passages", [])[:max(0, min(max_passages, 40))]],
+                "passages": [{**_pick(p, "section", "topic"), "text": (p.get("text") or "")[:600]} for p in f.get("passages", [])[:max(0, min(max_passages, 40))]],
                 "facts": [_pick(x, "concept", "value", "unit", "periodStart", "periodEnd", "dimensions") for x in f.get("facts", [])[:40]]}
 
     # ------------------------------------------------------------------ events
-    @server.tool(annotations=READ)
+    @tool_read
+    @_domain
     def list_events(category: str | None = None, limit: int = 25) -> list[dict]:
-        """Recent policy events, newest first. `category`: TRADE_TARIFF or MONETARY_POLICY. NEWS_ONLY events are
-        unconfirmed reports and do not feed the models until an official source is linked."""
+        """Recent policy events, newest first. `category`: TRADE_TARIFF or MONETARY_POLICY. NEWS_ONLY events are unconfirmed
+        reports and do not feed the models until an official source is linked."""
+        if category and category not in CATEGORIES:
+            raise ToolError(f"category must be one of {', '.join(CATEGORIES)}")
         return [{**_pick(e, "id", "category", "eventType", "title", "eventDate", "publishedAt", "evidenceStatus", "actorName",
                          "sourceCount", "affectedCompanyCount"),
                  "targets": [f"{t['targetType']}:{t['targetCode']}" for t in e.get("targets", [])]}
-                for e in api.get("/api/events", category=category)[:max(1, min(limit, 200))]]
+                for e in events_api.list_events(category)[:max(1, min(limit, 200))]]
 
-    @server.tool(annotations=READ)
-    def event_detail(event_id: int) -> dict:
-        """One event: summary, attributes (e.g. rate change), targets, sources and the companies it affects with the
-        exposure path (event target -> company exposure -> filing passage)."""
-        e = api.get(f"/api/events/{event_id}")
+    @tool_read
+    @_domain
+    def get_event(event_id: int) -> dict:
+        """One event: summary, attributes (e.g. rate change), targets, sources and the affected companies with the exposure
+        path (event target -> company exposure -> filing passage)."""
+        e = events_api.get_event(event_id)
         return {**_pick(e, "id", "category", "eventType", "title", "summary", "eventDate", "publishedAt", "evidenceStatus", "attributes",
                         "targets", "version"),
                 "actor": _pick(e.get("actor") or {}, "name", "actorType", "authority") or None,
@@ -218,24 +298,27 @@ def build(api: Api | None = None) -> MCPServer:
                                       for a in e.get("affectedCompanies", [])]}
 
     # ------------------------------------------------------------------ forecasts and models
-    @server.tool(annotations=READ)
-    def current_forecasts() -> list[dict]:
-        """Latest forecasts: probability (with 10-90% interval) that each stock beats its sector ETF over the next 21
-        trading days, per model (BASELINE = prices + fundamentals, AUGMENTED = plus policy events and macro)."""
+    @tool_read
+    @_domain
+    def get_current_forecasts() -> list[dict]:
+        """Latest forecasts: probability (with 10-90% interval) that each stock beats its sector ETF over the next 21 trading
+        days, per model (BASELINE = prices + fundamentals, AUGMENTED = plus policy events and macro)."""
         return [_pick(f, "id", "symbol", "benchmarkSymbol", "modelKind", "probability", "probLow", "probHigh", "asOfDate", "issueMode",
-                      "version", "outcome") for f in api.get("/api/forecasts/current")]
+                      "version", "outcome") for f in read.forecasts_current()]
 
-    @server.tool(annotations=READ)
-    def forecast_history(symbol: str | None = None, model_kind: str | None = None, limit: int = 50) -> list[dict]:
-        """Past forecasts (newest first) with their realized outcome once the 21-day window has closed."""
+    @tool_read
+    @_domain
+    def get_forecast_history(symbol: str | None = None, model_kind: str | None = None, limit: int = 50) -> list[dict]:
+        """Past forecasts (newest first) with the realized outcome once the 21-day window has closed."""
         return [_pick(f, "id", "symbol", "modelKind", "probability", "asOfDate", "issueMode", "version", "outcome")
-                for f in api.get("/api/forecasts/history", symbol=symbol, modelKind=model_kind)[:max(1, min(limit, 500))]]
+                for f in read.forecasts_history(symbol, model_kind)[:max(1, min(limit, 500))]]
 
-    @server.tool(annotations=READ)
-    def forecast_detail(forecast_id: int) -> dict:
-        """One forecast with its explanation (each factor's contribution and its source documents), features, sources,
+    @tool_read
+    @_domain
+    def get_forecast(forecast_id: int) -> dict:
+        """One forecast with its explanation (each factor's contribution and source documents), features, sources,
         uncertainty note, model version and earlier versions of the same forecast."""
-        f = api.get(f"/api/forecasts/{forecast_id}")
+        f = read.forecast(forecast_id)
         expl = f.get("explanation") or {}
         return {**_pick(f, "id", "symbol", "benchmarkSymbol", "modelKind", "probability", "probLow", "probHigh", "asOfDate", "asOf",
                         "issueMode", "target", "uncertaintyNote", "features", "outcome", "version", "reason"),
@@ -246,60 +329,66 @@ def build(api: Api | None = None) -> MCPServer:
                 "modelVersion": _pick(f.get("modelVersion") or {}, "algorithm", "trainedThrough", "nSamples"),
                 "versions": [_pick(v, "version", "issuedAt", "probability", "reason") for v in f.get("versions", [])]}
 
-    @server.tool(annotations=READ)
-    def model_accuracy() -> dict:
+    @tool_read
+    @_domain
+    def get_accuracy() -> dict:
         """Walk-forward out-of-sample evaluation of the forecasting models (Brier score, AUC, calibration, trading
         simulation and the platform's verdict) and the realized accuracy of forecasts actually issued."""
-        a = api.get("/api/accuracy")
-        ev = a.get("evaluation") or {}
-        return {"evaluation": _pick(ev, "runAt", "dataCutoff", "verdict", "metrics", "comparison", "trading", "config"),
+        a = read.accuracy()
+        return {"evaluation": _pick(a.get("evaluation") or {}, "runAt", "dataCutoff", "verdict", "metrics", "comparison", "trading", "config"),
                 "issuedLive": a.get("issued"), "issuedByMode": a.get("issuedByMode")}
 
     # ------------------------------------------------------------------ strategies and AI decisions
-    @server.tool(annotations=READ)
-    def strategy_results() -> dict:
-        """Strategy lab: every classic rule (trend, mean reversion, fundamental, event) and the AI strategies backtested
-        on one out-of-sample window after costs, ranked by Sharpe, each with a multiple-testing-aware verdict."""
-        r = api.get("/api/strategies")
+    @tool_read
+    @_domain
+    def get_strategies() -> dict:
+        """Strategy lab: every classic rule (trend, mean reversion, fundamental, dividend, event) and the AI strategies
+        backtested on one out-of-sample window after costs, ranked by Sharpe, each with a multiple-testing-aware verdict."""
+        r = read.strategies()
         keys = ("start", "end", "years", "cagr", "sharpe", "maxDrawdown", "exposure", "trades", "excessReturn", "excessCiLow",
                 "excessCiHigh", "deflatedSharpe")
         return {"run": _pick(r.get("run") or {}, "runAt", "oosStart", "dataCutoff", "summary"),
                 "results": [{**_pick(s, "strategyKey", "family", "name", "verdict"), "rule": s.get("description"),
                              "metrics": _pick(s.get("metrics") or {}, *keys)} for s in r.get("results", [])]}
 
-    @server.tool(annotations=READ)
-    def strategy_detail(key: str, trades: int = 20) -> dict:
-        """One strategy (e.g. AI_GBM, MOM_12_1, SMA_50_200): rule, parameters, metrics, yearly returns, cost
-        sensitivity and its latest trades."""
-        r = api.get(f"/api/strategies/{key}")
+    @tool_read
+    @_domain
+    def get_strategy(key: str, trades: int = 20) -> dict:
+        """One strategy (e.g. AI_GBM, MOM_12_1, SMA_50_200): rule, parameters, metrics, yearly returns, cost sensitivity and
+        its latest trades."""
+        r = read.strategy(key)
         s = r.get("result") or {}
         return {**_pick(s, "strategyKey", "family", "name", "description", "params", "metrics", "yearly", "costSensitivity", "verdict"),
                 "tradeCount": r.get("tradeCount"),
                 "latestTrades": [_pick(t, "symbol", "entryDate", "exitDate", "tradeReturn", "holdingDays", "entryReason", "exitReason")
                                  for t in r.get("trades", [])[:max(0, min(trades, 200))]]}
 
-    @server.tool(annotations=READ)
-    def ai_decisions(date: str | None = None) -> dict:
-        """The AI strategy's decisions for a trading day (default: latest): ENTER/EXIT/HOLD/STAY_OUT per stock with the
-        model probability, rank, top factors, which classic rules agree, and the plain-language explanation if any."""
-        r = api.get("/api/decisions", date=_date(date, "date"))
+    @tool_read
+    @_domain
+    def get_decisions(as_of_date: str | None = None) -> dict:
+        """The AI strategy's decisions for a trading day (default: latest): ENTER/EXIT/HOLD/STAY_OUT per stock with the model
+        probability, rank, top factors, which classic rules agree, and the plain-language explanation if any."""
+        d = _date(as_of_date, "as_of_date")
+        r = read.decisions(d.isoformat() if d else None)
         return {"asOfDate": r.get("asOfDate"), "availableDates": r.get("dates", [])[:10],
-                "decisions": [{**_pick(d, "symbol", "name", "action", "probability", "rank", "weight", "entryP", "exitP", "explanation"),
-                               "topFactors": [_pick(f, "label", "value", "contribution") for f in (d.get("factors") or [])[:3]],
-                               "rulesHolding": sorted(k for k, v in (d.get("ruleVotes") or {}).items() if v)}
-                              for d in r.get("decisions", [])]}
+                "decisions": [{**_pick(x, "symbol", "name", "action", "probability", "rank", "weight", "entryP", "exitP", "explanation"),
+                               "topFactors": [_pick(f, "label", "value", "contribution") for f in (x.get("factors") or [])[:3]],
+                               "rulesHolding": sorted(k for k, v in (x.get("ruleVotes") or {}).items() if v)}
+                              for x in r.get("decisions", [])]}
 
     # ------------------------------------------------------------------ time machine
-    @server.tool(annotations=READ)
-    def time_machine_runs() -> list[dict]:
-        """Past time-machine runs (forecasts made as of a past date and scored against what happened)."""
-        return [_pick(r, "id", "asOfDate", "runAt", "dataCutoff", "headline") for r in api.get("/api/timemachine")]
+    @tool_read
+    @_domain
+    def list_time_machine_runs() -> list[dict]:
+        """Past time-machine runs: forecasts made as of a past date and scored against what happened."""
+        return [_pick(r, "id", "asOfDate", "runAt", "dataCutoff", "headline") for r in read.time_machine_runs()]
 
-    @server.tool(annotations=READ)
-    def time_machine_result(run_id: int, horizon: int = 21) -> dict:
-        """One time-machine run: per-horizon scores (odds hit rate and Brier vs base rate, AI picks vs all stocks,
-        10-90% band coverage) and per-stock prediction vs actual for `horizon` (5, 10, 21 or 63 trading days)."""
-        r = api.get(f"/api/timemachine/{run_id}")
+    @tool_read
+    @_domain
+    def get_time_machine_run(run_id: int, horizon: int = 21) -> dict:
+        """One time-machine run: per-horizon scores (odds hit rate and Brier vs base rate, AI picks vs all stocks, 10-90% band
+        coverage) and per-stock prediction vs actual for `horizon` (5, 10, 21 or 63 trading days)."""
+        r = read.time_machine_run(run_id)
         res = r.get("result") or {}
         h = str(horizon)
         stocks = []
@@ -313,112 +402,130 @@ def build(api: Api | None = None) -> MCPServer:
         return {**_pick(r, "id", "asOfDate", "runAt", "dataCutoff", "headline"), "horizons": res.get("horizons"),
                 "summary": res.get("summary"), "horizon": horizon, "stocks": stocks}
 
-    # ------------------------------------------------------------------ jobs
-    @server.tool(annotations=READ)
-    def recent_jobs(limit: int = 10) -> list[dict]:
-        """Recent background jobs (pipeline runs, price updates, backtests, time machine...) with status."""
-        return [_pick(j, "id", "jobType", "status", "startedAt", "finishedAt") for j in api.get("/api/admin/jobs")[:max(1, min(limit, 30))]]
+    # ------------------------------------------------------------------ jobs (admin-token rule)
+    @tool_read
+    @_domain
+    def list_jobs(ctx: Context, limit: int = 10) -> list[dict]:
+        """Recent background jobs (pipeline runs, price updates, backtests, time machine...) with their status."""
+        require_admin(ctx)
+        return [_pick(j, "id", "jobType", "status", "startedAt", "finishedAt") for j in admin.jobs()[:max(1, min(limit, 30))]]
 
-    @server.tool(annotations=READ)
-    def job_status(job_id: int, wait_seconds: int = 0) -> dict:
+    @tool_read
+    @_domain
+    def get_job(ctx: Context, job_id: int, wait_seconds: int = 0) -> dict:
         """Status and log tail of one job; optionally wait up to `wait_seconds` (max 600) for it to finish."""
-        job = next((j for j in api.get("/api/admin/jobs") if j["id"] == job_id), None)
-        if job is None:
-            raise ApiError(f"job {job_id} is not among the 30 most recent jobs")
-        return wait(job, wait_seconds)
+        require_admin(ctx)
+        j = Jobs().get(job_id)
+        if j is None:
+            raise ToolError(f"job {job_id} not found")
+        return _wait(camel(j), wait_seconds)
 
-    # ------------------------------------------------------------------ actions (queue background jobs)
-    def action(path: str, body: dict | None, wait_seconds: int) -> dict:
-        return wait(api.post(path, body), wait_seconds)
+    def _action(ctx, submit, wait_seconds: int) -> dict:
+        require_admin(ctx)
+        return _wait(submit(), wait_seconds)
 
-    @server.tool(annotations=ACTION)
-    def run_pipeline(wait_seconds: int = 0) -> dict:
-        """Run the full pipeline: refresh prices, SEC filings, macro data and policy events, then evaluate the models,
-        issue forecasts, run the strategy lab and record the AI's decisions. Takes several minutes."""
-        return action("/api/admin/pipeline/run", None, wait_seconds)
+    @tool_action
+    @_domain
+    def run_pipeline(ctx: Context, wait_seconds: int = 0) -> dict:
+        """Run the full pipeline: refresh prices, SEC filings, macro data and policy events, then evaluate the models, issue
+        forecasts, run the strategy lab and record the AI's decisions. Takes several minutes; follow it with get_job."""
+        return _action(ctx, admin.pipeline_run, wait_seconds)
 
-    @server.tool(annotations=ACTION)
-    def update_prices(wait_seconds: int = 0) -> dict:
+    @tool_action
+    @_domain
+    def update_prices(ctx: Context, wait_seconds: int = 0) -> dict:
         """Download new daily prices, dividends and splits from the configured provider (only what is missing)."""
-        return action("/api/admin/prices/sync", None, wait_seconds)
+        return _action(ctx, admin.price_sync, wait_seconds)
 
-    @server.tool(annotations=ACTION)
-    def ingest_sec_filings(symbol: str, wait_seconds: int = 0) -> dict:
+    @tool_action
+    @_domain
+    def ingest_sec_filings(ctx: Context, symbol: str, wait_seconds: int = 0) -> dict:
         """Fetch new SEC filings for one company (XBRL facts, passages, exposures)."""
-        return action("/api/admin/sec/ingest", {"symbol": symbol}, wait_seconds)
+        return _action(ctx, lambda: admin.sec_ingest(admin.SecIn(symbol=symbol)), wait_seconds)
 
-    @server.tool(annotations=ACTION)
-    def evaluate_models(wait_seconds: int = 0) -> dict:
+    @tool_action
+    @_domain
+    def evaluate_models(ctx: Context, wait_seconds: int = 0) -> dict:
         """Re-run the walk-forward evaluation of the forecasting models."""
-        return action("/api/admin/evaluate", None, wait_seconds)
+        return _action(ctx, admin.evaluate, wait_seconds)
 
-    @server.tool(annotations=ACTION)
-    def issue_forecasts(as_of_date: str | None = None, wait_seconds: int = 0) -> dict:
+    @tool_action
+    @_domain
+    def issue_forecasts(ctx: Context, as_of_date: str | None = None, wait_seconds: int = 0) -> dict:
         """Issue forecasts now, or for a past as-of date (published as REPLAY, using only data known then)."""
         d = _date(as_of_date, "as_of_date")
-        return action("/api/admin/forecasts/issue", {"asOfDate": d} if d else None, wait_seconds)
+        return _action(ctx, lambda: admin.issue_forecasts(admin.DateIn(asOfDate=d)), wait_seconds)
 
-    @server.tool(annotations=ACTION)
-    def run_strategy_backtest(wait_seconds: int = 0) -> dict:
+    @tool_action
+    @_domain
+    def run_strategy_backtest(ctx: Context, wait_seconds: int = 0) -> dict:
         """Backtest every strategy (classic rules and AI) and store a new strategy-lab run."""
-        return action("/api/admin/strategies/backtest", None, wait_seconds)
+        return _action(ctx, admin.strategy_backtest, wait_seconds)
 
-    @server.tool(annotations=ACTION)
-    def make_ai_decisions(as_of_date: str | None = None, wait_seconds: int = 0) -> dict:
+    @tool_action
+    @_domain
+    def make_ai_decisions(ctx: Context, as_of_date: str | None = None, wait_seconds: int = 0) -> dict:
         """Record the AI strategy's decisions for the latest trading day (or a given date)."""
         d = _date(as_of_date, "as_of_date")
-        return action("/api/admin/strategies/decide", {"asOfDate": d} if d else None, wait_seconds)
+        return _action(ctx, lambda: admin.strategy_decide(admin.DateIn(asOfDate=d)), wait_seconds)
 
-    @server.tool(annotations=ACTION)
-    def run_time_machine(as_of_date: str, wait_seconds: int = 0) -> dict:
-        """Forecast as of a past date with only the data known then, then score the forecasts against what happened
-        5, 10, 21 and 63 trading days later. Read the result with time_machine_runs / time_machine_result."""
-        return action("/api/admin/timemachine", {"asOfDate": _date(as_of_date, "as_of_date")}, wait_seconds)
+    @tool_action
+    @_domain
+    def run_time_machine(ctx: Context, as_of_date: str, wait_seconds: int = 0) -> dict:
+        """Forecast as of a past date with only the data known then, then score the forecasts against what happened 5, 10,
+        21 and 63 trading days later. Read the result with list_time_machine_runs / get_time_machine_run."""
+        d = _date(as_of_date, "as_of_date")
+        return _action(ctx, lambda: admin.time_machine(admin.DateIn(asOfDate=d)), wait_seconds)
 
-    @server.tool(annotations=ACTION)
-    def resolve_outcomes(wait_seconds: int = 0) -> dict:
+    @tool_action
+    @_domain
+    def resolve_outcomes(ctx: Context, wait_seconds: int = 0) -> dict:
         """Score issued forecasts whose 21-trading-day window has closed."""
-        return action("/api/admin/outcomes/resolve", None, wait_seconds)
+        return _action(ctx, admin.resolve_outcomes, wait_seconds)
 
     return server
 
 
-# --------------------------------------------------------------------------- ASGI app
-def _allowed_hosts() -> list[str]:
-    extra = [h.strip() for h in os.environ.get("CIVALPHA_MCP_ALLOWED_HOSTS", "").split(",") if h.strip()]
-    return ["localhost", "localhost:*", "127.0.0.1", "127.0.0.1:*", "mcp", "mcp:*", *extra]
+# --------------------------------------------------------------------------- HTTP mount (inside the API process)
+server = build()
+_running = False
 
 
-class AdminTokenGate:
-    """With CIVALPHA_ADMIN_TOKEN set, MCP requests need the token too (the server itself holds admin rights)."""
+def _security() -> TransportSecuritySettings:
+    s = settings().mcp
+    hosts = ["localhost", "localhost:*", "127.0.0.1", "127.0.0.1:*", *s.allowed_hosts]
+    origins = ["http://localhost", "http://localhost:*", "http://127.0.0.1", "http://127.0.0.1:*", *s.allowed_origins]
+    return TransportSecuritySettings(enable_dns_rebinding_protection=True, allowed_hosts=hosts, allowed_origins=origins)
 
-    def __init__(self, inner, token: str):
-        self.inner, self.token = inner, token
 
+@contextlib.asynccontextmanager
+async def lifespan():
+    """Runs the MCP transport for the lifetime of the API application (a fresh session manager each start: the SDK
+    allows one run per manager)."""
+    global _running
+    server.streamable_http_app(streamable_http_path="/mcp", stateless_http=True, json_response=True, transport_security=_security())
+    async with server.session_manager.run():
+        _running = True
+        try:
+            yield
+        finally:
+            _running = False
+
+
+class _Endpoint:
     async def __call__(self, scope, receive, send):
-        if self.token and scope["type"] == "http":
-            headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
-            presented = headers.get("x-admin-token")
-            auth = headers.get("authorization", "")
-            if presented is None and auth.startswith("Bearer "):
-                presented = auth[7:].strip()
-            if presented is None or not hmac.compare_digest(self.token.encode(), presented.encode()):
-                body = b'{"error":"admin token required (X-Admin-Token header)"}'
-                await send({"type": "http.response.start", "status": 401,
-                            "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]})
-                await send({"type": "http.response.body", "body": body})
-                return
-        await self.inner(scope, receive, send)
+        if not _running:
+            body = b'{"error":"the MCP transport is not running yet"}'
+            await send({"type": "http.response.start", "status": 503,
+                        "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]})
+            await send({"type": "http.response.body", "body": body})
+            return
+        await server.session_manager.handle_request(scope, receive, send)
 
 
-def create_app(server: MCPServer | None = None, token: str | None = None):
-    server = server or build()
-    hosts = _allowed_hosts()
-    inner = server.streamable_http_app(
-        streamable_http_path="/mcp", stateless_http=True, json_response=True,
-        transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=True, allowed_hosts=hosts,
-                                                     allowed_origins=[f"http://{h}" for h in hosts if "*" in h or ":" not in h]))
-    return AdminTokenGate(inner, settings().admin_token if token is None else token)
+def mount(app) -> None:
+    app.router.routes.append(Route("/mcp", _Endpoint(), methods=["GET", "POST", "DELETE"]))
 
 
-app = create_app()
+if __name__ == "__main__":
+    server.run("stdio")    # local operator: python -m civalpha.platform.mcp_server
