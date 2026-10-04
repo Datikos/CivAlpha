@@ -336,3 +336,61 @@ response is `401`. `GET /api/meta` reports `adminTokenRequired`.
 * `POST /api/admin/prices/sync` → job — download prices from the configured provider (`GET /api/meta` → `priceProvider`)
 
 Errors are `{"error": "explanation"}` with status 400 (invalid request) or 404 (unknown id/symbol).
+
+## MCP (Model Context Protocol)
+
+`POST /mcp` (Streamable HTTP, stateless, JSON responses) serves the same data and actions to MCP clients; `GET /mcp`
+opens the optional event stream. Over the UI it is `http://localhost:8088/mcp`. The API rejects a `Host` header that is
+not localhost unless it is listed in `CIVALPHA_MCP_ALLOWED_HOSTS` (DNS-rebinding protection). Management tools follow
+the admin-token rule above: send `X-Admin-Token` (or `Authorization: Bearer`) with the MCP requests.
+
+Tool results are the JSON shapes of the REST endpoints they wrap (also returned as `structuredContent`); a 400/404/503
+error becomes a tool error with the same message.
+
+| Tool | REST equivalent | Notes |
+|---|---|---|
+| `get_status` | `GET /api/meta` | |
+| `list_companies` | `GET /api/companies` | |
+| `get_company(symbol)` | `GET /api/companies/{symbol}` | former tickers resolve |
+| `get_financials(symbol, as_of?)` | `GET /api/companies/{symbol}/financials` | |
+| `get_prices(symbol, from_date?)` | `GET /api/companies/{symbol}/prices` | default: one year |
+| `get_dividends(symbol)` | `GET /api/companies/{symbol}/dividends` | |
+| `list_filings(symbol)` / `get_filing(filing_id)` | `GET /api/companies/{symbol}/filings`, `GET /api/filings/{id}` | |
+| `get_exposures(symbol, as_of?)` | `GET /api/companies/{symbol}/exposures` | |
+| `list_events(category?)` / `get_event(event_id)` | `GET /api/events`, `GET /api/events/{id}` | |
+| `get_current_forecasts` / `get_forecast_history(symbol?, model_kind?, limit?)` / `get_forecast(forecast_id)` | `GET /api/forecasts/*` | |
+| `get_accuracy` | `GET /api/accuracy` | |
+| `get_strategies(include_equity?)` / `get_strategy(key, trade_limit?, include_equity?)` | `GET /api/strategies`, `GET /api/strategies/{key}` | equity curves omitted unless asked |
+| `get_decisions(as_of_date?)` | `GET /api/decisions` | |
+| `list_time_machine_runs` / `get_time_machine_run(run_id, include_paths?)` | `GET /api/timemachine`, `GET /api/timemachine/{id}` | daily paths omitted unless asked |
+| `investment_candidates(as_of_date?, limit?)` | — | see below |
+| `list_jobs` / `get_job(job_id)` | `GET /api/admin/jobs` | admin |
+| `run_pipeline`, `sync_prices`, `ingest_sec_filings(symbol)`, `issue_forecasts(as_of_date?)`, `evaluate_models`, `resolve_outcomes`, `backtest_strategies`, `decide_strategy(as_of_date?)`, `run_time_machine(as_of_date)` | `POST /api/admin/**` | admin; each returns the queued job |
+| `get_universe`, `lookup_company(symbol)` | `GET /api/admin/universe`, `GET /api/admin/universe/enrich` | admin |
+| `add_company(...)`, `edit_company(...)`, `remove_company(...)`, `restore_company(...)`, `change_ticker(...)`, `delete_company(company_id, confirm)` | `/api/admin/universe/companies*` | admin; delete needs `confirm: true` |
+| `add_event(...)` | `POST /api/events` | admin; `source_url` mandatory |
+
+`investment_candidates` returns:
+```json
+{ "asOfDate": "2026-09-30", "decisionDates": ["2026-09-30", "..."], "universeSize": 24,
+  "ranking": "AI decision (ENTER, HOLD, STAY_OUT, EXIT, none) then AI probability, then AUGMENTED forecast probability",
+  "candidates": [{ "symbol": "NVDA", "name": "NVIDIA Corporation", "sector": "Technology", "benchmarkSymbol": "XLK",
+      "latestClose": 182.1, "latestCloseDate": "2026-09-30",
+      "ai": {"action": "ENTER", "probability": 0.61, "entryP": 0.55, "exitP": 0.48, "rank": 1, "weight": 0.125,
+             "topFactors": [{"feature": "mom_12_1", "label": "12-1 month momentum", "kind": "TECHNICAL", "value": 0.42, "median": 0.11, "contribution": 0.031, "direction": "UP"}],
+             "ruleVotesFor": 5, "ruleVotesTotal": 9, "explanation": null},
+      "forecasts": {"AUGMENTED": {"id": 11, "probability": 0.56, "probLow": 0.49, "probHigh": 0.62, "asOfDate": "2026-09-30", "horizonTradingDays": 21, "issuedAt": "..."},
+                    "BASELINE": {"...": "..."}},
+      "dividend": {"status": "NONE", "frequency": null, "trailingYield": null, "indicatedYield": null, "lastExDate": null, "yearsPaid": 0} }],
+  "evidence": {
+    "accuracy": {"evaluationVerdict": "...", "dataCutoff": "2026-09-30", "metrics": {"BASELINE": {"brier": 0.249, "...": 0}, "AUGMENTED": {}},
+                 "comparison": {"brierDiff": -0.004, "ciLow": -0.007, "ciHigh": -0.001}, "liveIssued": {"AUGMENTED": {"issued": 50, "resolved": 24, "brier": 0.24, "hitRate": 0.55}}},
+    "strategyLab": {"runAt": "...", "dataCutoff": "2026-09-30",
+                    "aiStrategy": {"strategyKey": "AI_GBM", "name": "...", "family": "AI", "verdict": "Beats buy-and-hold after costs: NOT supported", "supported": false,
+                                   "metrics": {"years": 5.2, "cagr": 0.07, "sharpe": 0.5, "maxDrawdown": -0.2, "excessReturn": 0.01, "excessCiLow": -0.03, "excessCiHigh": 0.05, "deflatedSharpe": 0.3, "trades": 120, "winRate": 0.48}},
+                    "supported": [], "all": ["...one summary per strategy..."]} },
+  "howToRead": ["..."], "disclaimers": ["Research software. Not investment advice. ...", "..."] }
+```
+Companies without a decision that day have `ai: null` and sort last. Resources: `civalpha://about` (text/markdown) and
+`civalpha://status` (JSON, same as `get_status`). Prompt: `investment_review(symbol?, as_of_date?)`.
+

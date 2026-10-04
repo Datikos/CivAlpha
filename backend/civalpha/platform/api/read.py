@@ -26,6 +26,12 @@ LABELS = {
 }
 AI_KEY = "AI_GBM"
 REFERENCE = "EW_BUY_HOLD"
+DISCLAIMERS = [
+    "Research software. Not investment advice. No brokerage connection or order placement.",
+    "Forecasts are model outputs with stated uncertainty; recorded facts and model estimates are labelled separately.",
+    "Profitability is not claimed unless the cost-adjusted walk-forward evidence supports it.",
+    "Market data use for model training and public display depends on your data licence.",
+]
 
 
 def parse_ts(s: str | None) -> datetime:
@@ -78,12 +84,7 @@ def meta():
         "dataCutoff": value(db().scalar("SELECT max(trade_date) FROM price_bar")),
         "target": "P(21-trading-day total return of the stock > total return of its sector benchmark ETF), "
                   "measured from the close of the as-of date to the close 21 trading days later",
-        "disclaimers": [
-            "Research software. Not investment advice. No brokerage connection or order placement.",
-            "Forecasts are model outputs with stated uncertainty; recorded facts and model estimates are labelled separately.",
-            "Profitability is not claimed unless the cost-adjusted walk-forward evidence supports it.",
-            "Market data use for model training and public display depends on your data licence.",
-        ],
+        "disclaimers": DISCLAIMERS,
     }
 
 

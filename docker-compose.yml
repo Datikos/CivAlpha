@@ -23,6 +23,8 @@ x-app-env: &app-env
   CIVALPHA_PIPELINE_CRON: ${CIVALPHA_PIPELINE_CRON:--}
   CIVALPHA_OUTCOMES_CRON: ${CIVALPHA_OUTCOMES_CRON:--}
   CIVALPHA_SCHEDULE_ZONE: ${CIVALPHA_SCHEDULE_ZONE:-America/New_York}
+  CIVALPHA_MCP_ALLOWED_HOSTS: ${CIVALPHA_MCP_ALLOWED_HOSTS:-}
+  CIVALPHA_MCP_ALLOWED_ORIGINS: ${CIVALPHA_MCP_ALLOWED_ORIGINS:-}
 
 services:
   postgres:
@@ -75,6 +77,24 @@ services:
     mem_limit: 2g
     restart: unless-stopped
 
+  # MCP server for Claude and other MCP clients: http://localhost:8088/mcp (thin client of the api service)
+  mcp:
+    image: civalpha-app:local
+    environment:
+      <<: *app-env
+      CIVALPHA_API_URL: http://api:8000
+    command: ["uvicorn", "civalpha.platform.mcp_server:app", "--host", "0.0.0.0", "--port", "8001"]
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8001), 3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    mem_limit: 256m
+    restart: unless-stopped
+
   frontend:
     build: ./frontend
     ports:
@@ -82,6 +102,8 @@ services:
     depends_on:
       api:
         condition: service_healthy
+      mcp:
+        condition: service_started
     mem_limit: 64m
     restart: unless-stopped
 
