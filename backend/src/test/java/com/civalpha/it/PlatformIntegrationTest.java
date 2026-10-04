@@ -126,6 +126,31 @@ class PlatformIntegrationTest {
     }
 
     @Test
+    void priceCorrectionsAreVersionedNotDropped() throws Exception {
+        String v1 = "symbol,date,open,high,low,close,volume\nXLC,2023-03-01,60,61,59,60.00,100\nXLC,2023-03-02,60,61,59,61.00,100\n";
+        var first = market.importPrices(v1.getBytes(StandardCharsets.UTF_8), "vendor-v1.csv", "vendor", false);
+        assertThat(first.inserted()).isEqualTo(2);
+        String v2 = "symbol,date,open,high,low,close,volume\nXLC,2023-03-01,60,61,59,60.00,100\nXLC,2023-03-02,60,61,59,61.50,120\n";
+        var second = market.importPrices(v2.getBytes(StandardCharsets.UTF_8), "vendor-v2.csv", "vendor", false);
+        assertThat(second.inserted()).isZero();
+        assertThat(second.unchanged()).isEqualTo(1);
+        assertThat(second.revised()).isEqualTo(1);
+        Map<String, Object> bar = jdbc.sql("SELECT close, version FROM price_bar WHERE symbol = 'XLC' AND trade_date = '2023-03-02'").query().singleRow();
+        assertThat(((java.math.BigDecimal) bar.get("close")).doubleValue()).isEqualTo(61.5);
+        assertThat(bar.get("version")).isEqualTo(2);
+        Map<String, Object> old = jdbc.sql("""
+                SELECT r.close, r.version, d1.url AS was_from, d2.url AS replaced_by FROM price_bar_revision r
+                JOIN source_document d1 ON d1.id = r.source_document_id JOIN source_document d2 ON d2.id = r.superseded_by_document_id
+                WHERE r.symbol = 'XLC' AND r.trade_date = '2023-03-02'""").query().singleRow();
+        assertThat(((java.math.BigDecimal) old.get("close")).doubleValue()).isEqualTo(61.0);
+        assertThat(old.get("version")).isEqualTo(1);
+        assertThat(old.get("was_from")).isEqualTo("file://vendor-v1.csv");
+        assertThat(old.get("replaced_by")).isEqualTo("file://vendor-v2.csv");
+        // re-importing the corrected file again changes nothing
+        assertThat(market.importPrices(v2.getBytes(StandardCharsets.UTF_8), "vendor-v2.csv", "vendor", false).revised()).isZero();
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
     void revisedFilingIsVisibleOnlyAfterItsAcceptance() throws Exception {
         Path sec = TMP.resolve("sec");

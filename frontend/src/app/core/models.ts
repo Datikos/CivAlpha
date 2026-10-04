@@ -468,6 +468,10 @@ export interface Evaluation {
     ciLow: number;
     ciHigh: number;
     aucDiff: number | null;
+    /** Folds where the augmented model had the lower Brier score, and a two-sided sign-test p-value. */
+    foldsAugmentedBetter?: number;
+    foldsCompared?: number;
+    signTestP?: number | null;
     note: string | null;
   } | null;
   calibration: Partial<Record<ModelKind, CalibrationBin[]>>;

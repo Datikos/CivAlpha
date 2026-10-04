@@ -87,6 +87,7 @@ def run_walk_forward(panel: pd.DataFrame, calendar: pd.DatetimeIndex, cfg: EvalC
     metrics = {k: classification_metrics(P[P.model_kind == k]) for k in KINDS}
     calib = {k: calibration_bins(P[P.model_kind == k]) for k in KINDS}
     comparison = compare_models(P, cfg)
+    comparison.update(fold_consistency(fold_out))
     trading = {k: trading_simulation(P[P.model_kind == k], cfg) for k in KINDS}
     config = {"horizon": cfg.horizon, "sampleEvery": cfg.sample_every, "embargo": cfg.embargo, "foldLength": cfg.fold_length,
               "minTrainDays": cfg.min_train_days, "costBpsPerSide": cfg.cost_bps_per_side, "signalBand": cfg.signal_band}
@@ -150,6 +151,19 @@ def compare_models(P: pd.DataFrame, cfg: EvalConfig) -> dict:
                     "95% CI from a bootstrap over as-of dates."}
 
 
+def fold_consistency(folds: list[dict]) -> dict:
+    """How often the augmented model beats the baseline fold by fold, with a two-sided sign test (ties dropped)."""
+    diffs = [f["brier"]["AUGMENTED"] - f["brier"]["BASELINE"] for f in folds if len(f.get("brier", {})) == 2]
+    wins = sum(d < 0 for d in diffs)
+    losses = sum(d > 0 for d in diffs)
+    n = wins + losses
+    if n == 0:
+        return {"foldsAugmentedBetter": 0, "foldsCompared": 0, "signTestP": None}
+    k = min(wins, losses)
+    p = min(1.0, 2 * sum(math.comb(n, i) for i in range(k + 1)) / 2 ** n)
+    return {"foldsAugmentedBetter": wins, "foldsCompared": n, "signTestP": p}
+
+
 def trading_simulation(df: pd.DataFrame, cfg: EvalConfig) -> dict:
     """Long/short each stock against its sector benchmark on non-overlapping periods.
 
@@ -192,6 +206,9 @@ def verdict(metrics: dict, comparison: dict, trading: dict, cfg: EvalConfig) -> 
         parts.append("The augmented model is WORSE than the baseline (95% CI excludes zero).")
     else:
         parts.append("The difference between the augmented and baseline models is not statistically distinguishable from zero.")
+    if comparison.get("foldsCompared"):
+        parts.append(f"Augmented better in {comparison['foldsAugmentedBetter']} of {comparison['foldsCompared']} folds "
+                     f"(sign test p = {comparison['signTestP']:.2f}).")
     tr = trading["AUGMENTED"]
     if tr.get("periods", 0) == 0:
         parts.append("No trading periods passed the signal band; no profitability evidence.")

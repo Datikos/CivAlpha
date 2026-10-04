@@ -75,7 +75,7 @@ public class Pipeline {
         ml.generateDemo(dir.toString());
         log.accept("universe: " + universe.load(true) + " companies created");
         var pr = market.importPrices(Files.readAllBytes(dir.resolve("prices.csv")), "demo/prices.csv", "DEMO synthetic CSV", true);
-        log.accept("prices: %d rows, %d inserted, %d unchanged, %d conflicting, unknown symbols %s".formatted(pr.rows(), pr.inserted(), pr.unchanged(), pr.conflicting(), pr.unknownSymbols()));
+        log.accept("prices: %d rows, %d inserted, %d unchanged, %d corrected, unknown symbols %s".formatted(pr.rows(), pr.inserted(), pr.unchanged(), pr.revised(), pr.unknownSymbols()));
         log.accept("corporate actions: " + market.importActions(Files.readAllBytes(dir.resolve("corporate_actions.csv")), "demo/corporate_actions.csv", "DEMO synthetic CSV", true));
         for (JsonNode s : om.readTree(Files.readAllBytes(dir.resolve("macro/series.json")))) {
             macro.upsertSeries(s.path("series_id").asString(), s.path("title").asString(), s.path("units").asString(), s.path("frequency").asString(), "DEMO synthetic");
@@ -135,7 +135,7 @@ public class Pipeline {
                     String name = f.getFileName().toString();
                     if (name.startsWith("prices") && name.endsWith(".csv")) {
                         var r = market.importPrices(Files.readAllBytes(f), name, "CSV import", false);
-                        log.accept("%s: %d inserted, %d conflicting, unknown %s".formatted(name, r.inserted(), r.conflicting(), r.unknownSymbols()));
+                        log.accept("%s: %d inserted, %d corrected, unknown %s".formatted(name, r.inserted(), r.revised(), r.unknownSymbols()));
                     } else if (name.startsWith("corporate_actions") && name.endsWith(".csv")) {
                         log.accept(name + ": " + market.importActions(Files.readAllBytes(f), name, "CSV import", false) + " actions");
                     }

@@ -23,8 +23,8 @@ import java.util.TreeSet;
  * Imports daily bars and corporate actions. Symbols are resolved to companies by date through ticker
  * history (so FB rows before 2022-06-09 attach to the same company as META rows after); configured
  * benchmark ETFs are stored with company_id NULL. Prices are stored raw; adjustments come from the
- * corporate-action table. The first imported value for (symbol, date) is kept; differing re-imports are
- * reported, not silently overwritten.
+ * corporate-action table. Re-importing an identical bar is a no-op; a bar with a different close is a
+ * correction: the old values move to price_bar_revision and the bar becomes version n+1.
  */
 @Service
 public class MarketDataService {
@@ -41,7 +41,7 @@ public class MarketDataService {
         this.universe = universe;
     }
 
-    public record ImportResult(int rows, int inserted, int unchanged, int conflicting, Set<String> unknownSymbols) {}
+    public record ImportResult(int rows, int inserted, int unchanged, int revised, Set<String> unknownSymbols) {}
 
     public ImportResult importPrices(byte[] csv, String fileName, String provider, boolean demo) throws IOException {
         SourceDocument d = docs.store(new DocumentStore.NewDocument("PRICE_FILE", provider, "file://" + fileName, null,
@@ -55,7 +55,8 @@ public class MarketDataService {
                 new MapSqlParameterSource("syms", rows.stream().map(PriceBarRow::symbol).distinct().toList().isEmpty()
                         ? List.of("") : rows.stream().map(PriceBarRow::symbol).distinct().toList()),
                 rs -> { existing.put(rs.getString(1) + "|" + rs.getObject(2, LocalDate.class), rs.getBigDecimal(3)); });
-        int conflicting = 0, unchanged = 0;
+        int unchanged = 0;
+        List<MapSqlParameterSource> corrections = new ArrayList<>();
         Set<String> unknown = new TreeSet<>();
         List<MapSqlParameterSource> batch = new ArrayList<>();
         for (PriceBarRow r : rows) {
@@ -69,21 +70,35 @@ public class MarketDataService {
                 companyId = c.get();
             }
             java.math.BigDecimal prev = existing.get(r.symbol() + "|" + r.date());
-            if (prev != null) {
-                if (prev.compareTo(r.close()) == 0) unchanged++; else conflicting++;
-                continue;
-            }
-            batch.add(new MapSqlParameterSource().addValue("c", companyId).addValue("s", r.symbol()).addValue("d", r.date())
+            MapSqlParameterSource p = new MapSqlParameterSource().addValue("c", companyId).addValue("s", r.symbol()).addValue("d", r.date())
                     .addValue("o", r.open()).addValue("h", r.high()).addValue("l", r.low()).addValue("cl", r.close())
-                    .addValue("v", r.volume()).addValue("p", provider).addValue("doc", d.id()).addValue("demo", demo));
+                    .addValue("v", r.volume()).addValue("p", provider).addValue("doc", d.id()).addValue("demo", demo);
+            if (prev == null) {
+                batch.add(p);
+            } else if (prev.compareTo(r.close()) == 0) {
+                unchanged++;
+            } else {
+                corrections.add(p);
+            }
         }
+        // archive the replaced values, then apply the corrections as a new version of each bar
+        named.batchUpdate("""
+                INSERT INTO price_bar_revision (symbol, trade_date, company_id, version, open, high, low, close, volume, provider,
+                                                source_document_id, ingested_at, superseded_by_document_id, is_demo)
+                SELECT symbol, trade_date, company_id, version, open, high, low, close, volume, provider, source_document_id,
+                       ingested_at, :doc, is_demo FROM price_bar WHERE symbol = :s AND trade_date = :d""",
+                corrections.toArray(MapSqlParameterSource[]::new));
+        named.batchUpdate("""
+                UPDATE price_bar SET open = :o, high = :h, low = :l, close = :cl, volume = :v, provider = :p, source_document_id = :doc,
+                       ingested_at = now(), version = version + 1 WHERE symbol = :s AND trade_date = :d""",
+                corrections.toArray(MapSqlParameterSource[]::new));
         int[] res = named.batchUpdate("""
                 INSERT INTO price_bar (company_id, symbol, trade_date, open, high, low, close, volume, provider, source_document_id, is_demo)
                 VALUES (:c, :s, :d, :o, :h, :l, :cl, :v, :p, :doc, :demo) ON CONFLICT (symbol, trade_date) DO NOTHING""",
                 batch.toArray(MapSqlParameterSource[]::new));
         int inserted = 0;
         for (int x : res) inserted += Math.max(0, x);
-        return new ImportResult(rows.size(), inserted, unchanged, conflicting, unknown);
+        return new ImportResult(rows.size(), inserted, unchanged, corrections.size(), unknown);
     }
 
     public int importActions(byte[] csv, String fileName, String provider, boolean demo) throws IOException {

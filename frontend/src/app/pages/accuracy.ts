@@ -109,6 +109,15 @@ function row<T>(
                     <span class="badge">No significant difference (CI includes 0)</span>
                   }
                 </dd>
+                @if (c.foldsCompared) {
+                  <dt>Folds won</dt>
+                  <dd>
+                    {{ c.foldsAugmentedBetter }} of {{ c.foldsCompared }}
+                    @if (c.signTestP !== null && c.signTestP !== undefined) {
+                      <span class="small muted">(sign test p = {{ c.signTestP | fixed: 2 }})</span>
+                    }
+                  </dd>
+                }
                 @if (c.aucDiff !== null && c.aucDiff !== undefined) {
                   <dt>AUC difference</dt><dd>{{ c.aucDiff | signed: 3 }}</dd>
                 }
