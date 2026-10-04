@@ -90,7 +90,7 @@ writes forecasts.
 | Provenance | `source_document` | URL or accession number, publication time, ingestion time, version, SHA-256, and the stored file path. New bytes for the same locator create version n+1 linked to version n. |
 | Identity | `company`, `ticker_history`, `cik_mapping`, `universe_membership` | All are time-ranged `[valid_from, valid_to)`. FB→META resolves to one company, and a ticker change seen in SEC data closes the old span. |
 | Filings | `filing`, `xbrl_fact`, `filing_passage` | `accepted_at` (EDGAR acceptance time) is the availability time. Each fact keeps its accession, filed date and XBRL dimensions (for example `srt:StatementGeographicalAxis`). Each passage keeps its section, topic, character offsets and extractor version. |
-| Market | `price_bar` (raw closes), `corporate_action` | Adjustments come only from splits and dividends on their ex-dates. |
+| Market | `price_bar` (raw closes, versioned), `price_bar_revision`, `corporate_action` | Adjustments come only from splits and dividends on their ex-dates. |
 | Macro | `macro_series`, `macro_observation` | ALFRED vintages (`realtime_start`/`realtime_end`). |
 | Events | `policy_event`, `event_source`, `event_target`, `policy_actor`, `actor_record` | Every event links to stored evidence. `evidence_status` is `OFFICIAL` or `NEWS_ONLY`. Actor profiles hold documented actions and votes only. |
 | Exposure | `company_exposure` | Each exposure records a target (country, product or interest rate), a channel and a share. `basis` is `DIRECTLY_REPORTED` or `ESTIMATED`, with a confidence and a method (`XBRL_DIMENSION`, `XBRL_RATIO`, `RULE_KEYWORD`, `SECTOR_MAP`, `LLM`). Each one links to a filing plus a passage or fact, and becomes available at `available_at` (the filing's acceptance time). |
@@ -205,8 +205,9 @@ scripts/   demo.sh
 ## Known limitations / next steps
 
 * **Prices.** Only CSV import is built. A licensed vendor adapter is needed for daily updates and a real
-  trading calendar; the calendar currently comes from benchmark bars. Re-imported conflicting prices are
-  reported but not versioned.
+  trading calendar; the calendar currently comes from benchmark bars. Corrections are versioned: the replaced
+  values move to `price_bar_revision`. Features always use the latest corrected prices, while forecasts
+  already issued keep the feature values they were computed with.
 * **SEC.**
   * Older submission pages (`filings.files`) are followed only when they overlap the lookback window.
   * The XBRL instance is located from the filing's `index.json`, falling back to the `*_htm.xml` naming

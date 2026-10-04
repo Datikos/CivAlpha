@@ -66,3 +66,13 @@ def test_event_published_after_cutoff_but_before_live_issue_is_used_with_age_zer
     at_close = pd.DataFrame(build_rows(b, idx, with_labels=False))
     later = pd.DataFrame(build_rows(b, idx, as_of=pit.close_ts(d) + pd.Timedelta(hours=5), with_labels=False))
     pd.testing.assert_frame_equal(at_close[AUGMENTED_FEATURES], later[AUGMENTED_FEATURES])  # same evening re-issue: identical
+
+
+def test_subset_issue_matches_full_cross_section():
+    """Re-issuing for some companies must yield exactly the features they get in a full-universe build."""
+    b = _bundle()
+    idx = int(b.calendar.get_loc(pd.Timestamp("2021-01-29")))
+    full = pd.DataFrame(build_rows(b, idx, with_labels=False)).set_index("company_id")
+    subset = pd.DataFrame(build_rows(b, idx, company_ids=[1, 2], with_labels=False)).set_index("company_id")
+    assert list(subset.index) == [1, 2]
+    pd.testing.assert_frame_equal(subset[AUGMENTED_FEATURES], full.loc[[1, 2], AUGMENTED_FEATURES])

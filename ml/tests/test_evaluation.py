@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from civalpha_ml.evaluation import EvalConfig, calibration_bins, run_walk_forward, trading_simulation, train_mask, walk_forward_folds
+from civalpha_ml.evaluation import EvalConfig, calibration_bins, fold_consistency, run_walk_forward, trading_simulation, train_mask, walk_forward_folds
 from civalpha_ml.features import build_panel
 from civalpha_ml.model import LogitModel
 from helpers import make_bundle
@@ -62,3 +62,11 @@ def test_explanation_contributions_reconstruct_the_probability():
     assert abs(1 / (1 + np.exp(-logit)) - m.predict(X.iloc[[3]])[0]) < 1e-9
     lo, hi = m.predict_interval(X.iloc[[3]])
     assert lo[0] <= hi[0]
+
+
+def test_fold_consistency_sign_test():
+    folds = [{"brier": {"BASELINE": 0.25, "AUGMENTED": a}} for a in (0.24, 0.24, 0.24, 0.24, 0.24, 0.26, 0.25)]
+    c = fold_consistency(folds)
+    assert c["foldsAugmentedBetter"] == 5 and c["foldsCompared"] == 6  # the tie is dropped
+    assert abs(c["signTestP"] - 2 * (1 + 6) / 64) < 1e-12               # P(X<=1), X~Bin(6, 1/2), two-sided
+    assert fold_consistency([])["signTestP"] is None

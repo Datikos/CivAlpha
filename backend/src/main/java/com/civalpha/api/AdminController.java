@@ -99,8 +99,8 @@ public class AdminController {
         String name = file.getOriginalFilename() == null ? "upload.csv" : file.getOriginalFilename();
         return rows.camel(jobs.submit("PRICE_IMPORT", Map.of("file", name), log -> {
             var r = market.importPrices(bytes, name, provider, false);
-            log.accept("%d rows, %d inserted, %d unchanged, %d conflicting (kept first value), unknown symbols %s"
-                    .formatted(r.rows(), r.inserted(), r.unchanged(), r.conflicting(), r.unknownSymbols()));
+            log.accept("%d rows, %d inserted, %d unchanged, %d corrected (previous values archived), unknown symbols %s"
+                    .formatted(r.rows(), r.inserted(), r.unchanged(), r.revised(), r.unknownSymbols()));
         }));
     }
 }

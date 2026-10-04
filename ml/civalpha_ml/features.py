@@ -304,9 +304,9 @@ def build_rows(bundle: DataBundle, idx: int, as_of: pd.Timestamp | None = None, 
     """Feature rows for all universe members at calendar index `idx` (as-of = close of that day unless given)."""
     d = bundle.calendar[idx]
     as_of = pit.close_ts(d) if as_of is None else pit.to_utc(as_of)
+    # Always build every member: cross-sectional references (mean leverage) must not depend on which
+    # companies a caller asked for, or a targeted re-issue would see different features than training did.
     members = pit.members_as_of(bundle.membership, d)
-    if company_ids is not None:
-        members &= set(company_ids)
     comp = bundle.companies.set_index("id")
     rows = []
     for cid in sorted(members):
@@ -335,6 +335,9 @@ def build_rows(bundle: DataBundle, idx: int, as_of: pd.Timestamp | None = None, 
     ref = pit.close_ts(d)
     known = pit.events_as_of(bundle.events, as_of)
     events = list(known[known["published_at"] > ref - pd.Timedelta(days=EVENT_LOOKBACK_DAYS)].itertuples(index=False))
+    if company_ids is not None:
+        wanted = set(company_ids)
+        rows = [r for r in rows if r["company_id"] in wanted]
     for r in rows:
         rel = r["leverage"] - mean_lev if not np.isnan(r["leverage"]) else np.nan
         ef, prov = event_features(bundle, r["company_id"], as_of, rel, with_provenance, events, decay_ref=pit.close_ts(d))
