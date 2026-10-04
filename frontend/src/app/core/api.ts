@@ -44,6 +44,9 @@ export const apiUrl = {
     withQuery(`${BASE}/forecasts/history`, { symbol, modelKind }),
   forecast: (id: number | string) => `${BASE}/forecasts/${enc(String(id))}`,
   accuracy: () => `${BASE}/accuracy`,
+  strategies: () => `${BASE}/strategies`,
+  strategy: (key: string) => `${BASE}/strategies/${enc(key)}`,
+  decisions: (date?: string | null) => withQuery(`${BASE}/decisions`, { date }),
   jobs: () => `${BASE}/admin/jobs`,
   universe: () => `${BASE}/admin/universe`,
 };
@@ -71,6 +74,14 @@ export class ApiService {
 
   issueForecasts(asOfDate?: string | null): Observable<Job> {
     return this.http.post<Job>(`${BASE}/admin/forecasts/issue`, asOfDate ? { asOfDate } : {});
+  }
+
+  backtestStrategies(): Observable<Job> {
+    return this.http.post<Job>(`${BASE}/admin/strategies/backtest`, {});
+  }
+
+  decide(): Observable<Job> {
+    return this.http.post<Job>(`${BASE}/admin/strategies/decide`, {});
   }
 
   resolveOutcomes(): Observable<Job> {

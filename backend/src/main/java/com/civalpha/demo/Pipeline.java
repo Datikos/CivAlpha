@@ -12,6 +12,7 @@ import com.civalpha.market.PriceSyncService;
 import com.civalpha.sec.FilingIngestionService;
 import com.civalpha.sec.SecClient;
 import com.civalpha.sec.SecClientFactory;
+import com.civalpha.strategy.DecisionService;
 import com.civalpha.universe.UniverseService;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
@@ -46,10 +47,12 @@ public class Pipeline {
     private final ForecastService forecasts;
     private final MlClient ml;
     private final PriceSyncService prices;
+    private final DecisionService decisions;
 
     public Pipeline(AppProperties props, JdbcClient jdbc, ObjectMapper om, UniverseService universe, MarketDataService market,
                     MacroService macro, SecClientFactory secFactory, FilingIngestionService filings, EventService events,
-                    LiveEventSources liveEvents, ForecastService forecasts, MlClient ml, PriceSyncService prices) {
+                    LiveEventSources liveEvents, ForecastService forecasts, MlClient ml, PriceSyncService prices,
+                    DecisionService decisions) {
         this.props = props;
         this.jdbc = jdbc;
         this.om = om;
@@ -63,6 +66,7 @@ public class Pipeline {
         this.forecasts = forecasts;
         this.ml = ml;
         this.prices = prices;
+        this.decisions = decisions;
     }
 
     public boolean demoPresent() {
@@ -195,6 +199,13 @@ public class Pipeline {
         var live = forecasts.issueLive(null, "Scheduled issue");
         log.accept("live forecasts: %d created, %d unchanged".formatted(live.created(), live.unchanged()));
         log.accept("outcomes: " + ml.resolveOutcomes());
+        try {
+            log.accept("strategy lab: " + ml.backtestStrategies().get("summary"));
+            var d = decisions.decide(null, log);
+            log.accept("AI decisions: %d stored, %d already existed, %d explained".formatted(d.created(), d.existing(), d.explained()));
+        } catch (RuntimeException e) {
+            log.accept("strategy lab skipped: " + e.getMessage());
+        }
     }
 
     /** Last trading day of each of the previous N months (from benchmark bars). */

@@ -112,6 +112,7 @@ writes forecasts.
 | Events | `policy_event`, `event_source`, `event_target`, `policy_actor`, `actor_record` | Every event links to stored evidence. `evidence_status` is `OFFICIAL` or `NEWS_ONLY`. Actor profiles hold documented actions and votes only. |
 | Exposure | `company_exposure` | Each exposure records a target (country, product or interest rate), a channel and a share. `basis` is `DIRECTLY_REPORTED` or `ESTIMATED`, with a confidence and a method (`XBRL_DIMENSION`, `XBRL_RATIO`, `RULE_KEYWORD`, `SECTOR_MAP`, `LLM`). Each one links to a filing plus a passage or fact, and becomes available at `available_at` (the filing's acceptance time). |
 | Models | `model_version`, `forecast`, `forecast_outcome`, `model_evaluation`, `backtest_prediction` | A database trigger rejects `UPDATE` and `DELETE` on `forecast`. Outcomes are stored in a separate table. |
+| Strategies | `strategy_run`, `strategy_result`, `strategy_trade`, `strategy_decision`, `decision_explanation` | Backtest runs are written by the ML service. The AI's daily decisions are written by the backend and are append-only (trigger); language-model explanations live in their own table. |
 
 How an event is linked to a company:
 **event → target (country, sector, product or cost) → company exposure → supporting filing passage or XBRL fact**.
@@ -151,6 +152,44 @@ How an event is linked to a company:
     are re-issued. A changed result becomes version n+1 with `supersedes_id`; an identical result is skipped.
   * `issue_mode` is `LIVE` or `REPLAY`. `REPLAY` means the forecast was published after its data cutoff, and the
     UI labels it.
+
+## Strategy lab: AI entry/exit vs classic theories
+
+**Data & pipeline → Run strategy backtest** (also the last step of every pipeline run) backtests these long-only
+strategies on the same data, the same out-of-sample window and the same costs. The results are on the **Strategies** page.
+
+| Family | Strategies |
+|---|---|
+| Benchmark | Equal-weight buy & hold (the reference every verdict compares against); sector ETF basket |
+| Trend / momentum | 50/200-day golden cross (with and without a 10% trailing stop); 12-1 month momentum, top 5 monthly; Donchian 55/20 breakout |
+| Mean reversion | RSI(2) pullback above the 200-day average; Bollinger band (20, 2σ) bounce; weekly 5-day reversal, bottom 5 |
+| Fundamental / event | Quality & growth screen on as-filed XBRL data; stepping aside from tariff/rate shocks using SEC-filing exposures |
+| AI | Gradient-boosted trees that combine every rule's indicator with fundamentals, event shocks and macro (with and without a 10% trailing stop) |
+
+* **The AI decides.** The model estimates the probability that a stock beats its sector ETF over the next 10 trading days.
+  It enters when p ≥ 0.55 and the stock ranks in the top 8, and exits when p < 0.48. It is retrained every 63 trading days,
+  walk-forward, only on outcomes known before each refit.
+* **Same rules for everyone.** Every strategy is decided at the close and traded at the next close. Costs are 10 bp per
+  side on the amount actually traded, and idle cash earns the realized fed funds rate. All strategies start in cash on
+  the AI's first out-of-sample day.
+* **An honest verdict.** A strategy counts as beating buy & hold only if all three hold:
+  * it has at least 3 years out of sample;
+  * the 95% block-bootstrap CI of its excess return is above zero;
+  * its **Deflated Sharpe Ratio** is at least 0.95. The DSR corrects for having tried many strategies on the same history.
+* **AI decisions page.** **Data & pipeline → AI decisions** stores today's ENTER / EXIT / HOLD / STAY OUT for every stock
+  and shows the following for each one:
+  * the factors that moved the probability;
+  * which classic rules agree.
+
+  With `CIVALPHA_LLM_PROVIDER=anthropic`, Claude writes a short plain-language explanation for ENTER/EXIT actions. The
+  explanation is stored separately and never changes the decision.
+
+Code: `ml/civalpha_ml/strategies/` (`rules.py`, `ai.py`, `backtest.py`, `stats.py`). `ml/tests/test_strategies.py` covers:
+* look-ahead, for every strategy;
+* the AI's training purge;
+* cost accounting;
+* rule behavior on planted trends and mean reversion;
+* pure noise never producing a "winner".
 
 ## Sources and credentials
 

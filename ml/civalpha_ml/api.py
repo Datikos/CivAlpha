@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from . import service
 from .db import engine_from_env
 from .evaluation import EvalConfig
+from .strategies import service as strategies
 
 logging.basicConfig(level=logging.INFO)
 app = FastAPI(title="CivAlpha ML", version="0.1.0")
@@ -45,6 +46,20 @@ class ForecastRequest(BaseModel):
     n_boot: int = 30
 
 
+class StrategyBacktestRequest(BaseModel):
+    cost_bps_per_side: float = 10.0
+    max_positions: int = 8
+    entry_p: float = 0.55
+    exit_p: float = 0.48
+
+
+class DecideRequest(BaseModel):
+    as_of: str | None = None
+    max_positions: int = 8
+    entry_p: float = 0.55
+    exit_p: float = 0.48
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -75,3 +90,20 @@ def forecasts(req: ForecastRequest):
 @app.post("/outcomes/resolve")
 def outcomes():
     return service.resolve_outcomes(engine())
+
+
+@app.post("/strategies/backtest")
+def strategy_backtest(req: StrategyBacktestRequest):
+    try:
+        return strategies.backtest_strategies(engine(), strategies.LabConfig(**req.model_dump()))
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.post("/strategies/decide")
+def strategy_decide(req: DecideRequest):
+    try:
+        cfg = strategies.LabConfig(max_positions=req.max_positions, entry_p=req.entry_p, exit_p=req.exit_p)
+        return strategies.decide(engine(), req.as_of, cfg)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
