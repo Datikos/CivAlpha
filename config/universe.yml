@@ -36,4 +36,5 @@ companies:
      ticker_history: [{symbol: FB, valid_from: 2012-05-18, valid_to: 2022-06-09}, {symbol: META, valid_from: 2022-06-09}]}
   - {symbol: NFLX,  name: "Netflix, Inc.",               cik: "0001065280", sector: Communication Services, industry: STREAMING,           benchmark: XLC}
   - {symbol: AMGN,  name: "Amgen Inc.",                  cik: "0000318154", sector: Health Care,            industry: BIOTECH,              benchmark: XLV}
+  - {symbol: BDSX,  name: "Biodesix, Inc.",              cik: "0001439725", sector: Health Care,            industry: DIAGNOSTICS,          benchmark: XLV}
   - {symbol: HON,   name: "Honeywell International Inc.",cik: "0000773840", sector: Industrials,            industry: INDUSTRIAL_CONGLOMERATE, benchmark: XLI}
