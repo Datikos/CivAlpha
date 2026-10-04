@@ -69,7 +69,8 @@ public class Pipeline {
     // ------------------------------------------------------------------ demo
     public void loadDemo(Consumer<String> log) throws Exception {
         boolean realData = jdbc.sql("SELECT exists(SELECT 1 FROM company WHERE NOT is_demo)").query(Boolean.class).single();
-        if (realData) throw new IllegalStateException("the database already holds non-demo companies; use a separate database for the demo");
+        if (realData) throw new IllegalStateException("This database already holds real (non-demo) data, so the synthetic demo will not be mixed in. "
+                + "To try the demo, start from an empty database: docker compose down -v && docker compose up -d");
         Path dir = Path.of(props.demo().dataDir());
         log.accept("generating synthetic demo dataset in " + dir + " (ML service)");
         ml.generateDemo(dir.toString());
@@ -170,9 +171,11 @@ public class Pipeline {
 
     private void afterIngest(Consumer<String> log, boolean demo) {
         if (market.latestBenchmarkDate().isEmpty()) {
-            log.accept("no benchmark prices; skipping evaluation and forecasts");
+            log.accept("No benchmark ETF prices are loaded (" + String.join(", ", market.missingBenchmarks())
+                    + "); skipping evaluation and forecasts. Import a prices CSV that includes them.");
             return;
         }
+        market.requireBenchmarks().ifPresent(log);
         log.accept("walk-forward evaluation: " + ml.evaluate().get("verdict"));
         if (demo) {
             List<LocalDate> dates = replayDates(props.demo().replayMonths());

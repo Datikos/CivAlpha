@@ -48,7 +48,8 @@ public class JobService {
                 jdbc.sql("UPDATE pipeline_job SET status = 'SUCCEEDED', finished_at = now() WHERE id = :id").param("id", id).update();
             } catch (Throwable e) {
                 log.error("job {} failed", id, e);
-                logLine.accept("FAILED: " + e);
+                // expected, user-actionable problems carry a readable message; anything else keeps its type
+                logLine.accept("FAILED: " + (e instanceof IllegalStateException && e.getMessage() != null ? e.getMessage() : e.toString()));
                 jdbc.sql("UPDATE pipeline_job SET status = 'FAILED', finished_at = now() WHERE id = :id").param("id", id).update();
             }
         });

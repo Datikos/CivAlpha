@@ -9,6 +9,8 @@ export interface Meta {
   secMode: string;
   /** True when the backend requires X-Admin-Token for admin and write requests. */
   adminTokenRequired?: boolean;
+  /** Configured sector benchmark ETFs with no prices yet; evaluation and forecasts need them. */
+  missingBenchmarks?: string[];
   dataCutoff: string | null;
   target: string;
   disclaimers: string[];

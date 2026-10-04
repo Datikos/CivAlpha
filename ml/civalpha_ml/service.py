@@ -149,8 +149,10 @@ def _payload(bundle, engine, sources, providers, kind, mv_id, model, r, p, lo, h
 
 # --------------------------------------------------------------------------- outcomes
 def resolve_outcomes(engine) -> dict:
-    bundle = db.load_bundle(engine)
     pending = db.unresolved_forecasts(engine)
+    if pending.empty:
+        return {"resolved": 0, "pending": 0}  # nothing to do; works before any prices are loaded
+    bundle = db.load_bundle(engine)
     rows = []
     for f in pending.itertuples(index=False):
         d = pd.Timestamp(f.as_of_date)

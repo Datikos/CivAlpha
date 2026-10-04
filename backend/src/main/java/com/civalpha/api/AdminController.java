@@ -34,10 +34,12 @@ public class AdminController {
     private final FilingIngestionService filings;
     private final SecClientFactory sec;
     private final TickerResolver tickers;
+    private final com.civalpha.universe.UniverseService universe;
     private final Rows rows;
 
     public AdminController(JobService jobs, Pipeline pipeline, ForecastService forecasts, MlClient ml, MarketDataService market,
-                           FilingIngestionService filings, SecClientFactory sec, TickerResolver tickers, Rows rows) {
+                           FilingIngestionService filings, SecClientFactory sec, TickerResolver tickers,
+                           com.civalpha.universe.UniverseService universe, Rows rows) {
         this.jobs = jobs;
         this.pipeline = pipeline;
         this.forecasts = forecasts;
@@ -46,6 +48,7 @@ public class AdminController {
         this.filings = filings;
         this.sec = sec;
         this.tickers = tickers;
+        this.universe = universe;
         this.rows = rows;
     }
 
@@ -66,7 +69,10 @@ public class AdminController {
 
     @PostMapping("/evaluate")
     public Map<String, Object> evaluate() {
-        return rows.camel(jobs.submit("EVALUATE", Map.of(), log -> log.accept(String.valueOf(ml.evaluate().get("verdict")))));
+        return rows.camel(jobs.submit("EVALUATE", Map.of(), log -> {
+            market.requireBenchmarks().ifPresent(log);
+            log.accept(String.valueOf(ml.evaluate().get("verdict")));
+        }));
     }
 
     public record IssueIn(LocalDate asOfDate) {}
@@ -75,6 +81,7 @@ public class AdminController {
     public Map<String, Object> issue(@RequestBody(required = false) IssueIn in) {
         LocalDate d = in == null ? null : in.asOfDate();
         return rows.camel(jobs.submit("ISSUE_FORECASTS", d == null ? Map.of() : Map.of("asOfDate", d.toString()), log -> {
+            market.requireBenchmarks().ifPresent(log);
             var r = d == null ? forecasts.issueLive(null, "Manual issue") : forecasts.issueAt(d, "Manual issue for " + d);
             log.accept("%d created, %d unchanged".formatted(r.created(), r.unchanged()));
         }));
@@ -98,9 +105,18 @@ public class AdminController {
         byte[] bytes = file.getBytes();
         String name = file.getOriginalFilename() == null ? "upload.csv" : file.getOriginalFilename();
         return rows.camel(jobs.submit("PRICE_IMPORT", Map.of("file", name), log -> {
+            if (universe.companies().isEmpty()) {
+                // symbols resolve through the configured universe; on a fresh database load it first
+                log.accept("universe: " + universe.load(false) + " companies created from config/universe.yml");
+            }
             var r = market.importPrices(bytes, name, provider, false);
             log.accept("%d rows, %d inserted, %d unchanged, %d corrected (previous values archived), unknown symbols %s"
                     .formatted(r.rows(), r.inserted(), r.unchanged(), r.revised(), r.unknownSymbols()));
+            var missing = market.missingBenchmarks();
+            if (!missing.isEmpty()) {
+                log.accept("Note: no prices yet for benchmark ETF(s) " + String.join(", ", missing)
+                        + "; import them too before evaluating or issuing forecasts.");
+            }
         }));
     }
 }
