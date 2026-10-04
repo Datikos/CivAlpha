@@ -1,0 +1,113 @@
+import { HttpClient, HttpErrorResponse, HttpParams } from '@angular/common/http';
+import { Injectable, inject } from '@angular/core';
+import { Observable } from 'rxjs';
+import { Job, ModelKind, NewEventRequest, NewEventResponse } from './models';
+
+/** All calls are relative to /api (nginx / dev-server proxy forwards them to the backend). */
+const BASE = '/api';
+const enc = encodeURIComponent;
+
+function withQuery(path: string, query: Record<string, string | null | undefined>): string {
+  let params = new HttpParams();
+  for (const [k, v] of Object.entries(query)) {
+    if (v !== null && v !== undefined && v !== '') params = params.set(k, v);
+  }
+  const qs = params.toString();
+  return qs ? `${path}?${qs}` : path;
+}
+
+/** URL builders for GET endpoints (used with httpResource). */
+export const apiUrl = {
+  meta: () => `${BASE}/meta`,
+  companies: () => `${BASE}/companies`,
+  company: (symbol: string) => `${BASE}/companies/${enc(symbol)}`,
+  prices: (symbol: string, from?: string | null) =>
+    withQuery(`${BASE}/companies/${enc(symbol)}/prices`, { from }),
+  financials: (symbol: string, asOf?: string | null) =>
+    withQuery(`${BASE}/companies/${enc(symbol)}/financials`, { asOf }),
+  filings: (symbol: string) => `${BASE}/companies/${enc(symbol)}/filings`,
+  filing: (id: number | string) => `${BASE}/filings/${enc(String(id))}`,
+  exposures: (symbol: string, asOf?: string | null) =>
+    withQuery(`${BASE}/companies/${enc(symbol)}/exposures`, { asOf }),
+  events: (category?: string | null) => withQuery(`${BASE}/events`, { category }),
+  event: (id: number | string) => `${BASE}/events/${enc(String(id))}`,
+  forecastsCurrent: () => `${BASE}/forecasts/current`,
+  forecastsHistory: (symbol?: string | null, modelKind?: ModelKind | '' | null) =>
+    withQuery(`${BASE}/forecasts/history`, { symbol, modelKind }),
+  forecast: (id: number | string) => `${BASE}/forecasts/${enc(String(id))}`,
+  accuracy: () => `${BASE}/accuracy`,
+  jobs: () => `${BASE}/admin/jobs`,
+};
+
+/** Mutating calls. */
+@Injectable({ providedIn: 'root' })
+export class ApiService {
+  private readonly http = inject(HttpClient);
+
+  createEvent(body: NewEventRequest): Observable<NewEventResponse> {
+    return this.http.post<NewEventResponse>(`${BASE}/events`, body);
+  }
+
+  loadDemo(): Observable<Job> {
+    return this.http.post<Job>(`${BASE}/admin/demo/load`, {});
+  }
+
+  runPipeline(): Observable<Job> {
+    return this.http.post<Job>(`${BASE}/admin/pipeline/run`, {});
+  }
+
+  evaluate(): Observable<Job> {
+    return this.http.post<Job>(`${BASE}/admin/evaluate`, {});
+  }
+
+  issueForecasts(asOfDate?: string | null): Observable<Job> {
+    return this.http.post<Job>(`${BASE}/admin/forecasts/issue`, asOfDate ? { asOfDate } : {});
+  }
+
+  resolveOutcomes(): Observable<Job> {
+    return this.http.post<Job>(`${BASE}/admin/outcomes/resolve`, {});
+  }
+
+  ingestSec(symbol: string): Observable<Job> {
+    return this.http.post<Job>(`${BASE}/admin/sec/ingest`, { symbol });
+  }
+
+  importPrices(file: File): Observable<Job> {
+    const form = new FormData();
+    form.append('file', file, file.name);
+    return this.http.post<Job>(`${BASE}/admin/prices/import`, form);
+  }
+}
+
+/** Human-readable message for an HTTP / resource error. */
+export function errorMessage(err: unknown): string {
+  if (!err) return '';
+  if (err instanceof HttpErrorResponse) {
+    if (err.status === 0) {
+      return 'Cannot reach the CivAlpha API (/api). The backend may be down or still starting.';
+    }
+    const body = err.error as { message?: string; error?: string; detail?: string } | string | null;
+    let detail = '';
+    if (typeof body === 'string') detail = body.length < 300 ? body : '';
+    else if (body) detail = body.message ?? body.detail ?? body.error ?? '';
+    if (err.status === 502 || err.status === 503 || err.status === 504) {
+      return `The CivAlpha backend is unavailable (HTTP ${err.status}). It may be down or still starting.`;
+    }
+    if (err.status === 404) return `Not found (404)${detail ? `: ${detail}` : '.'}`;
+    return `API error ${err.status} ${err.statusText || ''}${detail ? `: ${detail}` : ''}`.trim();
+  }
+  if (err instanceof Error) {
+    const cause = (err as Error & { cause?: unknown }).cause;
+    if (cause) return errorMessage(cause);
+    return err.message;
+  }
+  return String(err);
+}
+
+/**
+ * Safe read of a resource value: `value()` throws while a resource is in the error state,
+ * so computed views go through this helper.
+ */
+export function valueOf<T>(r: { hasValue(): boolean; value(): T }): Exclude<T, undefined> | undefined {
+  return r.hasValue() ? (r.value() as Exclude<T, undefined>) : undefined;
+}

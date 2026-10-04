@@ -1,0 +1,109 @@
+package com.civalpha.market;
+
+import com.civalpha.storage.DocumentStore;
+import com.civalpha.storage.SourceDocument;
+import com.civalpha.universe.TickerResolver;
+import com.civalpha.universe.UniverseService;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.stereotype.Service;
+
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
+
+/**
+ * Imports daily bars and corporate actions. Symbols are resolved to companies by date through ticker
+ * history (so FB rows before 2022-06-09 attach to the same company as META rows after); configured
+ * benchmark ETFs are stored with company_id NULL. Prices are stored raw; adjustments come from the
+ * corporate-action table. The first imported value for (symbol, date) is kept; differing re-imports are
+ * reported, not silently overwritten.
+ */
+@Service
+public class MarketDataService {
+
+    private final NamedParameterJdbcTemplate named;
+    private final DocumentStore docs;
+    private final TickerResolver tickers;
+    private final UniverseService universe;
+
+    public MarketDataService(NamedParameterJdbcTemplate named, DocumentStore docs, TickerResolver tickers, UniverseService universe) {
+        this.named = named;
+        this.docs = docs;
+        this.tickers = tickers;
+        this.universe = universe;
+    }
+
+    public record ImportResult(int rows, int inserted, int unchanged, int conflicting, Set<String> unknownSymbols) {}
+
+    public ImportResult importPrices(byte[] csv, String fileName, String provider, boolean demo) throws IOException {
+        SourceDocument d = docs.store(new DocumentStore.NewDocument("PRICE_FILE", provider, "file://" + fileName, null,
+                "Price file " + fileName, null, "text/csv", csv, demo));
+        List<PriceBarRow> rows = CsvPrices.parseBars(new ByteArrayInputStream(csv));
+        Set<String> benchmarks = universe.benchmarkSymbols();
+        Map<String, List<TickerResolver.Span>> spans = new HashMap<>();
+        for (TickerResolver.Span sp : tickers.allSpans()) spans.computeIfAbsent(sp.symbol().toUpperCase(), k -> new ArrayList<>()).add(sp);
+        Map<String, java.math.BigDecimal> existing = new HashMap<>();
+        named.query("SELECT symbol, trade_date, close FROM price_bar WHERE symbol IN (:syms)",
+                new MapSqlParameterSource("syms", rows.stream().map(PriceBarRow::symbol).distinct().toList().isEmpty()
+                        ? List.of("") : rows.stream().map(PriceBarRow::symbol).distinct().toList()),
+                rs -> { existing.put(rs.getString(1) + "|" + rs.getObject(2, LocalDate.class), rs.getBigDecimal(3)); });
+        int conflicting = 0, unchanged = 0;
+        Set<String> unknown = new TreeSet<>();
+        List<MapSqlParameterSource> batch = new ArrayList<>();
+        for (PriceBarRow r : rows) {
+            Long companyId = null;
+            if (!benchmarks.contains(r.symbol())) {
+                Optional<Long> c = TickerResolver.resolve(spans.getOrDefault(r.symbol(), List.of()), r.date());
+                if (c.isEmpty()) {
+                    unknown.add(r.symbol());
+                    continue;
+                }
+                companyId = c.get();
+            }
+            java.math.BigDecimal prev = existing.get(r.symbol() + "|" + r.date());
+            if (prev != null) {
+                if (prev.compareTo(r.close()) == 0) unchanged++; else conflicting++;
+                continue;
+            }
+            batch.add(new MapSqlParameterSource().addValue("c", companyId).addValue("s", r.symbol()).addValue("d", r.date())
+                    .addValue("o", r.open()).addValue("h", r.high()).addValue("l", r.low()).addValue("cl", r.close())
+                    .addValue("v", r.volume()).addValue("p", provider).addValue("doc", d.id()).addValue("demo", demo));
+        }
+        int[] res = named.batchUpdate("""
+                INSERT INTO price_bar (company_id, symbol, trade_date, open, high, low, close, volume, provider, source_document_id, is_demo)
+                VALUES (:c, :s, :d, :o, :h, :l, :cl, :v, :p, :doc, :demo) ON CONFLICT (symbol, trade_date) DO NOTHING""",
+                batch.toArray(MapSqlParameterSource[]::new));
+        int inserted = 0;
+        for (int x : res) inserted += Math.max(0, x);
+        return new ImportResult(rows.size(), inserted, unchanged, conflicting, unknown);
+    }
+
+    public int importActions(byte[] csv, String fileName, String provider, boolean demo) throws IOException {
+        SourceDocument d = docs.store(new DocumentStore.NewDocument("PRICE_FILE", provider, "file://" + fileName, null,
+                "Corporate actions " + fileName, null, "text/csv", csv, demo));
+        Set<String> benchmarks = universe.benchmarkSymbols();
+        int n = 0;
+        for (CsvPrices.ActionRow a : CsvPrices.parseActions(new ByteArrayInputStream(csv))) {
+            Long companyId = benchmarks.contains(a.symbol()) ? null : tickers.companyAt(a.symbol(), a.exDate()).orElse(null);
+            n += named.update("""
+                    INSERT INTO corporate_action (company_id, symbol, ex_date, action_type, value, announced_at, provider, source_document_id, is_demo)
+                    VALUES (:c, :s, :d, :t, :v, :a, :p, :doc, :demo) ON CONFLICT (symbol, ex_date, action_type) DO NOTHING""",
+                    new MapSqlParameterSource().addValue("c", companyId).addValue("s", a.symbol()).addValue("d", a.exDate())
+                            .addValue("t", a.type()).addValue("v", a.value()).addValue("a", a.announcedAt()).addValue("p", provider)
+                            .addValue("doc", d.id()).addValue("demo", demo));
+        }
+        return n;
+    }
+
+    public Optional<LocalDate> latestBenchmarkDate() {
+        return Optional.ofNullable(named.getJdbcTemplate().queryForObject("SELECT max(trade_date) FROM price_bar WHERE company_id IS NULL", LocalDate.class));
+    }
+}
