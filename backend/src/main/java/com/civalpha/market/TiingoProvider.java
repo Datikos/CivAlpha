@@ -49,6 +49,9 @@ public class TiingoProvider implements PriceProvider {
         HttpResponse<byte[]> r = http.send(HttpRequest.newBuilder(URI.create(base + "&token=" + URLEncoder.encode(token, StandardCharsets.UTF_8)))
                 .timeout(Duration.ofSeconds(30)).header("Content-Type", "application/json").GET().build(), HttpResponse.BodyHandlers.ofByteArray());
         if (r.statusCode() == 404) throw new IllegalArgumentException("unknown symbol at Tiingo: " + symbol);
+        if (r.statusCode() == 429) {
+            throw new RateLimited("Tiingo request limit reached (the free plan allows 50 requests an hour and 1,000 a day)");
+        }
         if (r.statusCode() != 200) throw new IllegalStateException("Tiingo HTTP " + r.statusCode());
         return parse(om, r.body(), symbol.toUpperCase(), base);
     }

@@ -21,6 +21,13 @@ public interface PriceProvider {
     Series fetch(String symbol, LocalDate from, LocalDate to) throws Exception;
 
     /** locator = the request URL with any credential removed (stored as provenance). */
+    /** The provider refused because the account's request quota is used up (HTTP 429); retrying now only wastes quota. */
+    class RateLimited extends IllegalStateException {
+        public RateLimited(String message) {
+            super(message);
+        }
+    }
+
     record Series(List<PriceBarRow> bars, List<CsvPrices.ActionRow> actions, byte[] raw, String contentType, String locator) {}
 
     /** Vendor symbols use '-' for share classes (BRK.B -> BRK-B). */

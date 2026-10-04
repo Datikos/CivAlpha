@@ -155,7 +155,14 @@ public class Pipeline {
         if (prices.enabled() && demoPresent()) {
             log.accept("price provider configured, but this is the demo database: skipping real price download");
         } else if (prices.enabled()) {
-            prices.sync(log);
+            try {
+                prices.sync(log);
+            } catch (IllegalStateException e) {
+                // a refresh failure (rate limit, network) must not block filings, events and models when prices are stored
+                var stored = market.latestBenchmarkDate();
+                if (stored.isEmpty()) throw e;
+                log.accept("price update failed (" + e.getMessage() + "); continuing with stored prices through " + stored.get());
+            }
         } else {
             log.accept("no price provider configured (CIVALPHA_PRICE_PROVIDER); using imported prices only");
         }

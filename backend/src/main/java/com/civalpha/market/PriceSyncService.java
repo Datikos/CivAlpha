@@ -98,12 +98,18 @@ public class PriceSyncService {
         }
         LocalDate to = lastCompletedSession();
         LocalDate start = props.prices().historyStart() == null ? LocalDate.of(2019, 1, 2) : props.prices().historyStart();
-        int failed = 0, inserted = 0, corrected = 0;
+        int failed = 0, inserted = 0, corrected = 0, current = 0;
+        String rateLimit = null;
         List<Target> targets = targets();
         log.accept("price sync from " + p.name() + " for " + targets.size() + " symbols through " + to);
-        for (Target t : targets) {
+        for (int i = 0; i < targets.size(); i++) {
+            Target t = targets.get(i);
             try {
                 LocalDate last = lastBar(t);
+                if (last != null && !last.isBefore(latestWeekday(to))) {
+                    current++; // already has the latest completed session: no request needed
+                    continue;
+                }
                 LocalDate from = last == null ? start : last.minusDays(OVERLAP_DAYS);
                 if (from.isAfter(to)) continue;
                 PriceProvider.Series s = p.fetch(t.symbol(), from, to);
@@ -131,6 +137,13 @@ public class PriceSyncService {
                 corrected += r.revised();
                 log.accept("%s: %d new bars, %d corrected, %d corporate actions".formatted(t.symbol(), r.inserted(), r.revised(), acts));
                 Thread.sleep(300); // be gentle with free endpoints
+            } catch (PriceProvider.RateLimited e) {
+                rateLimit = e.getMessage();
+                int left = targets.size() - i;
+                failed += left;
+                log.accept("%s: %s. Stopping here so the remaining %d symbols do not use up more quota; they update on the next run."
+                        .formatted(t.symbol(), e.getMessage(), left));
+                break;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new IllegalStateException("price sync interrupted", e);
@@ -139,7 +152,11 @@ public class PriceSyncService {
                 log.accept(t.symbol() + ": FAILED " + e.getMessage());
             }
         }
-        log.accept("price sync done: %d symbols, %d failed, %d new bars, %d corrected".formatted(targets.size(), failed, inserted, corrected));
+        log.accept("price sync done: %d symbols, %d already current, %d failed, %d new bars, %d corrected"
+                .formatted(targets.size(), current, failed, inserted, corrected));
+        if (rateLimit != null && failed + current == targets.size() && inserted == 0) {
+            throw new IllegalStateException(rateLimit + "; no prices were updated. Try again later (an hour on the free plan).");
+        }
         if (failed == targets.size() && !targets.isEmpty()) {
             throw new IllegalStateException("price sync failed for every symbol; check network access and the provider settings");
         }
@@ -164,5 +181,11 @@ public class PriceSyncService {
 
     static LocalDate lastCompletedSession(ZonedDateTime nyNow) {
         return nyNow.toLocalTime().isBefore(LocalTime.of(16, 30)) ? nyNow.toLocalDate().minusDays(1) : nyNow.toLocalDate();
+    }
+
+    /** The last Monday-Friday on or before `d`: a Friday bar is current all weekend (holidays still cost one request). */
+    static LocalDate latestWeekday(LocalDate d) {
+        while (d.getDayOfWeek() == java.time.DayOfWeek.SATURDAY || d.getDayOfWeek() == java.time.DayOfWeek.SUNDAY) d = d.minusDays(1);
+        return d;
     }
 }
