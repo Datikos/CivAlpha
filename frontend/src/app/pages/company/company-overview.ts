@@ -145,7 +145,7 @@ const RANGE_DAYS: Record<Range, number> = { '6M': 183, '1Y': 365, '3Y': 3 * 365,
             <div class="fact-block">
               <p class="small" style="margin: 0 0 0.4rem">
                 <span class="badge badge-fact">FILED</span>
-                Fiscal year {{ po.fiscalYearStart }} → {{ po.fiscalYearEnd }} ({{ po.formType ?? '—' }} filed {{ po.filedDate ?? '—' }})
+                12 months {{ po.periodStart }} → {{ po.periodEnd }} ({{ po.formType ?? '—' }} filed {{ po.filedDate ?? '—' }})
                 @if (po.sourceUrl) {
                   · <a [href]="po.sourceUrl" target="_blank" rel="noopener noreferrer">source ↗</a>
                 }

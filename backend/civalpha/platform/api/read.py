@@ -203,7 +203,7 @@ def company_prices(symbol: str, from_: str | None = Query(None, alias="from")):
 
 @router.get("/companies/{symbol}/dividends")
 def company_dividends(symbol: str):
-    """Recorded cash dividends as of the latest close, plus the latest fiscal year's payout as filed."""
+    """Recorded cash dividends as of the latest close, plus the latest 12 months' payout as filed."""
     cid = resolve(symbol)
     last = db().one("SELECT close, trade_date FROM price_bar WHERE company_id = :id ORDER BY trade_date DESC LIMIT 1", id=cid)
     actions = [(a["ex_date"], a["action_type"], a["value"]) for a in db().all(

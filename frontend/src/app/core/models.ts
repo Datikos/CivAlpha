@@ -59,8 +59,9 @@ export interface DividendPayment {
 }
 
 export interface DividendPayout {
-  fiscalYearStart: string | null;
-  fiscalYearEnd: string;
+  /** Latest filed 12-month period: a fiscal year, or trailing twelve months from a 10-Q. */
+  periodStart: string | null;
+  periodEnd: string;
   netIncome: number;
   dividendsPaid: number | null;
   buybacks: number | null;

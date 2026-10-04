@@ -52,6 +52,27 @@ def test_special_dividend_counts_in_trailing_total_but_not_the_schedule():
     assert p["indicatedAnnual"] == pytest.approx(1.0)
 
 
+def test_a_sustained_jump_is_a_raise_not_a_special():
+    acts = quarterly(date(2024, 1, 10), 8, amount=0.01) + quarterly(date(2026, 1, 8), 3, amount=0.25)
+    p = dividend_profile(acts, date(2026, 8, 1), 100.0)
+    assert not any(x["special"] for x in p["payments"])
+    assert p["status"] == "REGULAR" and p["indicatedAnnual"] == pytest.approx(1.0)
+
+
+def test_an_old_special_does_not_break_the_raise_streak():
+    acts = quarterly(date(2021, 1, 10), 20, amount=0.20, step=0.01) + [(date(2022, 12, 28), "CASH_DIVIDEND", 15.0)]
+    p = dividend_profile(acts, date(2025, 11, 1), 40.0)
+    assert [x["exDate"] for x in p["payments"] if x["special"]] == [date(2022, 12, 28)]
+    assert p["yearsRaised"] == 3
+
+
+def test_a_drifting_schedule_counts_one_year_of_regular_payments():
+    acts = [(date(2025, 10, 3), "CASH_DIVIDEND", 0.41)] + [(d, "CASH_DIVIDEND", 0.42) for d in
+                                                           (date(2026, 1, 2), date(2026, 4, 3), date(2026, 7, 3), date(2026, 10, 2))]
+    p = dividend_profile(acts, date(2026, 10, 2), 50.0)
+    assert p["ttmPayments"] == 4 and p["ttmDividends"] == pytest.approx(1.68)
+
+
 def test_dividends_before_a_split_are_restated_per_current_share():
     acts = quarterly(date(2024, 1, 10), 8, amount=1.0)
     acts = [(d, t, v if d < date(2025, 3, 1) else v / 4) for d, t, v in acts] + [(date(2025, 3, 1), "SPLIT", 4.0)]
@@ -80,7 +101,7 @@ def test_payout_uses_the_latest_fiscal_year_with_net_income():
              fy("NetIncomeLoss", 90.0, prev), fy("PaymentsOfDividends", 35.0, prev),
              {**fy("PaymentsOfDividends", 20.0, end), "period_start": end - timedelta(days=180)}]   # year-to-date: ignored
     p = payout_from_facts(facts)
-    assert p["fiscalYearEnd"] == end and p["payoutRatio"] == pytest.approx(0.4) and p["totalPayoutRatio"] == pytest.approx(0.7)
+    assert p["periodEnd"] == end and p["payoutRatio"] == pytest.approx(0.4) and p["totalPayoutRatio"] == pytest.approx(0.7)
 
 
 def test_payout_is_not_meaningful_with_a_loss():

@@ -6,14 +6,15 @@ ex-dates on or before that date. Amounts are expressed per share as of that date
 SPLIT_INFO rows mean the provider already adjusted its history, so they are ignored here.
 
 Classification:
-  - a payment more than SPECIAL_MULTIPLE times the median of the other payments in the lookback is a special dividend;
-    it counts in trailing totals but not in the frequency or the indicated (annualized) dividend
+  - a payment more than SPECIAL_MULTIPLE times the previous ones that the next payment does not sustain is a special
+    dividend; it counts in trailing totals but not in the frequency, the indicated (annualized) dividend or the streaks
   - frequency from the median gap between regular ex-dates in the last FREQUENCY_LOOKBACK_DAYS
   - status: REGULAR while the next payment is not overdue, SUSPENDED once it is, IRREGULAR without a steady schedule,
     NONE when no dividend is recorded
 
-Payout ratio and buybacks come from the latest fiscal-year cash-flow statement as filed with the SEC
-(PaymentsOfDividends* and PaymentsForRepurchaseOfCommonStock against NetIncomeLoss).
+Payout ratio and buybacks come from the latest 12-month period in the cash-flow statement as filed with the SEC
+(PaymentsOfDividends* and PaymentsForRepurchaseOfCommonStock against NetIncomeLoss): usually the fiscal year of a
+10-K, or trailing twelve months when a company also reports them in its 10-Q (Amazon does).
 """
 from __future__ import annotations
 
@@ -97,11 +98,8 @@ def dividend_profile(actions: Iterable[tuple[date, str, float]], as_of: date, cl
     if not divs:
         return out
 
-    recent = [d for d in divs if d["exDate"] > as_of - timedelta(days=FREQUENCY_LOOKBACK_DAYS)]
-    _mark_specials(recent)
-    for d in divs:
-        d.setdefault("special", False)
-    regular_recent = [d for d in recent if not d["special"]]
+    _mark_specials(divs)
+    regular_recent = [d for d in divs if not d["special"] and d["exDate"] > as_of - timedelta(days=FREQUENCY_LOOKBACK_DAYS)]
     gaps = [(b["exDate"] - a["exDate"]).days for a, b in zip(regular_recent, regular_recent[1:])]
     gap = median(gaps) if gaps else None
     frequency, per_year = _frequency(gap)
@@ -111,9 +109,6 @@ def dividend_profile(actions: Iterable[tuple[date, str, float]], as_of: date, cl
     out.update(firstExDate=divs[0]["exDate"], lastExDate=last["exDate"], lastAmount=last["amount"])
     year_start = as_of - timedelta(days=365)
     ttm = [d for d in divs if d["exDate"] > year_start]
-    out["ttmDividends"] = sum(d["amount"] for d in ttm)
-    out["ttmSpecial"] = sum(d["amount"] for d in ttm if d["special"])
-    out["ttmPayments"] = len(ttm)
 
     if per_year is not None and last_regular is not None:
         overdue = last_regular["exDate"] + timedelta(days=max(1.5 * gap, gap + 45))
@@ -123,8 +118,13 @@ def dividend_profile(actions: Iterable[tuple[date, str, float]], as_of: date, cl
             out["status"] = "REGULAR"
             out.update(frequency=frequency, paymentsPerYear=per_year, indicatedAnnual=last_regular["amount"] * per_year,
                        nextExpected=last_regular["exDate"] + timedelta(days=round(gap)))
+            # a schedule drifting by a few days can put five quarterly ex-dates in 365 days: count one year of payments
+            ttm = [d for d in ttm if d["special"]] + [d for d in regular_recent[-per_year:] if d["exDate"] > year_start]
     else:
         out["status"] = "IRREGULAR" if ttm else "SUSPENDED"
+    out["ttmDividends"] = sum(d["amount"] for d in ttm)
+    out["ttmSpecial"] = sum(d["amount"] for d in ttm if d["special"])
+    out["ttmPayments"] = len(ttm)
     if close and close > 0:
         out["trailingYield"] = out["ttmDividends"] / close
         if out["indicatedAnnual"] is not None:
@@ -140,7 +140,7 @@ def dividend_profile(actions: Iterable[tuple[date, str, float]], as_of: date, cl
 
 
 def payout_from_facts(facts: Iterable[dict]) -> dict | None:
-    """Latest fiscal year with net income filed: dividends paid, buybacks and the payout ratio.
+    """Latest 12-month period with net income filed: dividends paid, buybacks and the payout ratio.
 
     `facts`: latest-known us-gaap rows (no dimensions) with concept, value, period_start, period_end and provenance.
     """
@@ -162,7 +162,7 @@ def payout_from_facts(facts: Iterable[dict]) -> dict | None:
     buy_v = None if buy is None else float(buy["value"])
     returned = None if div_v is None and buy_v is None else (div_v or 0.0) + (buy_v or 0.0)
     src = div or ni
-    return {"fiscalYearStart": ni["period_start"], "fiscalYearEnd": end, "netIncome": ni_v, "dividendsPaid": div_v,
+    return {"periodStart": ni["period_start"], "periodEnd": end, "netIncome": ni_v, "dividendsPaid": div_v,
             "buybacks": buy_v, "payoutRatio": div_v / ni_v if div_v is not None and ni_v > 0 else None,
             "totalPayoutRatio": returned / ni_v if returned is not None and ni_v > 0 else None,
             "formType": src.get("form_type"), "filedDate": src.get("filed_date"), "accessionNo": src.get("accession_no"),

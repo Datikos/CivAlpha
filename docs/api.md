@@ -46,7 +46,7 @@ Three kinds of numbers are kept apart everywhere:
   "corporateActions": [{"exDate": "2024-03-01", "type": "CASH_DIVIDEND", "value": 0.5}] }
 ```
 
-`GET /api/companies/{symbol}/dividends` — recorded cash dividends as of the latest close, plus the latest fiscal year's
+`GET /api/companies/{symbol}/dividends` — recorded cash dividends as of the latest close, plus the latest 12 months'
 payout as filed.
 ```json
 { "symbol": "AAPL", "asOf": "2026-09-30", "price": 231.4, "priceDate": "2026-09-30",
@@ -56,20 +56,23 @@ payout as filed.
   "indicatedAnnual": 1.04, "indicatedYield": 0.0045, "yearsPaid": 14, "yearsRaised": 12, "firstExDate": "2012-08-09",
   "annual": [{"year": 2025, "total": 1.02, "payments": 4}],
   "payments": [{"exDate": "2026-08-11", "amount": 0.26, "special": false}],
-  "payout": { "fiscalYearStart": "2024-09-29", "fiscalYearEnd": "2025-09-27", "netIncome": 1.1e11,
+  "payout": { "periodStart": "2024-09-29", "periodEnd": "2025-09-27", "netIncome": 1.1e11,
               "dividendsPaid": 1.5e10, "buybacks": 9.0e10, "payoutRatio": 0.14, "totalPayoutRatio": 0.95,
               "formType": "10-K", "filedDate": "2025-10-31", "accessionNo": "...", "sourceUrl": "https://www.sec.gov/..." } }
 ```
 * `status`: `REGULAR` (steady schedule, next payment not overdue), `IRREGULAR` (paid in the last 12 months without a
   steady schedule), `SUSPENDED` (next payment overdue), `NONE` (no dividend recorded). `frequency` (`MONTHLY`,
   `QUARTERLY`, `SEMIANNUAL`, `ANNUAL`) and the indicated values are set only when `REGULAR`.
-* Amounts are per share as of `asOf` (earlier dividends restated for later splits). A payment more than 2.5× the median
-  of the others is `special`: it counts in `ttmDividends` but not in the schedule or `indicatedAnnual`.
+* Amounts are per share as of `asOf` (earlier dividends restated for later splits). A payment more than 2.5× the
+  previous ones that the next payment does not sustain (a raise is sustained) is `special`: it counts in
+  `ttmDividends` but not in the schedule, `indicatedAnnual` or `yearsRaised`. For a regular payer `ttmDividends` is
+  its last year of regular payments (`paymentsPerYear` of them) plus specials in the last 365 days.
 * `indicatedAnnual` = latest regular payment × payments per year (an estimate); `trailingYield` = `ttmDividends` / price.
 * `yearsPaid` / `yearsRaised`: consecutive calendar years with a dividend / with a higher last regular payment than the
   year before; both are limited by how far back prices were loaded (`firstExDate`).
-* `payout` (null without a filed fiscal-year net income): `PaymentsOfDividendsCommonStock` (else `PaymentsOfDividends`)
-  and `PaymentsForRepurchaseOfCommonStock` from the 10-K cash-flow statement; ratios are null when net income ≤ 0.
+* `payout` (null without a filed 12-month net income): `PaymentsOfDividendsCommonStock` (else `PaymentsOfDividends`)
+  and `PaymentsForRepurchaseOfCommonStock` from the cash-flow statement for the latest filed 12-month period — usually
+  the fiscal year of a 10-K, or trailing twelve months when a 10-Q reports them; ratios are null when net income ≤ 0.
 
 `GET /api/companies/{symbol}/financials?asOf=ISO-timestamp` — point-in-time view: only values filed on/before `asOf` (default now).
 ```json
