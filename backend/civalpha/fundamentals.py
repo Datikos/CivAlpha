@@ -13,6 +13,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from .dividends import PAYOUT_CONCEPTS, payout_ratio_feature
 from .features import REVENUE_CONCEPTS, _d, quarterly_values_records
 
 FUND_FEATURES = ["rev_accel", "sue", "sue_rev", "gross_margin", "op_margin", "op_margin_chg", "net_margin", "rd_intensity",
@@ -36,7 +37,7 @@ FUND_LABELS = {
 }
 # not model inputs: needed to compute market-cap-based features in the daily panel
 PROFILE_KEYS = [f for f in FUND_FEATURES if f not in ("earnings_yield", "sales_yield", "days_since_filing")] + [
-    "ttm_net_income", "ttm_revenue", "shares", "shares_date"]
+    "ttm_net_income", "ttm_revenue", "shares", "shares_date", "payout_ratio"]
 
 SUE_HISTORY = 8
 SUE_MIN_HISTORY = 4
@@ -137,6 +138,9 @@ def profile_from_records(recs) -> dict:
     shares = _latest_instant(recs, "EntityCommonStockSharesOutstanding")
     if shares and shares[1] > 0:
         out["shares"], out["shares_date"] = shares[1], shares[0]
+    out["payout_ratio"] = payout_ratio_feature(
+        {"concept": r[1], "value": r[6], "period_start": _d(r[3]), "period_end": _d(r[4])}
+        for r in recs if r[1] in PAYOUT_CONCEPTS and r[5] == "" and r[0] == "us-gaap" and _d(r[3]) is not None)
     return out
 
 

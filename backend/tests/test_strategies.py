@@ -10,6 +10,7 @@ from civalpha.strategies.panel import MarketPanel
 from civalpha.strategies.rules import rule_strategies
 from civalpha.strategies.service import LabConfig, decisions_at, run_lab
 from helpers import make_bundle
+from civalpha.dividends import DIV_FEATURES
 
 SMALL_AI = AiConfig(min_train_days=150, fold_length=40, min_samples_leaf=20, max_iter=30, max_positions=2)
 
@@ -154,13 +155,46 @@ def test_statistics_on_known_series():
 def test_on_pure_noise_no_strategy_is_declared_a_winner():
     lab = run_lab(make_bundle(n_days=1450, n_companies=5, seed=9), LabConfig(max_positions=2))
     keys = {r["key"] for r in lab["results"]}
-    assert {"EW_BUY_HOLD", "SMA_50_200", "AI_GBM", "AI_GBM_TSTOP10", "QUALITY_GROWTH"} <= keys
+    assert {"EW_BUY_HOLD", "SMA_50_200", "AI_GBM", "AI_GBM_TSTOP10", "QUALITY_GROWTH", "AI_DIV", "DIV_YIELD"} <= keys
+    test = lab["config"]["dividendFeatureTest"]
+    assert test["rows"] > 1000 and test["ciLow"] <= test["brierDiff"] <= test["ciHigh"]
     assert lab["results"][0]["metrics"]["years"] >= 3
     starts = {r["metrics"]["start"] for r in lab["results"]}
     assert len(starts) == 1                                  # every strategy is scored on the same window
     for r in lab["results"]:
         assert "SUPPORTED by" not in r["verdict"], r["key"]
     assert "No strategy beat" in lab["summary"]
+
+
+def _dividends(cal, after_idx=None, boost=1.0):
+    """Quarterly dividends for companies 1 and 2 (2 raises its payment), a 2:1 split of company 1; payments after
+    `after_idx` are multiplied by `boost` and get an extra special one, to test that earlier days never see them."""
+    rows = []
+    for k, i in enumerate(range(20, len(cal), 63)):
+        late = after_idx is not None and i > after_idx
+        rows.append((1, cal[i], "CASH_DIVIDEND", 0.5 * (boost if late else 1.0)))
+        rows.append((2, cal[i], "CASH_DIVIDEND", (0.2 + 0.05 * (k // 4)) * (boost if late else 1.0)))
+    rows.append((1, cal[300], "SPLIT", 2.0))
+    if after_idx is not None:
+        rows.append((2, cal[after_idx + 5], "CASH_DIVIDEND", 9.0))
+    return pd.DataFrame([(c, f"S{c}", d, t, v) for c, d, t, v in rows], columns=["company_id", "symbol", "ex_date", "action_type", "value"])
+
+
+def test_dividend_signals_use_only_dividends_known_at_the_close():
+    i = 380
+    cal = pd.bdate_range("2020-01-01", periods=520)
+    panels = [MarketPanel.from_bundle(make_bundle(n_days=520, seed=4, actions=_dividends(cal, *args))) for args in ((), (i, 3.0))]
+    a, b = (p.dividends() for p in panels)
+    for k in ("div_yield", "div_growth"):
+        pd.testing.assert_frame_equal(a[k].iloc[:i + 1], b[k].iloc[:i + 1])
+        assert not a[k].iloc[i + 10:].equals(b[k].iloc[i + 10:])
+    assert (a["div_yield"][[3, 4]].iloc[200:] == 0).all().all()          # non-payers yield 0
+    assert a["div_growth"][2].iloc[-1] > 0                               # company 2 raised its dividend
+    s = next(x for x in rule_strategies() if x.key == "DIV_YIELD")
+    pd.testing.assert_frame_equal(s.weights(panels[0]).iloc[:i + 1], s.weights(panels[1]).iloc[:i + 1])
+    from civalpha.strategies.ai import dataset
+    d = dataset(panels[0], SMALL_AI)
+    assert set(DIV_FEATURES) <= set(d.columns) and d["div_yield"].notna().any()
 
 
 def test_live_decisions_have_actions_reasons_and_rule_votes():

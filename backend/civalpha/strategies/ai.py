@@ -9,7 +9,9 @@ Inputs per (date, company), all known at close(t):
   * the financial-report profile (fundamentals.py): revenue acceleration, earnings and revenue surprise,
     margins, R&D intensity, profitability, balance sheet, valuation, days since the latest report.
 
-AI_FUND is the same model trained on the report profile alone.
+AI_FUND is the same model trained on the report profile alone; AI_DIV is AI_GBM plus the dividend signals
+(dividends.DIV_FEATURES: trailing yield, change in the regular dividend, filed payout ratio), run side by side so the
+backtest shows whether they add anything.
 
 Label: the stock's total return beats its sector ETF over `horizon` days, entering at the next close
 (t+1 -> t+1+horizon). That outcome is known at close(t+1+horizon), so a model refitted at index R only
@@ -27,6 +29,7 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier
 
+from ..dividends import DIV_FEATURES, DIV_LABELS
 from ..evaluation import EvalConfig, train_mask, walk_forward_folds
 from ..features import AUGMENTED_FEATURES, FEATURE_KIND, FEATURE_LABELS
 from ..fundamentals import FUND_FEATURES, FUND_LABELS
@@ -37,6 +40,7 @@ TECH_FEATURES = ["dist_sma50", "dist_sma200", "rsi2", "rsi14", "boll_z", "donchi
 AI_FEATURES = AUGMENTED_FEATURES + TECH_FEATURES + FUND_FEATURES
 # the reports-only model: what the quarterly/annual filings say, nothing from prices except valuation and recency
 FUND_MODEL_FEATURES = ["rev_yoy", "gm_chg", "leverage"] + FUND_FEATURES
+AI_DIV_FEATURES = AI_FEATURES + DIV_FEATURES
 TECH_LABELS = {
     "dist_sma50": "Distance from 50-day average", "dist_sma200": "Distance from 200-day average",
     "rsi2": "RSI(2)", "rsi14": "RSI(14)", "boll_z": "Bollinger z-score (20-day)",
@@ -45,6 +49,7 @@ TECH_LABELS = {
 }
 AI_KEY = "AI_GBM"
 AI_FUND_KEY = "AI_FUND"
+AI_DIV_KEY = "AI_DIV"
 ALGORITHM = "hist_gradient_boosting"
 CODE_VERSION = "strategy-0.1.0"
 
@@ -69,12 +74,14 @@ class AiConfig:
 
 
 def feature_label(f: str) -> str:
-    return TECH_LABELS.get(f) or FUND_LABELS.get(f) or FEATURE_LABELS.get(f, f)
+    return TECH_LABELS.get(f) or FUND_LABELS.get(f) or DIV_LABELS.get(f) or FEATURE_LABELS.get(f, f)
 
 
 def feature_kind(f: str) -> str:
     if f in TECH_LABELS:
         return "TECHNICAL"
+    if f in DIV_LABELS:
+        return "DIVIDEND"
     return "FUNDAMENTAL" if f in FUND_LABELS else FEATURE_KIND.get(f, "OTHER")
 
 
@@ -102,7 +109,7 @@ def dataset(p: MarketPanel, cfg: AiConfig) -> pd.DataFrame:
     """Long table (idx, company_id, features..., label, fwd_excess). Rows only for members with model features."""
     base = p.features()
     if base.empty:
-        return pd.DataFrame(columns=["idx", "company_id", *AI_FEATURES, "label", "fwd_excess"])
+        return pd.DataFrame(columns=["idx", "company_id", *AI_DIV_FEATURES, "label", "fwd_excess"])
     df = base[["idx", "company_id", *AUGMENTED_FEATURES]].copy()
     cal_pos = df["idx"].to_numpy()
     col_pos = p.px.columns.get_indexer(df["company_id"].to_numpy())
@@ -113,6 +120,9 @@ def dataset(p: MarketPanel, cfg: AiConfig) -> pd.DataFrame:
     fund = p.fundamentals()
     for name in FUND_FEATURES:
         df[name] = fund[name].to_numpy(float)[cal_pos, col_pos]
+    div = p.dividends()
+    for name in DIV_FEATURES:
+        df[name] = div[name].to_numpy(float)[cal_pos, col_pos]
     h = cfg.horizon
     s_fwd = p.px.shift(-(h + 1)) / p.px.shift(-1) - 1.0
     b_fwd = p.bench_px.shift(-(h + 1)) / p.bench_px.shift(-1) - 1.0
@@ -220,7 +230,8 @@ def decide_positions(prob: pd.DataFrame, member: pd.DataFrame, cfg: AiConfig, st
     return pd.DataFrame(W, index=prob.index, columns=prob.columns), pd.DataFrame(A, index=prob.index, columns=prob.columns)
 
 
-def ai_strategies(cfg: AiConfig, weights: pd.DataFrame, fund_weights: pd.DataFrame | None = None) -> list[Strategy]:
+def ai_strategies(cfg: AiConfig, weights: pd.DataFrame, fund_weights: pd.DataFrame | None = None,
+                  div_weights: pd.DataFrame | None = None) -> list[Strategy]:
     desc = dict(entry=f"Model probability ≥ {cfg.entry_p:.2f} that the stock beats its sector ETF over the next "
                       f"{cfg.horizon} days, and among the top {cfg.max_positions}",
                 origin="Gradient-boosted trees over every rule's indicator plus fundamentals, tariff/rate shocks and macro; "
@@ -240,6 +251,12 @@ def ai_strategies(cfg: AiConfig, weights: pd.DataFrame, fund_weights: pd.DataFra
                                    "revenue surprise, margins, balance sheet, valuation and days since the report; "
                                    f"retrained every {cfg.fold_length} trading days on past data only",
                             sizing="WEIGHTS", fn=lambda _p: fund_weights, params={**cfg.params(), "features": FUND_MODEL_FEATURES}))
+    if div_weights is not None:
+        out.append(Strategy(AI_DIV_KEY, "AI", "AI decides + dividend signals",
+                            entry=desc["entry"], exit=f"Probability falls below {cfg.exit_p:.2f}",
+                            origin=desc["origin"] + "; adds dividend yield, the change in the regular dividend (raise, cut, "
+                                   "suspension) and the filed payout ratio, to compare with the same model without them",
+                            sizing="WEIGHTS", fn=lambda _p: div_weights, params={**cfg.params(), "features": AI_DIV_FEATURES}))
     return out
 
 

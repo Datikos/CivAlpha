@@ -23,7 +23,7 @@ def facts_frame(rows):
     return df
 
 
-def make_bundle(n_days=400, n_companies=4, seed=0, events=None, targets=None, exposures=None, facts=None, macro=None):
+def make_bundle(n_days=400, n_companies=4, seed=0, events=None, targets=None, exposures=None, facts=None, macro=None, actions=None):
     rng = np.random.default_rng(seed)
     cal = pd.bdate_range("2020-01-01", periods=n_days)
     bench = pd.DataFrame({"symbol": "BMK", "trade_date": cal, "close": 100 * np.cumprod(1 + rng.normal(0, 0.01, n_days))})
@@ -34,7 +34,7 @@ def make_bundle(n_days=400, n_companies=4, seed=0, events=None, targets=None, ex
     stock = pd.concat(stock)
     companies = pd.DataFrame({"id": range(1, n_companies + 1), "symbol": [f"S{c}" for c in range(1, n_companies + 1)],
                               "benchmark_symbol": "BMK", "industry": "X"})
-    empty_actions = pd.DataFrame(columns=["company_id", "symbol", "ex_date", "action_type", "value"])
+    actions = actions if actions is not None else pd.DataFrame(columns=["company_id", "symbol", "ex_date", "action_type", "value"])
     facts = facts if facts is not None else pd.DataFrame(columns=["company_id", "taxonomy", "concept", "unit", "value", "period_start",
                                                                   "period_end", "dims_key", "accession_no", "accepted_at", "form_type"])
     if len(facts) == 0:
@@ -49,4 +49,4 @@ def make_bundle(n_days=400, n_companies=4, seed=0, events=None, targets=None, ex
     targets = targets if targets is not None else pd.DataFrame(columns=["event_id", "target_type", "target_code", "magnitude"])
     macro = macro if macro is not None else pd.DataFrame(columns=["series_id", "obs_date", "value", "realtime_start", "realtime_end"])
     membership = pd.DataFrame({"company_id": range(1, n_companies + 1), "valid_from": pd.Timestamp("2019-01-01"), "valid_to": pd.NaT})
-    return DataBundle.build(companies, stock, bench, empty_actions, facts, exposures, events, targets, macro, membership)
+    return DataBundle.build(companies, stock, bench, actions, facts, exposures, events, targets, macro, membership)

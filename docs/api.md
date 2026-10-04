@@ -219,7 +219,11 @@ out-of-sample window after costs. Results are sorted by Sharpe.
           "summary": "13 strategies backtested on the same out-of-sample window ...",
           "config": {"costBpsPerSide": 10, "costSensitivityBps": [0, 10, 25], "reference": "EW_BUY_HOLD", "nCandidates": 11,
                      "execution": "...", "verdictRule": "...", "ai": {"horizon": 10, "entry_p": 0.55, "exit_p": 0.48, "...": "..."},
-                     "aiFolds": ["..."]}},
+                     "aiFolds": ["..."],
+                     "dividendFeatureTest": {"rows": 32675, "dates": 1307, "baseRate": 0.49,
+                                             "withoutDividends": {"brier": 0.2579, "logLoss": 0.711, "auc": 0.512},
+                                             "withDividends": {"brier": 0.2578, "logLoss": 0.710, "auc": 0.510},
+                                             "brierDiff": -0.0001, "ciLow": -0.0009, "ciHigh": 0.0008, "note": "..."}}},
   "results": [
     {"strategyKey": "SMA_50_200", "family": "TREND", "name": "Golden cross (50/200-day average)",
      "description": {"entry": "...", "exit": "...", "origin": "...", "sizing": "SLEEVE"}, "params": {"fast": 50, "slow": 200},
@@ -234,7 +238,7 @@ out-of-sample window after costs. Results are sorted by Sharpe.
      "verdict": "Beats buy-and-hold after costs: NOT supported"}
   ] }
 ```
-Families: `BENCHMARK`, `TREND`, `MEAN_REVERSION`, `FUNDAMENTAL`, `EVENT`, `AI`. Report-based strategies are `QUALITY_GROWTH`, `PEAD_SUE`, `VALUE_EY`, `GROSS_PROFIT` and `AI_FUND` (the AI on the financial-report profile only); decision factors of kind `FUNDAMENTAL` come from that profile. `excess*` compare daily net returns with
+Families: `BENCHMARK`, `TREND`, `MEAN_REVERSION`, `FUNDAMENTAL`, `EVENT`, `AI`. Report-based strategies are `QUALITY_GROWTH`, `PEAD_SUE`, `VALUE_EY`, `GROSS_PROFIT` and `AI_FUND` (the AI on the financial-report profile only); decision factors of kind `FUNDAMENTAL` come from that profile. `DIV_YIELD` holds the 5 highest dividend yields; `AI_DIV` is `AI_GBM` plus the dividend signals (yield, change in the regular dividend, filed payout ratio). `config.dividendFeatureTest` compares the out-of-sample forecasts of the two models on the same rows: `brierDiff` = Brier(with) − Brier(without), negative when the dividend signals help, with a 95% CI from a bootstrap over 21-day blocks of dates. `excess*` compare daily net returns with
 `EW_BUY_HOLD` (annualized, 95% stationary block-bootstrap CI). `deflatedSharpe` is the Deflated Sharpe Ratio of that excess,
 deflated for `nCandidates` strategies. A verdict says SUPPORTED only with at least 3 years out of sample, an excess CI above
 0 and DSR ≥ 0.95. `equity` is sampled weekly. `run` is null and `results` empty before the first backtest.

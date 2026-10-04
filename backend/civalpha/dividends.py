@@ -18,6 +18,7 @@ Payout ratio and buybacks come from the latest 12-month period in the cash-flow 
 """
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable
 from datetime import date, timedelta
 from statistics import median
@@ -28,8 +29,11 @@ TOLERANCE = 1e-6
 
 # (upper bound of the median gap in days, label, payments per year)
 FREQUENCIES = [(45, "MONTHLY", 12), (120, "QUARTERLY", 4), (240, "SEMIANNUAL", 2), (400, "ANNUAL", 1)]
-DIVIDEND_CONCEPTS = ["PaymentsOfDividendsCommonStock", "PaymentsOfDividends"]
+# in order of preference; Qualcomm files PaymentsOfOrdinaryDividends
+DIVIDEND_CONCEPTS = ["PaymentsOfDividendsCommonStock", "PaymentsOfDividends", "PaymentsOfOrdinaryDividends"]
 BUYBACK_CONCEPT = "PaymentsForRepurchaseOfCommonStock"
+# net income; ProfitLoss (including noncontrolling interests) when NetIncomeLoss is not filed (Broadcom from FY2025)
+INCOME_CONCEPTS = ["NetIncomeLoss", "ProfitLoss"]
 
 
 def _split_factor_after(splits: list[tuple[date, float]], after: date, upto: date) -> float:
@@ -149,13 +153,23 @@ def payout_from_facts(facts: Iterable[dict]) -> dict | None:
         if f["period_start"] is None or not 350 <= (f["period_end"] - f["period_start"]).days <= 380:
             continue
         annual.setdefault(f["period_end"], {}).setdefault(f["concept"], f)
-    years = [end for end, by in annual.items() if "NetIncomeLoss" in by]
-    if not years:
+
+    def first(by: dict, concepts: list[str]):
+        return next((by[c] for c in concepts if c in by), None)
+
+    with_income = [end for end, by in annual.items() if first(by, INCOME_CONCEPTS)]
+    if not with_income:
         return None
-    end = max(years)
+    end = max(with_income)
+    paid = [e for e, by in annual.items() if first(by, DIVIDEND_CONCEPTS)]
+    if not first(annual[end], DIVIDEND_CONCEPTS) and any(end - timedelta(days=400) < e < end for e in paid):
+        # income filed for a trailing twelve months that the dividends are not (only for fiscal years): take the
+        # latest period with both rather than read "no dividends" into it
+        both = [e for e in with_income if e in paid]
+        end = max(both) if both else end
     by = annual[end]
-    ni = by["NetIncomeLoss"]
-    div = next((by[c] for c in DIVIDEND_CONCEPTS if c in by), None)
+    ni = first(by, INCOME_CONCEPTS)
+    div = first(by, DIVIDEND_CONCEPTS)
     buy = by.get(BUYBACK_CONCEPT)
     ni_v = float(ni["value"])
     div_v = None if div is None else float(div["value"])
@@ -167,3 +181,75 @@ def payout_from_facts(facts: Iterable[dict]) -> dict | None:
             "totalPayoutRatio": returned / ni_v if returned is not None and ni_v > 0 else None,
             "formType": src.get("form_type"), "filedDate": src.get("filed_date"), "accessionNo": src.get("accession_no"),
             "sourceUrl": src.get("source_url")}
+
+
+# --------------------------------------------------------------------------- model features
+DIV_FEATURES = ["div_yield", "div_growth", "payout_ratio"]
+DIV_LABELS = {
+    "div_yield": "Dividend yield (cash dividends of the last 12 months / close)",
+    "div_growth": "Latest regular dividend vs a year earlier (log change; suspended = −1)",
+    "payout_ratio": "Dividends paid / net income, latest filed 12 months",
+}
+GROWTH_CAP = 1.0
+PAYOUT_CAP = 3.0
+PAYOUT_CONCEPTS = frozenset({*INCOME_CONCEPTS, *DIVIDEND_CONCEPTS})
+
+
+def dividend_growth(profile: dict) -> float:
+    """Log change of the latest regular payment vs the regular payment about a year before it (capped at ±1).
+
+    A suspended dividend counts as the full cut (−1); without a payment a year earlier (no dividend, or one that
+    started less than a year ago) it is undefined (NaN)."""
+    if profile["status"] == "SUSPENDED":
+        return -GROWTH_CAP
+    regular = [d for d in reversed(profile["payments"]) if not d["special"]]   # payments are newest first
+    if not regular:
+        return math.nan
+    last = regular[-1]
+    prior = [d for d in regular if last["exDate"] - timedelta(days=400) <= d["exDate"] <= last["exDate"] - timedelta(days=300)]
+    if not prior or prior[-1]["amount"] <= 0:
+        return math.nan
+    return max(-GROWTH_CAP, min(GROWTH_CAP, math.log(last["amount"] / prior[-1]["amount"])))
+
+
+def payout_ratio_feature(facts: Iterable[dict]) -> float:
+    """Payout ratio of the latest filed 12 months for the model: 0 when net income is positive and no dividend
+    was filed, NaN with a loss (not meaningful), capped at PAYOUT_CAP."""
+    p = payout_from_facts(facts)
+    if p is None or p["netIncome"] <= 0:
+        return math.nan
+    return 0.0 if p["dividendsPaid"] is None else min(PAYOUT_CAP, max(0.0, p["payoutRatio"]))
+
+
+REFRESH_DAYS = 5
+
+
+def daily_dividend_features(actions: list[tuple[date, str, float]], calendar: list[date], close) -> dict[str, list[float]]:
+    """div_yield and div_growth for each calendar day, from the dividends with an ex-date on or before that day (known
+    at its close). `close`: price per share of each day in the same share basis as the provider's dividends.
+
+    The profile is recomputed on every ex-date or split and every REFRESH_DAYS trading days in between, and carried
+    forward otherwise (a dividend leaving the 12-month window or turning overdue shows up a few days late); it only
+    ever uses earlier data. The yield divides by each day's own close."""
+    actions = sorted(actions)
+    divs = [a[0] for a in actions if a[1] == "CASH_DIVIDEND"]
+    events = {a[0] for a in actions}
+    n = len(calendar)
+    yld, growth = [math.nan] * n, [math.nan] * n
+    ttm, g, age = 0.0, math.nan, REFRESH_DAYS
+    prev = None
+    for i, d in enumerate(calendar):
+        c = close[i]
+        priced = c is not None and not math.isnan(c) and c > 0
+        if not divs or d < divs[0]:
+            yld[i] = 0.0 if priced else math.nan
+            prev = d
+            continue
+        if age >= REFRESH_DAYS or any(prev is None or prev < e <= d for e in events):
+            p = dividend_profile(actions, d, None)
+            ttm, g, age = p["ttmDividends"], dividend_growth(p), 0
+        age += 1
+        prev = d
+        yld[i] = ttm / float(c) if priced else math.nan
+        growth[i] = g
+    return {"div_yield": yld, "div_growth": growth}

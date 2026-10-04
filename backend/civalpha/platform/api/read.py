@@ -6,7 +6,7 @@ from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Query, Response
 
-from ...dividends import BUYBACK_CONCEPT, DIVIDEND_CONCEPTS, dividend_profile, payout_from_facts
+from ...dividends import BUYBACK_CONCEPT, PAYOUT_CONCEPTS, dividend_profile, payout_from_facts
 from ..errors import BadRequest, NotFound
 from ..llm import provider
 from ..market import MarketDataService
@@ -210,7 +210,7 @@ def company_dividends(symbol: str):
         "SELECT ex_date, action_type, value FROM corporate_action WHERE company_id = :id AND action_type IN ('CASH_DIVIDEND', 'SPLIT')",
         id=cid)]
     p = dividend_profile(actions, last["trade_date"] if last else date.today(), float(last["close"]) if last else None)
-    wanted = {"NetIncomeLoss", BUYBACK_CONCEPT, *DIVIDEND_CONCEPTS}
+    wanted = PAYOUT_CONCEPTS | {BUYBACK_CONCEPT}
     payout = payout_from_facts(f for f in pit_facts(cid, datetime.now(timezone.utc), True) if f["concept"] in wanted)
     p["payout"] = None if payout is None else {k: value(v) for k, v in payout.items()}
     p["symbol"] = TickerResolver().current_symbol(cid)

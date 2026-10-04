@@ -108,6 +108,10 @@ def _gross_profitability(p: MarketPanel, top: int = 5) -> pd.DataFrame:
     return _top_by(p, p.fundamentals()["gp_assets"], top)
 
 
+def _dividend_yield(p: MarketPanel, top: int = 5) -> pd.DataFrame:
+    return _top_by(p, p.dividends()["div_yield"], top, require_positive=True)
+
+
 def _event_avoid(p: MarketPanel, trade_threshold: float = 0.03, rate_threshold: float = 0.01) -> pd.DataFrame:
     """Hold every member, except while a recent official tariff or rate decision hurts it more than a threshold.
 
@@ -168,6 +172,11 @@ def rule_strategies() -> list[Strategy]:
                  "Monthly: buy the 5 stocks with the highest gross profit (last 4 quarters) per dollar of assets",
                  "Sold at the next monthly rebalance if no longer in the top 5",
                  "Gross profitability premium (Novy-Marx 2013)", "EQUAL", _gross_profitability, {"top": 5, "rebalance": "monthly"}),
+        Strategy("DIV_YIELD", "FUNDAMENTAL", "Dividend yield (top 5)",
+                 "Monthly: buy the 5 stocks with the highest dividend yield (cash dividends with an ex-date in the last "
+                 "12 months / close)", "Sold at the next monthly rebalance if no longer in the top 5",
+                 "High-dividend-yield investing (dividend yield and returns: Litzenberger & Ramaswamy 1979)",
+                 "EQUAL", _dividend_yield, {"top": 5, "rebalance": "monthly"}),
         Strategy("EVENT_AVOID", "EVENT", "Avoid tariff / rate-shock stocks",
                  "Own every member", "Step aside while a recent official tariff or rate decision hits the company "
                  "(trade shock < −0.03 or rate shock < −0.01); return once it fades",

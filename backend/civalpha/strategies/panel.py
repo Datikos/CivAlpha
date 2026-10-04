@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 from .. import pit
+from ..dividends import daily_dividend_features
 from ..features import MIN_HISTORY, DataBundle, build_rows
 from ..fundamentals import FUND_FEATURES, PROFILE_KEYS
 
@@ -32,6 +33,7 @@ class MarketPanel:
     benchmark_of: dict[int, str]
     _features: pd.DataFrame | None = field(default=None, repr=False)
     _fund: dict | None = field(default=None, repr=False)
+    _div: dict | None = field(default=None, repr=False)
 
     @staticmethod
     def from_bundle(bundle: DataBundle) -> "MarketPanel":
@@ -99,13 +101,20 @@ class MarketPanel:
             self._fund = _fundamental_matrices(self)
         return self._fund
 
+    def dividends(self) -> dict[str, pd.DataFrame]:
+        """Dividend signals at each close (date x company): div_yield and div_growth from the cash dividends with an
+        ex-date on or before that day (dividends.daily_dividend_features), payout_ratio as filed. Cached on the panel."""
+        if self._div is None:
+            self._div = _dividend_matrices(self)
+        return self._div
+
 
 def _fundamental_matrices(p: "MarketPanel") -> dict[str, pd.DataFrame]:
     cal = p.calendar
     cids = list(p.px.columns)
     T, N = len(cal), len(cids)
     cal_ns = np.array([pit.close_ts(d).value for d in cal], dtype=np.int64)
-    mats = {k: np.full((T, N), np.nan) for k in FUND_FEATURES}
+    mats = {k: np.full((T, N), np.nan) for k in [*FUND_FEATURES, "payout_ratio"]}
     new = np.zeros((T, N), dtype=bool)
     actions = p.bundle.actions
     for j, c in enumerate(cids):
@@ -117,7 +126,7 @@ def _fundamental_matrices(p: "MarketPanel") -> dict[str, pd.DataFrame]:
         si = idx[ok]
         vals = {k: np.array([s.get(k, np.nan) if s.get(k) is not None else np.nan for s in snaps], dtype=float)
                 for k in PROFILE_KEYS if k != "shares_date"}
-        for k in FUND_FEATURES:
+        for k in mats:
             if k in vals:
                 mats[k][ok, j] = vals[k][si]
         mats["days_since_filing"][ok, j] = (cal_ns[ok] - times[si]) / 86_400e9
@@ -146,6 +155,24 @@ def _fundamental_matrices(p: "MarketPanel") -> dict[str, pd.DataFrame]:
         mats["sales_yield"][~ok, j] = np.nan
     out = {k: pd.DataFrame(v, index=cal, columns=cids) for k, v in mats.items()}
     out["new_filing"] = pd.DataFrame(new, index=cal, columns=cids)
+    return out
+
+
+def _dividend_matrices(p: "MarketPanel") -> dict[str, pd.DataFrame]:
+    cal = p.calendar
+    days = [d.date() for d in cal]
+    acts = p.bundle.actions
+    out = {k: pd.DataFrame(np.nan, index=cal, columns=p.px.columns) for k in ("div_yield", "div_growth")}
+    for c in p.px.columns:
+        close = p.bundle.close.get(c)
+        if close is None:
+            continue
+        a = acts[(acts["company_id"] == c) & acts["action_type"].isin(["CASH_DIVIDEND", "SPLIT"])] if len(acts) else acts
+        rows = [(pd.Timestamp(d).date(), t, float(v)) for d, t, v in zip(a["ex_date"], a["action_type"], a["value"])] if len(a) else []
+        f = daily_dividend_features(rows, days, close)
+        for k, v in f.items():
+            out[k][c] = v
+    out["payout_ratio"] = p.fundamentals()["payout_ratio"]
     return out
 
 

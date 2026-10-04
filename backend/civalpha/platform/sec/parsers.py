@@ -170,7 +170,8 @@ CONCEPTS = frozenset({
     "GrossProfit", "OperatingIncomeLoss", "NetIncomeLoss", "ResearchAndDevelopmentExpense", "InterestExpense",
     "Assets", "Liabilities", "LongTermDebtNoncurrent", "LongTermDebt", "CashAndCashEquivalentsAtCarryingValue",
     "EarningsPerShareDiluted", "EntityCommonStockSharesOutstanding",
-    "PaymentsOfDividends", "PaymentsOfDividendsCommonStock", "PaymentsForRepurchaseOfCommonStock"})
+    "PaymentsOfDividends", "PaymentsOfDividendsCommonStock", "PaymentsOfOrdinaryDividends", "PaymentsForRepurchaseOfCommonStock",
+    "ProfitLoss"})
 
 
 def parse_company_facts(b: bytes, concepts: set[str] | frozenset[str] | None) -> list[FactRow]:

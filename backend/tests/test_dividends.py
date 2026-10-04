@@ -3,7 +3,10 @@ from datetime import date, timedelta
 
 import pytest
 
-from civalpha.dividends import dividend_profile, payout_from_facts
+import math
+
+from civalpha.dividends import (daily_dividend_features, dividend_growth, dividend_profile, payout_from_facts,
+                                payout_ratio_feature)
 
 
 def quarterly(first: date, n: int, amount: float = 0.25, step: float = 0.0):
@@ -109,3 +112,54 @@ def test_payout_is_not_meaningful_with_a_loss():
     p = payout_from_facts([fy("NetIncomeLoss", -5.0, end), fy("PaymentsOfDividends", 2.0, end)])
     assert p["payoutRatio"] is None and p["dividendsPaid"] == 2.0
     assert payout_from_facts([fy("PaymentsOfDividends", 2.0, end)]) is None
+
+
+def test_payout_falls_back_to_profit_loss_and_ordinary_dividends():
+    end = date(2025, 11, 2)
+    facts = [fy("NetIncomeLoss", 5.0, end - timedelta(days=364)), fy("PaymentsOfDividends", 9.0, end - timedelta(days=364)),
+             fy("ProfitLoss", 20.0, end), fy("PaymentsOfOrdinaryDividends", 10.0, end)]
+    p = payout_from_facts(facts)
+    assert p["periodEnd"] == end and p["netIncome"] == 20.0 and p["payoutRatio"] == pytest.approx(0.5)
+
+
+def test_trailing_twelve_month_income_is_not_read_as_no_dividends():
+    fy_end, ttm_end = date(2025, 12, 31), date(2026, 6, 30)
+    facts = [fy("NetIncomeLoss", 100.0, fy_end), fy("PaymentsOfDividends", 30.0, fy_end), fy("NetIncomeLoss", 120.0, ttm_end, "10-Q")]
+    assert payout_from_facts(facts)["periodEnd"] == fy_end
+    # a company that has never filed dividends takes its latest 12 months
+    assert payout_from_facts(facts[2:])["periodEnd"] == ttm_end
+
+
+def test_payout_feature_is_zero_without_dividends_and_nan_with_a_loss():
+    end = date(2025, 12, 31)
+    assert payout_ratio_feature([fy("NetIncomeLoss", 50.0, end)]) == 0.0
+    assert math.isnan(payout_ratio_feature([fy("NetIncomeLoss", -5.0, end), fy("PaymentsOfDividends", 2.0, end)]))
+    assert payout_ratio_feature([fy("NetIncomeLoss", 1.0, end), fy("PaymentsOfDividends", 9.0, end)]) == 3.0   # capped
+    assert math.isnan(payout_ratio_feature([]))
+
+
+def test_dividend_growth_from_raise_cut_and_suspension():
+    raised = dividend_profile(quarterly(date(2023, 1, 10), 12, amount=0.20, step=0.02), date(2025, 11, 1), 40.0)
+    assert dividend_growth(raised) == pytest.approx(math.log(0.24 / 0.22))
+    cut = quarterly(date(2023, 1, 10), 8) + quarterly(date(2025, 1, 6), 4, amount=0.10)
+    assert dividend_growth(dividend_profile(cut, date(2025, 11, 1), 40.0)) == pytest.approx(math.log(0.10 / 0.25))
+    assert dividend_growth(dividend_profile(quarterly(date(2022, 1, 10), 8), date(2024, 6, 1), 40.0)) == -1.0
+    assert math.isnan(dividend_growth(dividend_profile(quarterly(date(2025, 3, 10), 3), date(2025, 11, 1), 40.0)))
+    assert math.isnan(dividend_growth(dividend_profile([], date(2025, 11, 1), 40.0)))
+
+
+def test_daily_features_match_the_profile_and_ignore_later_dividends():
+    days = [date(2024, 1, 1) + timedelta(days=k) for k in range(700) if (date(2024, 1, 1) + timedelta(days=k)).weekday() < 5]
+    close = [50.0] * len(days)
+    acts = quarterly(date(2024, 2, 5), 7)
+    f = daily_dividend_features(acts, days, close)
+    assert f["div_yield"][0] == 0.0 and math.isnan(f["div_growth"][0])     # before the first dividend
+    ex_days = [days.index(a[0]) for a in acts if a[0] in days]
+    assert len(ex_days) >= 5
+    for i in ex_days:                                                      # recomputed on every ex-date
+        assert f["div_yield"][i] == pytest.approx(dividend_profile(acts, days[i], 50.0)["trailingYield"])
+        assert f["div_yield"][i + 3] == f["div_yield"][i]                  # carried forward between refreshes
+    cut = 300
+    later = [a for a in acts if a[0] <= days[cut]] + [(days[cut] + timedelta(days=30), "CASH_DIVIDEND", 5.0)]
+    g = daily_dividend_features(later, days, close)
+    assert f["div_yield"][:cut + 1] == g["div_yield"][:cut + 1]

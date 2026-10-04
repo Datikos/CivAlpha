@@ -7,11 +7,14 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from sklearn.metrics import roc_auc_score
+
 from .. import db, pit
+from ..evaluation import brier, log_loss
 from ..features import DataBundle
 from . import backtest, stats
-from .ai import (AI_FEATURES, AI_KEY, FUND_MODEL_FEATURES, ALGORITHM, CODE_VERSION, AiConfig, ai_strategies, dataset, decide_positions, explain,
-                 new_model, walk_forward_probabilities)
+from .ai import (AI_DIV_FEATURES, AI_FEATURES, AI_KEY, FUND_MODEL_FEATURES, ALGORITHM, CODE_VERSION, AiConfig, ai_strategies, dataset,
+                 decide_positions, explain, new_model, walk_forward_probabilities)
 from .base import Strategy
 from .panel import MarketPanel
 from .rules import rule_strategies, rule_votes
@@ -43,7 +46,10 @@ def run_lab(bundle: DataBundle, cfg: LabConfig) -> dict:
     ai_w, _ = decide_positions(wf["prob"], panel.member, ai_cfg, start_idx=oos)
     wf_fund = walk_forward_probabilities(panel, ai_cfg, data, features=FUND_MODEL_FEATURES)
     fund_w, _ = decide_positions(wf_fund["prob"], panel.member, ai_cfg, start_idx=oos)
-    strategies = rule_strategies() + ai_strategies(ai_cfg, ai_w, fund_w)
+    wf_div = walk_forward_probabilities(panel, ai_cfg, data, features=AI_DIV_FEATURES)
+    div_w, _ = decide_positions(wf_div["prob"], panel.member, ai_cfg, start_idx=oos)
+    feature_test = compare_forecasts(panel, data, wf["prob"], wf_div["prob"])
+    strategies = rule_strategies() + ai_strategies(ai_cfg, ai_w, fund_w, div_w)
     start = oos + 1  # first decision is at close(oos), first trade at close(oos + 1)
     if start >= len(panel.calendar) - 1:
         raise ValueError("not enough out-of-sample history to backtest strategies")
@@ -83,12 +89,13 @@ def run_lab(bundle: DataBundle, cfg: LabConfig) -> dict:
     results.sort(key=lambda x: -(x["metrics"]["sharpe"] if np.isfinite(x["metrics"]["sharpe"]) else -1e9))
     config = {"costBpsPerSide": cfg.cost_bps_per_side, "costSensitivityBps": list(COST_SENSITIVITY_BPS),
               "reference": REFERENCE, "nCandidates": len(candidates), "ai": ai_cfg.params(), "aiFolds": wf["folds"],
+              "dividendFeatureTest": feature_test,
               "execution": "Decided at the close, traded at the next close; long-only; idle cash earns realized FEDFUNDS",
               "verdictRule": f"SUPPORTED only if >= {stats.MIN_YEARS:g} years out of sample, the 95% CI of the excess return over "
                              f"{REFERENCE} is above 0, and the Deflated Sharpe Ratio (deflated for {len(candidates)} strategies) "
                              f">= {stats.DSR_LEVEL}"}
     return {"oosStart": panel.calendar[start].date(), "dataCutoff": panel.calendar[-1].date(), "config": config,
-            "results": results, "summary": _summary(results, cfg, len(candidates))}
+            "results": results, "summary": _summary(results, cfg, len(candidates), feature_test)}
 
 
 def _trade_labels(s: Strategy, cfg: AiConfig) -> tuple[str, str]:
@@ -99,7 +106,43 @@ def _trade_labels(s: Strategy, cfg: AiConfig) -> tuple[str, str]:
     return "Entry rule", "Exit rule"
 
 
-def _summary(results: list[dict], cfg: LabConfig, n: int) -> str:
+def compare_forecasts(panel: MarketPanel, data: pd.DataFrame, without: pd.DataFrame, with_: pd.DataFrame,
+                      block: int = 21, n_boot: int = 1000, seed: int = 11) -> dict:
+    """Out-of-sample forecast quality of the AI with and without the dividend signals on the same (day, company) rows:
+    those both models scored and whose outcome is known. Lower Brier / log loss and higher AUC are better.
+
+    brierDiff = Brier(with) - Brier(without), negative when the dividend signals help. Its 95% CI resamples blocks of
+    `block` consecutive dates, because forecasts on neighbouring days share most of their outcome window."""
+    rows = data[data["label"].notna()]
+    ci = panel.px.columns.get_indexer(rows["company_id"].to_numpy())
+    ri = rows["idx"].to_numpy()
+    a, b = without.to_numpy(float)[ri, ci], with_.to_numpy(float)[ri, ci]
+    ok = np.isfinite(a) & np.isfinite(b)
+    a, b, ri = a[ok], b[ok], ri[ok]
+    y = rows["label"].to_numpy(float)[ok]
+    if len(y) == 0 or len(np.unique(y)) < 2:
+        return {"rows": int(len(y))}
+
+    def scores(p: np.ndarray) -> dict:
+        return {"brier": brier(p, y), "logLoss": log_loss(p, y), "auc": float(roc_auc_score(y, p))}
+
+    d = (b - y) ** 2 - (a - y) ** 2
+    dates = np.unique(ri)
+    per_date = pd.Series(d).groupby(ri).agg(["sum", "count"]).reindex(dates)
+    s, c = per_date["sum"].to_numpy(), per_date["count"].to_numpy()
+    rng = np.random.default_rng(seed)
+    n_blocks = max(1, len(dates) // block)
+    starts = rng.integers(0, max(1, len(dates) - block + 1), size=(n_boot, n_blocks))
+    pick = (starts[:, :, None] + np.arange(block)[None, None, :]).reshape(n_boot, -1) % len(dates)
+    boots = s[pick].sum(axis=1) / c[pick].sum(axis=1)
+    return {"rows": int(len(y)), "dates": int(len(dates)), "baseRate": float(y.mean()),
+            "withoutDividends": scores(a), "withDividends": scores(b), "brierDiff": float(d.mean()),
+            "ciLow": float(np.percentile(boots, 2.5)), "ciHigh": float(np.percentile(boots, 97.5)),
+            "note": f"brierDiff = Brier(with dividends) - Brier(without); negative means the dividend signals help. "
+                    f"95% CI from a bootstrap over blocks of {block} consecutive dates."}
+
+
+def _summary(results: list[dict], cfg: LabConfig, n: int, feature_test: dict | None = None) -> str:
     m0 = results[0]["metrics"]
     ok = [r["name"] for r in results if r["verdict"].endswith("SUPPORTED by this backtest")]
     best = max((r for r in results if r["family"] != "BENCHMARK"), key=lambda r: r["metrics"]["sharpe"] if np.isfinite(r["metrics"]["sharpe"]) else -1e9)
@@ -114,6 +157,14 @@ def _summary(results: list[dict], cfg: LabConfig, n: int) -> str:
     else:
         parts.append(f"No strategy beat buy & hold once the test accounts for trying {n} strategies; differences are "
                      f"consistent with luck.")
+    if feature_test and "brierDiff" in feature_test:
+        a, b = feature_test["withoutDividends"], feature_test["withDividends"]
+        lo, hi = feature_test["ciLow"], feature_test["ciHigh"]
+        verdict = ("they improved it" if hi < 0 else "they made it worse" if lo > 0 else
+                   "the difference is within noise")
+        parts.append(f"Dividend signals in the AI: out-of-sample Brier {a['brier']:.4f} without, {b['brier']:.4f} with "
+                     f"(difference 95% CI {lo:+.4f} to {hi:+.4f}), AUC {a['auc']:.3f} vs {b['auc']:.3f} on the same "
+                     f"{feature_test['rows']:,} forecasts: {verdict}.")
     return " ".join(parts)
 
 
