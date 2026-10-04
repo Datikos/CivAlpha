@@ -4,6 +4,8 @@ import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.util.HashMap;
 import java.util.List;
@@ -50,6 +52,21 @@ public class MlClient {
     }
 
     private Map<String, Object> post(String path, Object body) {
-        return rest.post().uri(path).contentType(MediaType.APPLICATION_JSON).body(body).retrieve().body(MAP);
+        try {
+            return rest.post().uri(path).contentType(MediaType.APPLICATION_JSON).body(body).retrieve().body(MAP);
+        } catch (RestClientResponseException e) {
+            throw new IllegalStateException(detail(e), e);
+        }
+    }
+
+    /** The ML service reports problems as {"detail": "..."}; surface that text instead of the HTTP exception. */
+    static String detail(RestClientResponseException e) {
+        try {
+            Object d = JsonMapper.builder().build().readValue(e.getResponseBodyAsString(), Map.class).get("detail");
+            if (d instanceof String s && !s.isBlank()) return s;
+        } catch (RuntimeException ignored) {
+            // not JSON: fall through
+        }
+        return "ML service error " + e.getStatusCode().value() + ": " + e.getResponseBodyAsString();
     }
 }

@@ -118,6 +118,29 @@ public class MarketDataService {
         return n;
     }
 
+    /** Configured benchmark ETFs (config/universe.yml) that have no price bars yet. */
+    public List<String> missingBenchmarks() {
+        Set<String> configured = new TreeSet<>(universe.benchmarkSymbols());
+        List<String> present = named.getJdbcTemplate().queryForList(
+                "SELECT DISTINCT symbol FROM price_bar WHERE company_id IS NULL", String.class);
+        configured.removeAll(present);
+        return new ArrayList<>(configured);
+    }
+
+    /**
+     * Every forecast and evaluation is relative to a sector benchmark, so they need benchmark prices.
+     * Fails with an actionable message when none are loaded; returns a warning when only some are missing.
+     */
+    public Optional<String> requireBenchmarks() {
+        List<String> missing = missingBenchmarks();
+        if (latestBenchmarkDate().isEmpty()) {
+            throw new IllegalStateException("No benchmark ETF prices are loaded (" + String.join(", ", universe.benchmarkSymbols())
+                    + "). Load the demo dataset, or import a prices CSV that includes these ETFs, then try again.");
+        }
+        return missing.isEmpty() ? Optional.empty() : Optional.of("Warning: no prices for benchmark(s) " + String.join(", ", missing)
+                + "; companies benchmarked against them are skipped. Import their prices to include them.");
+    }
+
     public Optional<LocalDate> latestBenchmarkDate() {
         return Optional.ofNullable(named.getJdbcTemplate().queryForObject("SELECT max(trade_date) FROM price_bar WHERE company_id IS NULL", LocalDate.class));
     }

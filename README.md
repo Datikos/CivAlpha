@@ -175,6 +175,18 @@ All variables are listed with comments in `.env.example`. The main ones are `CIV
 `CIVALPHA_LLM_PROVIDER`, `CIVALPHA_LLM_MODEL` and `ANTHROPIC_API_KEY`. The universe (24 stocks with
 sector benchmarks and ticker history) is set in `config/universe.yml`. Edit it to cover 20–50 symbols.
 
+## Troubleshooting
+
+* **"No benchmark ETF prices are loaded"**
+  * Evaluation and forecasts compare each stock with its sector benchmark ETF (`XLK`, `XLY`, `XLP`, `XLC`, `XLV`,
+    `XLI` in the default universe).
+  * Fix: load the demo, or import a prices CSV that includes those ETFs alongside the stocks.
+  * The Data & pipeline page lists any benchmarks that are still missing.
+* **"This database already holds real (non-demo) data"**
+  * The synthetic demo is never mixed with imported data.
+  * Fix: start from an empty database with `docker compose down -v && docker compose up -d`. This also deletes
+    stored documents.
+
 ## Tests
 
 ```bash

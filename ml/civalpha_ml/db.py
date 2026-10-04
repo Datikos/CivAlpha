@@ -59,7 +59,8 @@ def load_bundle(engine: Engine) -> DataBundle:
     membership = _dates(_q(engine, "SELECT company_id, valid_from, valid_to FROM universe_membership"), ["valid_from", "valid_to"])
     filings = _utc(_q(engine, "SELECT id, company_id, accession_no, form_type, accepted_at, source_document_id FROM filing"), ["accepted_at"])
     if bench.empty:
-        raise ValueError("no benchmark prices loaded; import prices first")
+        raise ValueError("No benchmark ETF prices are loaded. Load the demo dataset, or import a prices CSV that includes "
+                         "the sector benchmark ETFs listed in config/universe.yml, before evaluating or issuing forecasts.")
     return DataBundle.build(companies, stock, bench, actions, facts, expo, events, targets, macro, membership, filings)
 
 

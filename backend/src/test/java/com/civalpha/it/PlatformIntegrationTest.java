@@ -126,6 +126,19 @@ class PlatformIntegrationTest {
     }
 
     @Test
+    @org.springframework.transaction.annotation.Transactional  // rolled back: other tests keep their benchmark rows
+    void missingBenchmarksAreReportedBeforeCallingTheModel() {
+        jdbc.sql("DELETE FROM price_bar WHERE company_id IS NULL").update();
+        assertThat(market.missingBenchmarks()).containsExactly("XLC");
+        assertThatThrownBy(market::requireBenchmarks).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("No benchmark ETF prices are loaded (XLC)");
+        jdbc.sql("""
+                INSERT INTO price_bar (symbol, trade_date, close, provider) VALUES ('XLC', '2024-01-02', 60, 'test')""").update();
+        assertThat(market.missingBenchmarks()).isEmpty();
+        assertThat(market.requireBenchmarks()).isEmpty();
+    }
+
+    @Test
     void priceCorrectionsAreVersionedNotDropped() throws Exception {
         String v1 = "symbol,date,open,high,low,close,volume\nXLC,2023-03-01,60,61,59,60.00,100\nXLC,2023-03-02,60,61,59,61.00,100\n";
         var first = market.importPrices(v1.getBytes(StandardCharsets.UTF_8), "vendor-v1.csv", "vendor", false);

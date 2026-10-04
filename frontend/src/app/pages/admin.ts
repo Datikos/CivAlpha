@@ -34,6 +34,18 @@ const ACTIVE = new Set(['RUNNING', 'PENDING', 'QUEUED', 'STARTED']);
       </div>
     }
 
+    @if (meta.meta()?.missingBenchmarks?.length; as count) {
+      <div class="alert" role="note">
+        @if (meta.meta()?.dataCutoff) {
+          No prices yet for benchmark ETF{{ count > 1 ? 's' : '' }} {{ meta.meta()?.missingBenchmarks?.join(', ') }}:
+          companies measured against {{ count > 1 ? 'them' : 'it' }} are left out of evaluation and forecasts.
+        } @else {
+          No price data yet. Load the demo dataset, or import a prices CSV that includes the stocks and the benchmark ETFs
+          ({{ meta.meta()?.missingBenchmarks?.join(', ') }}), before evaluating or issuing forecasts.
+        }
+      </div>
+    }
+
     @if (notice(); as n) {
       <div class="alert" [class.alert-ok]="n.ok" [class.alert-error]="!n.ok" role="status">{{ n.text }}</div>
     }
