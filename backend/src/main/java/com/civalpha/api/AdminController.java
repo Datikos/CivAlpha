@@ -100,6 +100,18 @@ public class AdminController {
 
     public record IssueIn(LocalDate asOfDate) {}
 
+    @PostMapping("/timemachine")
+    public Map<String, Object> timeMachine(@RequestBody IssueIn in) {
+        if (in == null || in.asOfDate() == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "asOfDate is required");
+        if (!in.asOfDate().isBefore(LocalDate.now())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "pick a past date: the time machine compares a forecast with what followed");
+        }
+        return rows.camel(jobs.submit("TIME_MACHINE", Map.of("asOfDate", in.asOfDate().toString()), log -> {
+            market.requireBenchmarks().ifPresent(log);
+            log.accept(String.valueOf(ml.timeMachine(in.asOfDate().toString()).get("headline")));
+        }));
+    }
+
     @PostMapping("/forecasts/issue")
     public Map<String, Object> issue(@RequestBody(required = false) IssueIn in) {
         LocalDate d = in == null ? null : in.asOfDate();

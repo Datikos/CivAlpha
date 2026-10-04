@@ -202,6 +202,24 @@ Code: `ml/civalpha_ml/strategies/` (`rules.py`, `ai.py`, `backtest.py`, `stats.p
 * rule behavior on planted trends and mean reversion;
 * pure noise never producing a "winner".
 
+## Time machine: forecast from a past date and check it against the facts
+
+On the **Time machine** page, pick a past date and click **Go back and forecast**. CivAlpha rebuilds what it would have
+said at that close, using only the prices, filings, events and macro data known then. Models are retrained only on
+outcomes that had resolved by that day. It produces:
+* each stock's odds of beating its sector ETF over 5, 10, 21 and 63 trading days;
+* the AI strategy's buy decisions;
+* a 10–90% band for each stock's return.
+
+It then compares these with what actually happened:
+* hit rate and Brier score against the base rate;
+* the AI's picks against all stocks;
+* how many actual returns fell inside the band, against a naive band.
+
+A chart shows the real price path inside the forecast band. One date is one draw, so use the walk-forward accuracy and the
+strategy lab for evidence. The code is `ml/civalpha_ml/timemachine.py`; `ml/tests/test_timemachine.py` checks that
+changing every later price leaves the predictions untouched.
+
 ## Sources and credentials
 
 | Source | Default | To enable | Notes |

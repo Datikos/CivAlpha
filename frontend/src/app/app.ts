@@ -182,6 +182,7 @@ export class App {
     { path: '/accuracy', label: 'Accuracy', exact: false },
     { path: '/strategies', label: 'Strategies', exact: false },
     { path: '/decisions', label: 'AI decisions', exact: false },
+    { path: '/timemachine', label: 'Time machine', exact: false },
     { path: '/universe', label: 'Universe', exact: false },
     { path: '/admin', label: 'Data & pipeline', exact: false },
   ];

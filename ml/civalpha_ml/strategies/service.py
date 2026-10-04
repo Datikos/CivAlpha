@@ -144,10 +144,11 @@ def decide(engine, as_of: str | None = None, cfg: LabConfig | None = None) -> di
     return {"decisions": decisions_at(bundle, int(bundle.calendar.get_loc(d)), cfg, held, _is_demo(bundle))}
 
 
-def decisions_at(bundle: DataBundle, idx: int, cfg: LabConfig, held: set[int], is_demo: bool = False) -> list[dict]:
+def decisions_at(bundle: DataBundle, idx: int, cfg: LabConfig, held: set[int], is_demo: bool = False,
+                 panel: MarketPanel | None = None, data: pd.DataFrame | None = None) -> list[dict]:
     ai_cfg = cfg.ai()
-    panel = MarketPanel.from_bundle(bundle)
-    data = dataset(panel, ai_cfg)
+    panel = MarketPanel.from_bundle(bundle) if panel is None else panel
+    data = dataset(panel, ai_cfg) if data is None else data
     train = data[(data["idx"] + ai_cfg.horizon + 1 <= idx) & data["label"].notna()]
     if len(train) < 200 or train["label"].nunique() < 2:
         raise ValueError(f"not enough labelled history before {panel.calendar[idx].date()} to train the AI ({len(train)} samples)")

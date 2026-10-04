@@ -91,6 +91,11 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/decisions').then((m) => m.DecisionsPage),
   },
   {
+    path: 'timemachine',
+    title: 'Time machine · CivAlpha',
+    loadComponent: () => import('./pages/timemachine').then((m) => m.TimeMachinePage),
+  },
+  {
     path: 'admin',
     title: 'Data & pipeline · CivAlpha',
     loadComponent: () => import('./pages/admin').then((m) => m.AdminPage),

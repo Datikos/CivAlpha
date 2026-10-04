@@ -51,6 +51,11 @@ public class MlClient {
         return (List<Map<String, Object>>) post("/strategies/decide", body).get("decisions");
     }
 
+    /** Forecasts as of a past close with only the data known then, compared with what followed; stored by the ML service. */
+    public Map<String, Object> timeMachine(String asOfDate) {
+        return post("/timemachine", Map.of("as_of_date", asOfDate));
+    }
+
     public Map<String, Object> resolveOutcomes() {
         return post("/outcomes/resolve", Map.of());
     }

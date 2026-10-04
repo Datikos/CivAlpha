@@ -53,6 +53,10 @@ class StrategyBacktestRequest(BaseModel):
     exit_p: float = 0.48
 
 
+class TimeMachineRequest(BaseModel):
+    as_of_date: str
+
+
 class DecideRequest(BaseModel):
     as_of: str | None = None
     max_positions: int = 8
@@ -105,5 +109,14 @@ def strategy_decide(req: DecideRequest):
     try:
         cfg = strategies.LabConfig(max_positions=req.max_positions, entry_p=req.entry_p, exit_p=req.exit_p)
         return strategies.decide(engine(), req.as_of, cfg)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.post("/timemachine")
+def time_machine(req: TimeMachineRequest):
+    from . import timemachine
+    try:
+        return timemachine.run(engine(), req.as_of_date)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))

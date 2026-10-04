@@ -78,7 +78,7 @@ class DataBundle:
             a = actions[actions["company_id"] == cid] if "company_id" in actions else actions.iloc[0:0]
             closes = g.set_index("trade_date")["close"].astype(float)
             tr[int(cid)] = total_return_index(closes, a, cal)
-            raw[int(cid)] = closes[~closes.index.duplicated(keep="last")].reindex(cal).ffill().to_numpy(float)
+            raw[int(cid)] = closes[~closes.index.duplicated(keep="last")].reindex(cal).ffill().to_numpy(float, copy=True)
         bp = bench_prices.copy()
         bp["trade_date"] = pd.to_datetime(bp["trade_date"])
         btr = {}
