@@ -8,6 +8,7 @@ import com.civalpha.forecast.ForecastService;
 import com.civalpha.forecast.MlClient;
 import com.civalpha.macro.MacroService;
 import com.civalpha.market.MarketDataService;
+import com.civalpha.market.PriceSyncService;
 import com.civalpha.sec.FilingIngestionService;
 import com.civalpha.sec.SecClient;
 import com.civalpha.sec.SecClientFactory;
@@ -44,10 +45,11 @@ public class Pipeline {
     private final LiveEventSources liveEvents;
     private final ForecastService forecasts;
     private final MlClient ml;
+    private final PriceSyncService prices;
 
     public Pipeline(AppProperties props, JdbcClient jdbc, ObjectMapper om, UniverseService universe, MarketDataService market,
                     MacroService macro, SecClientFactory secFactory, FilingIngestionService filings, EventService events,
-                    LiveEventSources liveEvents, ForecastService forecasts, MlClient ml) {
+                    LiveEventSources liveEvents, ForecastService forecasts, MlClient ml, PriceSyncService prices) {
         this.props = props;
         this.jdbc = jdbc;
         this.om = om;
@@ -60,6 +62,7 @@ public class Pipeline {
         this.liveEvents = liveEvents;
         this.forecasts = forecasts;
         this.ml = ml;
+        this.prices = prices;
     }
 
     public boolean demoPresent() {
@@ -144,6 +147,13 @@ public class Pipeline {
             }
         } else {
             log.accept("no imports directory " + imports + " (put prices*.csv / corporate_actions*.csv there)");
+        }
+        if (prices.enabled() && demoPresent()) {
+            log.accept("price provider configured, but this is the demo database: skipping real price download");
+        } else if (prices.enabled()) {
+            prices.sync(log);
+        } else {
+            log.accept("no price provider configured (CIVALPHA_PRICE_PROVIDER); using imported prices only");
         }
         if (props.sec().live()) {
             SecClient sec = secFactory.configured();

@@ -47,6 +47,23 @@ docker compose down                 # stop (data is kept in volumes)
 docker compose down -v              # stop and delete the database and stored documents
 ```
 
+### Real data instead of the demo
+
+1. Start from an empty database. The demo and real data are never mixed. If you loaded the demo before, run
+   `docker compose down -v`.
+2. In `.env`, set a price provider. `CIVALPHA_PRICE_PROVIDER=yahoo` needs no key but uses an unofficial API, so
+   personal research only. Alternatively set `CIVALPHA_PRICE_PROVIDER=tiingo` plus `TIINGO_API_KEY`. For SEC
+   filings, also set `CIVALPHA_SEC_MODE=live` and `SEC_USER_AGENT="Your Name you@example.com"`.
+3. Run `docker compose up -d`, then click **Data & pipeline → Run pipeline**. That one job:
+   * seeds the universe from `config/universe.yml`;
+   * downloads prices, dividends and splits for every stock and benchmark ETF;
+   * ingests SEC filings;
+   * evaluates the models and issues forecasts.
+
+   Later runs, whether from the button or the optional schedule, only download new bars.
+
+Manage which stocks are tracked on the **Universe** page (see below).
+
 > **Demo data is synthetic.** Company names and CIKs are real public identifiers. All prices, filings, XBRL
 > values, events (titled `[DEMO]`) and macro values are generated. The generator plants two effects on purpose:
 > post-tariff drift for exposed companies, and leverage-dependent drift after rate changes. These let you check
@@ -140,6 +157,7 @@ How an event is linked to a company:
 | Source | Default | To enable | Notes |
 |---|---|---|---|
 | SEC EDGAR (submissions, companyfacts, filing documents, XBRL instances) | `fixture` (demo files) | `CIVALPHA_SEC_MODE=live`, `SEC_USER_AGENT="Your Name you@example.com"` | No key needed. The client refuses to start without a User-Agent that includes an e-mail and caps requests at ≤10/s (default 5), with gzip and backoff on 429/503. Fetches the last `SEC_LOOKBACK_YEARS` years. |
+| Daily prices and corporate actions (automatic) | off | `CIVALPHA_PRICE_PROVIDER=yahoo` (no key; unofficial, personal research only) or `tiingo` + `TIINGO_API_KEY` (free key) | Runs with every pipeline run and on **Update prices**. Downloads are incremental, re-checking the last week of bars so corrections are versioned. Bars are stored under the ticker valid on each date. Never runs against the demo database. |
 | Daily prices and corporate actions | CSV importer | Upload in Admin, or drop `prices*.csv` / `corporate_actions*.csv` into the `civdata` volume under `/data/imports` and run the pipeline | Columns: `symbol,date,open,high,low,close,volume` and `symbol,ex_date,action_type(SPLIT\|CASH_DIVIDEND),value,announced_at`. Use raw (unadjusted) prices. Vendor adapters implement `market/PriceProvider`. |
 | FRED / ALFRED | off | `FRED_API_KEY` (free) | Fetches every vintage of `FEDFUNDS` and `CPIAUCSL`. |
 | Federal Register API (official trade notices) | off | `EVENTS_FEDERAL_REGISTER_ENABLED=true` | No key needed. Event targets are extracted with deterministic rules. |
@@ -154,6 +172,29 @@ With live sources configured, run **Data & pipeline → Run configured pipeline*
 **Licensing.** Being able to reach a market-data API does not give you the right to train models on its data or
 display it publicly. Check your vendor licence before connecting a provider or publishing derived output. Keep
 keys in `.env`, which git ignores, and never in source control.
+
+## Managing the universe
+
+The database is the source of truth for which stocks are tracked. `config/universe.yml` only seeds companies whose
+CIK is not in the database yet; a pipeline run never re-adds a stock you removed or undoes an edit.
+
+The **Universe** page (`/api/admin/universe`) supports these actions:
+
+* **Add** a stock by ticker. **Look up on SEC** fills in the CIK and registrant name from SEC's
+  `company_tickers.json` (live SEC mode). You then pick a sector, an optional industry, a sector benchmark ETF and
+  a *member since* date.
+  * The *member since* date defaults to today. An earlier date puts the stock into backtests for periods when it
+    wasn't actually selected, which biases results toward stocks already known to have done well.
+  * Optionally, SEC ingest for the new stock starts right away.
+* **Remove** ends membership on a date. **Restore** opens a new membership span. Past forecasts, backtests and
+  point-in-time features still treat the stock as a member for the dates it was one.
+* **Edit** changes name, sector, industry or benchmark. **Ticker…** records a symbol change from a date, and
+  earlier prices stay under the old symbol.
+* **Delete** is allowed only while no data (prices, filings, forecasts) is attached, for example after a mistyped
+  addition. Otherwise use Remove.
+
+A newly added stock gets forecasts once it has about six months of price history; **Update prices** downloads it.
+If you choose a benchmark ETF that is new to the universe, its prices are downloaded too.
 
 ## Security and scheduling
 
@@ -216,8 +257,10 @@ scripts/   demo.sh
 
 ## Known limitations / next steps
 
-* **Prices.** Only CSV import is built. A licensed vendor adapter is needed for daily updates and a real
-  trading calendar; the calendar currently comes from benchmark bars. Corrections are versioned: the replaced
+* **Prices.** The Yahoo and Tiingo adapters were built against their documented response formats but could not
+  be exercised against the live services from the build environment. The trading calendar comes from benchmark
+  bars. Yahoo's closes are split-adjusted: a newly reported split triggers a full re-download of that symbol, so
+  stored bars stay consistent. Corrections are versioned: the replaced
   values move to `price_bar_revision`. Features always use the latest corrected prices, while forecasts
   already issued keep the feature values they were computed with.
 * **SEC.**

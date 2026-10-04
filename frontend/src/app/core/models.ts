@@ -11,6 +11,8 @@ export interface Meta {
   adminTokenRequired?: boolean;
   /** Configured sector benchmark ETFs with no prices yet; evaluation and forecasts need them. */
   missingBenchmarks?: string[];
+  /** Configured automatic price provider: none | yahoo | tiingo. */
+  priceProvider?: string;
   dataCutoff: string | null;
   target: string;
   disclaimers: string[];
@@ -506,4 +508,60 @@ export interface Job {
   log: string | null;
   startedAt: string | null;
   finishedAt: string | null;
+}
+
+// ---------- Universe management ----------
+
+export interface UniverseCompany {
+  id: number;
+  symbol: string;
+  formerSymbols: string | null;
+  cik: string | null;
+  name: string;
+  sector: string;
+  industry: string | null;
+  benchmarkSymbol: string;
+  isDemo: boolean;
+  active: boolean;
+  memberSince: string | null;
+  removedOn: string | null;
+  priceCount: number;
+  lastPriceDate: string | null;
+  filingCount: number;
+  forecastCount: number;
+  deletable: boolean;
+}
+
+export interface UniverseResponse {
+  universe: string;
+  companies: UniverseCompany[];
+  benchmarks: string[];
+  sectors: string[];
+  industries: string[];
+  productIndustries: string[];
+}
+
+export interface SecMatch {
+  symbol: string;
+  cik: string;
+  name: string;
+  source: string;
+}
+
+export interface AddCompanyRequest {
+  symbol: string;
+  name: string;
+  cik: string;
+  sector: string;
+  industry: string | null;
+  benchmarkSymbol: string;
+  memberSince: string | null;
+  ingestSec: boolean;
+}
+
+export interface AddCompanyResponse {
+  id: number;
+  symbol: string;
+  nextSteps: string[];
+  job?: Job;
 }

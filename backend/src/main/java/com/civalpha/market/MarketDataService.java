@@ -50,15 +50,8 @@ public class MarketDataService {
         Set<String> benchmarks = universe.benchmarkSymbols();
         Map<String, List<TickerResolver.Span>> spans = new HashMap<>();
         for (TickerResolver.Span sp : tickers.allSpans()) spans.computeIfAbsent(sp.symbol().toUpperCase(), k -> new ArrayList<>()).add(sp);
-        Map<String, java.math.BigDecimal> existing = new HashMap<>();
-        named.query("SELECT symbol, trade_date, close FROM price_bar WHERE symbol IN (:syms)",
-                new MapSqlParameterSource("syms", rows.stream().map(PriceBarRow::symbol).distinct().toList().isEmpty()
-                        ? List.of("") : rows.stream().map(PriceBarRow::symbol).distinct().toList()),
-                rs -> { existing.put(rs.getString(1) + "|" + rs.getObject(2, LocalDate.class), rs.getBigDecimal(3)); });
-        int unchanged = 0;
-        List<MapSqlParameterSource> corrections = new ArrayList<>();
         Set<String> unknown = new TreeSet<>();
-        List<MapSqlParameterSource> batch = new ArrayList<>();
+        List<Resolved> resolved = new ArrayList<>();
         for (PriceBarRow r : rows) {
             Long companyId = null;
             if (!benchmarks.contains(r.symbol())) {
@@ -69,10 +62,37 @@ public class MarketDataService {
                 }
                 companyId = c.get();
             }
+            resolved.add(new Resolved(companyId, r));
+        }
+        ImportResult res = store(resolved, provider, d.id(), demo);
+        return new ImportResult(rows.size(), res.inserted(), res.unchanged(), res.revised(), unknown);
+    }
+
+    /** A bar already attributed to a company (null company = benchmark ETF). */
+    public record Resolved(Long companyId, PriceBarRow row) {}
+
+    /**
+     * Writes resolved bars: new bars are inserted; an identical bar is a no-op; a different close is a
+     * correction (old values archived in price_bar_revision, bar becomes version n+1).
+     */
+    public ImportResult store(List<Resolved> resolved, String provider, long documentId, boolean demo) {
+        Map<String, java.math.BigDecimal> existing = new HashMap<>();
+        List<String> syms = resolved.stream().map(r -> r.row().symbol()).distinct().toList();
+        if (!syms.isEmpty()) {
+            named.query("SELECT symbol, trade_date, close FROM price_bar WHERE symbol IN (:syms)", new MapSqlParameterSource("syms", syms),
+                    rs -> { existing.put(rs.getString(1) + "|" + rs.getObject(2, LocalDate.class), rs.getBigDecimal(3)); });
+        }
+        int unchanged = 0;
+        List<MapSqlParameterSource> corrections = new ArrayList<>();
+        List<MapSqlParameterSource> batch = new ArrayList<>();
+        Set<String> seen = new java.util.HashSet<>();
+        for (Resolved x : resolved) {
+            PriceBarRow r = x.row();
+            if (!seen.add(r.symbol() + "|" + r.date())) continue; // duplicate row within one import
             java.math.BigDecimal prev = existing.get(r.symbol() + "|" + r.date());
-            MapSqlParameterSource p = new MapSqlParameterSource().addValue("c", companyId).addValue("s", r.symbol()).addValue("d", r.date())
+            MapSqlParameterSource p = new MapSqlParameterSource().addValue("c", x.companyId()).addValue("s", r.symbol()).addValue("d", r.date())
                     .addValue("o", r.open()).addValue("h", r.high()).addValue("l", r.low()).addValue("cl", r.close())
-                    .addValue("v", r.volume()).addValue("p", provider).addValue("doc", d.id()).addValue("demo", demo);
+                    .addValue("v", r.volume()).addValue("p", provider).addValue("doc", documentId).addValue("demo", demo);
             if (prev == null) {
                 batch.add(p);
             } else if (prev.compareTo(r.close()) == 0) {
@@ -98,7 +118,21 @@ public class MarketDataService {
                 batch.toArray(MapSqlParameterSource[]::new));
         int inserted = 0;
         for (int x : res) inserted += Math.max(0, x);
-        return new ImportResult(rows.size(), inserted, unchanged, corrections.size(), unknown);
+        return new ImportResult(resolved.size(), inserted, unchanged, corrections.size(), Set.of());
+    }
+
+    /** Stores corporate actions already attributed to a company (null = benchmark); duplicates are ignored. */
+    public int storeActions(Long companyId, List<CsvPrices.ActionRow> actions, String provider, long documentId, boolean demo) {
+        int n = 0;
+        for (CsvPrices.ActionRow a : actions) {
+            n += named.update("""
+                    INSERT INTO corporate_action (company_id, symbol, ex_date, action_type, value, announced_at, provider, source_document_id, is_demo)
+                    VALUES (:c, :s, :d, :t, :v, :a, :p, :doc, :demo) ON CONFLICT (symbol, ex_date, action_type) DO NOTHING""",
+                    new MapSqlParameterSource().addValue("c", companyId).addValue("s", a.symbol()).addValue("d", a.exDate())
+                            .addValue("t", a.type()).addValue("v", a.value()).addValue("a", a.announcedAt()).addValue("p", provider)
+                            .addValue("doc", documentId).addValue("demo", demo));
+        }
+        return n;
     }
 
     public int importActions(byte[] csv, String fileName, String provider, boolean demo) throws IOException {
@@ -135,7 +169,7 @@ public class MarketDataService {
         List<String> missing = missingBenchmarks();
         if (latestBenchmarkDate().isEmpty()) {
             throw new IllegalStateException("No benchmark ETF prices are loaded (" + String.join(", ", universe.benchmarkSymbols())
-                    + "). Load the demo dataset, or import a prices CSV that includes these ETFs, then try again.");
+                    + "). Run 'Update prices' (needs CIVALPHA_PRICE_PROVIDER), load the demo dataset, or import a prices CSV that includes these ETFs, then try again.");
         }
         return missing.isEmpty() ? Optional.empty() : Optional.of("Warning: no prices for benchmark(s) " + String.join(", ", missing)
                 + "; companies benchmarked against them are skipped. Import their prices to include them.");

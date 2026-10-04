@@ -1,7 +1,15 @@
 import { HttpClient, HttpErrorResponse, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { Job, ModelKind, NewEventRequest, NewEventResponse } from './models';
+import {
+  AddCompanyRequest,
+  AddCompanyResponse,
+  Job,
+  ModelKind,
+  NewEventRequest,
+  NewEventResponse,
+  SecMatch,
+} from './models';
 
 /** All calls are relative to /api (nginx / dev-server proxy forwards them to the backend). */
 const BASE = '/api';
@@ -37,6 +45,7 @@ export const apiUrl = {
   forecast: (id: number | string) => `${BASE}/forecasts/${enc(String(id))}`,
   accuracy: () => `${BASE}/accuracy`,
   jobs: () => `${BASE}/admin/jobs`,
+  universe: () => `${BASE}/admin/universe`,
 };
 
 /** Mutating calls. */
@@ -70,6 +79,38 @@ export class ApiService {
 
   ingestSec(symbol: string): Observable<Job> {
     return this.http.post<Job>(`${BASE}/admin/sec/ingest`, { symbol });
+  }
+
+  syncPrices(): Observable<Job> {
+    return this.http.post<Job>(`${BASE}/admin/prices/sync`, {});
+  }
+
+  lookupSymbol(symbol: string): Observable<SecMatch> {
+    return this.http.get<SecMatch>(withQuery(`${BASE}/admin/universe/lookup`, { symbol }));
+  }
+
+  addCompany(body: AddCompanyRequest): Observable<AddCompanyResponse> {
+    return this.http.post<AddCompanyResponse>(`${BASE}/admin/universe/companies`, body);
+  }
+
+  editCompany(id: number, body: { name?: string; sector?: string; industry?: string; benchmarkSymbol?: string }): Observable<unknown> {
+    return this.http.put(`${BASE}/admin/universe/companies/${id}`, body);
+  }
+
+  removeCompany(id: number, effectiveDate?: string | null): Observable<unknown> {
+    return this.http.post(`${BASE}/admin/universe/companies/${id}/remove`, effectiveDate ? { effectiveDate } : {});
+  }
+
+  restoreCompany(id: number, effectiveDate?: string | null): Observable<unknown> {
+    return this.http.post(`${BASE}/admin/universe/companies/${id}/restore`, effectiveDate ? { effectiveDate } : {});
+  }
+
+  changeTicker(id: number, symbol: string, effectiveDate?: string | null): Observable<unknown> {
+    return this.http.post(`${BASE}/admin/universe/companies/${id}/ticker`, { symbol, effectiveDate: effectiveDate || null });
+  }
+
+  deleteCompany(id: number): Observable<unknown> {
+    return this.http.delete(`${BASE}/admin/universe/companies/${id}`);
   }
 
   importPrices(file: File): Observable<Job> {

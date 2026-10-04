@@ -10,7 +10,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class AdminTokenFilterTest {
 
     private static AppProperties props(String token) {
-        return new AppProperties(null, null, null, null, null, null, null, null, new AppProperties.Security(token), null);
+        return new AppProperties(null, null, null, null, null, null, null, null, new AppProperties.Security(token), null, null);
     }
 
     private static int status(AdminTokenFilter f, String method, String uri, String header, String value) throws Exception {

@@ -76,3 +76,16 @@ def test_subset_issue_matches_full_cross_section():
     subset = pd.DataFrame(build_rows(b, idx, company_ids=[1, 2], with_labels=False)).set_index("company_id")
     assert list(subset.index) == [1, 2]
     pd.testing.assert_frame_equal(subset[AUGMENTED_FEATURES], full.loc[[1, 2], AUGMENTED_FEATURES])
+
+
+def test_membership_is_judged_at_the_issue_time():
+    b = _bundle()
+    d = pd.Timestamp("2021-01-29")
+    idx = int(b.calendar.get_loc(d))
+    b.membership = pd.DataFrame({"company_id": [1, 2, 3, 4],
+                                 "valid_from": pd.to_datetime(["2019-01-01", "2019-01-01", "2021-02-01", "2019-01-01"]),
+                                 "valid_to": pd.to_datetime([None, "2021-02-01", None, None])})
+    at_close = {r["company_id"] for r in build_rows(b, idx, with_labels=False)}
+    assert at_close == {1, 2, 4}                      # backtest: membership on the as-of date
+    live = {r["company_id"] for r in build_rows(b, idx, as_of=pd.Timestamp("2021-02-01T15:00Z"), with_labels=False)}
+    assert live == {1, 3, 4}                          # issued later: 3 was added, 2 removed in the meantime

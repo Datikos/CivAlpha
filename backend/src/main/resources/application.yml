@@ -17,6 +17,8 @@ spring:
 
 server:
   port: 8080
+  error:
+    include-message: always   # API errors carry their explanation (no stack traces)
 
 management:
   endpoints:
@@ -62,3 +64,8 @@ civalpha:
     pipeline-cron: ${CIVALPHA_PIPELINE_CRON:-}
     outcomes-cron: ${CIVALPHA_OUTCOMES_CRON:-}
     zone: ${CIVALPHA_SCHEDULE_ZONE:America/New_York}
+  prices:
+    # Automatic daily prices: none | yahoo (no key; unofficial, personal research only) | tiingo (needs TIINGO_API_KEY)
+    provider: ${CIVALPHA_PRICE_PROVIDER:none}
+    tiingo-api-key: ${TIINGO_API_KEY:}
+    history-start: ${CIVALPHA_PRICE_HISTORY_START:2019-01-02}

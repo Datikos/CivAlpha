@@ -40,6 +40,7 @@ public class MetaController {
         m.put("fredEnabled", props.fred().enabled());
         m.put("adminTokenRequired", props.security() != null && props.security().enabled());
         m.put("missingBenchmarks", market.missingBenchmarks());
+        m.put("priceProvider", props.prices() != null && props.prices().enabled() ? props.prices().provider().toLowerCase() : "none");
         m.put("dataCutoff", jdbc.sql("SELECT max(trade_date) FROM price_bar").query(LocalDate.class).optional().orElse(null));
         m.put("target", "P(21-trading-day total return of the stock > total return of its sector benchmark ETF), "
                 + "measured from the close of the as-of date to the close 21 trading days later");

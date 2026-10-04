@@ -195,3 +195,20 @@ response is `401`. `GET /api/meta` reports `adminTokenRequired`.
 * `POST /api/admin/outcomes/resolve` → job
 * `POST /api/admin/sec/ingest` body `{"symbol":"AAPL"}` → job
 * `POST /api/admin/prices/import` multipart `file` (CSV `symbol,date,open,high,low,close,volume`) → job
+
+## Universe management (admin)
+* `GET /api/admin/universe` → `{"universe":"nasdaq-core","companies":[{"id":1,"symbol":"AAPL","formerSymbols":null,"cik":"0000320193",
+  "name":"Apple Inc.","sector":"Technology","industry":"CONSUMER_ELECTRONICS","benchmarkSymbol":"XLK","isDemo":false,"active":true,
+  "memberSince":"2019-01-02","removedOn":null,"priceCount":1950,"lastPriceDate":"2026-10-02","filingCount":70,"forecastCount":12,
+  "deletable":false}],"benchmarks":["XLK"],"sectors":["Technology"],"industries":["SEMICONDUCTORS"],"productIndustries":["SEMICONDUCTORS"]}`
+* `GET /api/admin/universe/lookup?symbol=BDSX` → `{"symbol","cik","name","source"}` from SEC company_tickers.json (404 if unknown)
+* `POST /api/admin/universe/companies` body `{"symbol","name","cik","sector","industry","benchmarkSymbol","memberSince","ingestSec"}`
+  → `{"id","symbol","nextSteps":[...],"job"?}`
+* `PUT /api/admin/universe/companies/{id}` body `{"name","sector","industry","benchmarkSymbol"}` (omitted fields unchanged)
+* `POST /api/admin/universe/companies/{id}/remove` / `/restore` body `{"effectiveDate"}` (optional, default today)
+* `POST /api/admin/universe/companies/{id}/ticker` body `{"symbol","effectiveDate"}`
+* `DELETE /api/admin/universe/companies/{id}` — only while no data is attached (400 otherwise)
+* `POST /api/admin/universe/seed` — add companies from config/universe.yml whose CIK is not in the database
+* `POST /api/admin/prices/sync` → job — download prices from the configured provider (`GET /api/meta` → `priceProvider`)
+
+Errors are `{"error": "explanation"}` with status 400 (invalid request) or 404 (unknown id/symbol).
