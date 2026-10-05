@@ -9,6 +9,7 @@ import { MetaService } from '../core/meta.service';
 import { CompanyProfile, UniverseCompany, UniverseResponse } from '../core/models';
 import { Icon } from '../shared/icon';
 import { UI } from '../shared/ui';
+import { VIZ } from '../shared/viz';
 
 interface Draft {
   symbol: string;
@@ -31,16 +32,22 @@ const TICKER = /^[A-Za-z0-9.\-]{1,10}$/;
 
 @Component({
   selector: 'app-universe',
-  imports: [FormsModule, RouterLink, Icon, ...UI, ...FORMAT_PIPES],
+  imports: [FormsModule, RouterLink, Icon, ...UI, ...VIZ, ...FORMAT_PIPES],
   template: `
     <div class="page-head">
-      <div>
-        <h1>Universe</h1>
-        <p class="muted">
-          Stocks the platform tracks and forecasts. Changes take effect immediately and are kept as
-          history: removing a stock ends its membership on a date, so past forecasts and backtests
-          are unaffected.
-        </p>
+      <div class="page-title">
+        <app-page-icon name="globe" area="data" />
+        <div>
+          <h1>Universe</h1>
+          <p class="muted">
+            Stocks the platform tracks and forecasts. Changes take effect immediately and are kept as
+            history: removing a stock ends its membership on a date, so past forecasts and backtests
+            are unaffected.
+          </p>
+        </div>
+      </div>
+      <div class="page-actions">
+        <a routerLink="/guide" fragment="page-universe" class="btn btn-help"><app-icon name="help" [size]="16" /> How to use this</a>
       </div>
     </div>
 

@@ -4,11 +4,12 @@ import { FORMAT_PIPES } from '../core/format';
 import { compareForecastsDesc } from '../core/forecast-utils';
 import { ForecastSummary } from '../core/models';
 import { UI } from './ui';
+import { VIZ } from './viz';
 
 /** Forecast list (all versions) with supersession and resolved outcomes. */
 @Component({
   selector: 'app-forecast-table',
-  imports: [RouterLink, ...UI, ...FORMAT_PIPES],
+  imports: [RouterLink, ...UI, ...VIZ, ...FORMAT_PIPES],
   template: `
     <div class="table-wrap">
       <table class="table">
@@ -18,13 +19,14 @@ import { UI } from './ui';
               <th>Company</th>
             }
             <th>Model</th>
-            <th>P(outperform) [interval]</th>
+            <th>P(outperform) [interval] <app-help text="The probability that the stock beats its sector ETF over the horizon, with its uncertainty interval against the 50% midline." topic="interval" label="probability" /></th>
+            <th>Lean <app-help text="Above or below only when the whole interval is on one side of 50%; otherwise a coin flip." topic="lean" label="lean" /></th>
             <th>Horizon</th>
             <th>As of</th>
             <th>Published</th>
             <th>Mode</th>
             <th>Version</th>
-            <th>Outcome</th>
+            <th>Outcome <app-help text="Filled in once the window has closed: did the stock beat its ETF, by how much (excess return), and how good the probability was (Brier score, lower is better, 0.25 is a coin flip)." topic="brier" label="outcome" /></th>
             <th></th>
           </tr>
         </thead>
@@ -39,6 +41,7 @@ import { UI } from './ui';
               }
               <td><app-model-tag [kind]="r.f.modelKind" /></td>
               <td><app-forecast-prob [f]="r.f" [withContext]="false" /></td>
+              <td><app-lean [p]="r.f.probability" [lo]="r.f.probLow" [hi]="r.f.probHigh" /></td>
               <td class="nowrap">{{ r.f.horizonTradingDays }} d</td>
               <td class="nowrap">{{ r.f.asOfDate }}</td>
               <td class="nowrap">{{ r.f.issuedAt | utc }}</td>
@@ -54,12 +57,12 @@ import { UI } from './ui';
               </td>
               <td class="nowrap">
                 @if (r.f.outcome; as o) {
-                  <span class="badge" [class.badge-ok]="o.outcome" [class.badge-fail]="!o.outcome">
-                    {{ o.outcome ? 'Outperformed' : 'Underperformed' }}
+                  <span class="badge" [class.tone-good]="o.outcome" [class.tone-bad]="!o.outcome">
+                    {{ o.outcome ? '✓ Outperformed' : '✗ Underperformed' }}
                   </span>
                   <div class="small">
-                    excess <span [class.pos]="o.excessReturn > 0" [class.neg]="o.excessReturn < 0">{{ o.excessReturn | signedPct }}</span>
-                    · Brier {{ o.brier | fixed: 3 }}
+                    excess <app-delta [value]="o.excessReturn" kind="pct" /> · Brier
+                    <span [title]="o.brier < 0.25 ? 'Better than a coin flip' : 'No better than a coin flip'">{{ o.brier | fixed: 3 }}</span>
                   </div>
                   <div class="small muted">window end {{ o.windowEndDate }}</div>
                 } @else {

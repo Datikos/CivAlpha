@@ -5,7 +5,9 @@ import { LineChart, LineSeries } from '../charts/line-chart';
 import { apiUrl, valueOf } from '../core/api';
 import { FORMAT_PIPES, fmtPct, fmtSignedPct } from '../core/format';
 import { StrategiesResponse, StrategyResult } from '../core/models';
+import { Icon } from '../shared/icon';
 import { UI } from '../shared/ui';
+import { VIZ, verdictTone } from '../shared/viz';
 
 export const AI_KEY = 'AI_GBM';
 export const REFERENCE_KEY = 'EW_BUY_HOLD';
@@ -16,6 +18,7 @@ export const FAMILY_LABEL: Record<string, string> = {
   MEAN_REVERSION: 'Mean reversion',
   FUNDAMENTAL: 'Fundamental',
   EVENT: 'Event',
+  SPECULATIVE: 'Speculative',
   AI: 'AI',
 };
 
@@ -31,47 +34,82 @@ export function supported(verdict: string): boolean {
 export const equityFormat = (v: number) => fmtSignedPct(v - 1, 0);
 
 interface Col {
+  key: string;
   label: string;
   hint: string;
+  topic: string;
   get: (r: StrategyResult) => number | null | undefined;
   fmt: (v: number) => string;
   higherIsBetter: boolean | null;
+  /** how the cell is drawn */
+  view: 'bar' | 'signed-bar' | 'plain' | 'ci' | 'dsr';
 }
 
 @Component({
   selector: 'app-strategies',
-  imports: [RouterLink, LineChart, ...UI, ...FORMAT_PIPES],
+  imports: [RouterLink, LineChart, Icon, ...UI, ...VIZ, ...FORMAT_PIPES],
   template: `
     <div class="page-head">
-      <div>
-        <h1>Strategy lab</h1>
-        <p class="muted">
-          Classic entry/exit theories and the AI decision-maker, backtested on the same data, the same out-of-sample
-          window and the same trading costs. Long-only; decided at the close, traded at the next close.
-        </p>
+      <div class="page-title">
+        <app-page-icon name="flask" area="strategy" />
+        <div>
+          <h1>Strategy lab</h1>
+          <p class="muted">
+            Classic entry/exit theories and the AI decision-maker, backtested on the same data, the same out-of-sample
+            window and the same trading costs. Long-only; decided at the close, traded at the next close.
+          </p>
+        </div>
       </div>
-      <a class="btn" routerLink="/decisions">Today's AI decisions →</a>
+      <div class="page-actions">
+        <a routerLink="/guide" fragment="page-strategies" class="btn btn-help"><app-icon name="help" [size]="16" /> How to read this</a>
+        <a class="btn" routerLink="/decisions">Today's AI decisions →</a>
+      </div>
     </div>
 
     <app-status [res]="res" what="strategy results" />
 
     @if (res.hasValue()) {
       @if (run(); as r) {
-        <div class="verdict" role="note"><strong>Verdict.</strong> {{ r.summary }}</div>
+        <app-verdict [tone]="runTone()">{{ r.summary }}</app-verdict>
         <p class="small muted">
           Backtest #{{ r.id }} run {{ r.runAt | utc }} · scored {{ r.oosStart }} to {{ r.dataCutoff }}
           · costs {{ r.config.costBpsPerSide }} bp per side on traded amount · {{ r.config.execution }}
         </p>
 
+        @if (headline(); as h) {
+          <div class="stats wide">
+            <div class="stat tone-info">
+              <div class="stat-label">Strategies tested</div>
+              <div class="stat-value">{{ h.n }}<span class="unit">over {{ h.years | fixed: 1 }} years</span></div>
+              <div class="stat-sub">{{ h.supported }} beat buy &amp; hold after the honesty checks</div>
+            </div>
+            <div class="stat tone-neutral">
+              <div class="stat-label">Buy &amp; hold reference <app-help text="Equal-weight buy and hold of every tracked stock. Every strategy is judged against it: a rule only counts if it beats this after costs, with a confidence interval above zero and a Deflated Sharpe Ratio of at least 0.95." topic="excess" label="the reference" /></div>
+              <div class="stat-value"><app-delta [value]="h.refCagr" kind="pct" [digits]="1" /><span class="unit">a year</span></div>
+              <div class="stat-sub">Sharpe {{ h.refSharpe | fixed: 2 }} · max drawdown {{ h.refDd | pct: 1 }}</div>
+            </div>
+            <div class="stat" [class]="'stat ' + (h.bestSupported ? 'tone-good' : 'tone-warn')">
+              <div class="stat-label">Highest Sharpe (active) <app-help text="Return per unit of risk, annualized, over cash. Above 1 is good for a single strategy; but a high Sharpe over a short window can still be luck, which is what the DSR checks." topic="sharpe" label="Sharpe ratio" /></div>
+              <div class="stat-value">{{ h.bestSharpe | fixed: 2 }}</div>
+              <div class="stat-sub"><a [routerLink]="['/strategies', h.bestKey]">{{ h.bestName }}</a> · {{ h.bestSupported ? 'beats buy & hold' : 'not supported once luck is accounted for' }}</div>
+            </div>
+            <div class="stat" [class]="'stat ' + (h.aiSupported ? 'tone-good' : 'tone-warn')">
+              <div class="stat-label">The AI strategy</div>
+              <div class="stat-value"><app-delta [value]="h.aiExcess" kind="pct" [digits]="1" /><span class="unit">vs buy &amp; hold, a year</span></div>
+              <div class="stat-sub">CI {{ h.aiLo | signedPct: 1 }} to {{ h.aiHi | signedPct: 1 }} · DSR {{ h.aiDsr | fixed: 2 }}</div>
+            </div>
+          </div>
+        }
+
         <div class="card">
           <h3>Comparison (out of sample, after costs)</h3>
           <div class="table-wrap">
-            <table class="table compact">
+            <table class="table compact lens">
               <thead>
                 <tr>
                   <th>Strategy</th>
-                  @for (c of cols; track c.label) {
-                    <th class="num" [title]="c.hint">{{ c.label }}</th>
+                  @for (c of cols; track c.key) {
+                    <th class="num">{{ c.label }}<app-help [text]="c.hint" [topic]="c.topic" [label]="c.label" /></th>
                   }
                   <th>Verdict</th>
                 </tr>
@@ -83,18 +121,49 @@ interface Col {
                       <a [routerLink]="['/strategies', s.strategyKey]">{{ s.name }}</a>
                       <div class="small muted">{{ familyLabel[s.family] ?? s.family }}</div>
                     </td>
-                    @for (c of cols; track c.label) {
-                      <td class="num" [style.font-weight]="best()[c.label] === s.strategyKey ? 700 : 400">
-                        {{ cell(c, s) }}{{ best()[c.label] === s.strategyKey ? ' ✓' : '' }}
+                    @for (c of cols; track c.key) {
+                      <td class="num" [style.font-weight]="best()[c.key] === s.strategyKey ? 650 : 400">
+                        @switch (c.view) {
+                          @case ('bar') {
+                            <app-cell-bar [value]="c.get(s)" [max]="scale()[c.key]" [text]="cell(c, s)" [tone]="c.key === 'maxdd' ? 'bad' : c.key === 'exposure' ? 'neutral' : 'info'" />
+                          }
+                          @case ('signed-bar') {
+                            <app-cell-bar [value]="c.get(s)" [max]="scale()[c.key]" [text]="cell(c, s)" tone="sign" />
+                          }
+                          @case ('ci') {
+                            @if (c.get(s) !== null && c.get(s) !== undefined) {
+                              <span class="ci-cell">
+                                <app-range-bar [lo]="s.metrics.excessCiLow" [hi]="s.metrics.excessCiHigh" [point]="s.metrics.excessReturn" [span]="scale()['excess']" [label]="'Excess return ' + cell(c, s)" />
+                                <span><app-delta [value]="c.get(s)" kind="pct" [digits]="1" /><div class="small muted">{{ ciText(s) }}</div></span>
+                              </span>
+                            } @else {
+                              <span class="muted">—</span>
+                            }
+                          }
+                          @case ('dsr') {
+                            @if (c.get(s) !== null && c.get(s) !== undefined) {
+                              {{ cell(c, s) }}
+                              <app-meter [value]="c.get(s)" [target]="0.95" targetLabel="0.95 needed" [tone]="(c.get(s) ?? 0) >= 0.95 ? 'good' : 'neutral'" label="Deflated Sharpe Ratio" />
+                            } @else {
+                              <span class="muted">—</span>
+                            }
+                          }
+                          @default {
+                            {{ cell(c, s) }}
+                          }
+                        }
+                        @if (best()[c.key] === s.strategyKey) {
+                          <span class="badge-best" title="Best in this column">✓</span>
+                        }
                       </td>
                     }
                     <td>
                       @if (s.family === 'BENCHMARK') {
-                        <span class="badge">Reference</span>
+                        <span class="badge tone-info">Reference</span>
                       } @else if (isSupported(s.verdict)) {
-                        <span class="badge badge-ok">Beats buy &amp; hold</span>
+                        <span class="badge tone-good">✓ Beats buy &amp; hold</span>
                       } @else {
-                        <span class="badge" title="{{ s.verdict }}">Not supported</span>
+                        <span class="badge tone-neutral" title="{{ s.verdict }}">Not supported</span>
                       }
                     </td>
                   </tr>
@@ -103,9 +172,11 @@ interface Col {
             </table>
           </div>
           <p class="small muted" style="margin-top: 0.5rem">
-            ✓ marks the best value in a column. "Excess" is the annualized return above equal-weight buy &amp; hold with a
-            95% block-bootstrap interval. "DSR" is the Deflated Sharpe Ratio: the probability that the edge over buy &amp;
-            hold is real after accounting for testing {{ r.config.nCandidates }} strategies. {{ r.config.verdictRule }}.
+            <span class="badge-best">✓</span> marks the best value in a column; bars are scaled to the column's largest
+            value. "Excess" is the annualized return above equal-weight buy &amp; hold with a 95% block-bootstrap
+            interval drawn against the zero line (green when wholly above it, red when wholly below). "DSR" is the
+            Deflated Sharpe Ratio: the probability that the edge over buy &amp; hold is real after accounting for testing
+            {{ r.config.nCandidates }} strategies; the tick marks the 0.95 needed. {{ r.config.verdictRule }}.
           </p>
         </div>
 
@@ -134,7 +205,7 @@ interface Col {
 
         <div class="grid-2">
           <div class="card">
-            <h3>Cost sensitivity (CAGR)</h3>
+            <h3>Cost sensitivity (CAGR) <app-help text="The same backtest re-run with different trading costs per side. Strategies that trade a lot fade fastest as costs rise; a rule that only works at zero cost is not a rule you can trade." topic="costs" label="cost sensitivity" /></h3>
             <div class="table-wrap">
               <table class="table compact">
                 <thead>
@@ -150,14 +221,16 @@ interface Col {
                     <tr>
                       <td>{{ s.name }}</td>
                       @for (b of r.config.costSensitivityBps; track b) {
-                        <td class="num">{{ s.costSensitivity[b + '']?.cagr ?? null | signedPct: 1 }}</td>
+                        <td class="num heat" [class]="'num heat tone-' + costTone(s, b)" [style.--h]="costHeat(s, b)">
+                          {{ s.costSensitivity[b + '']?.cagr ?? null | signedPct: 1 }}
+                        </td>
                       }
                     </tr>
                   }
                 </tbody>
               </table>
             </div>
-            <p class="small muted" style="margin-top: 0.5rem">High-turnover rules lose the most as costs rise.</p>
+            <p class="small muted" style="margin-top: 0.5rem">Colour depth follows the size of the annual return; red is a loss. High-turnover rules lose the most as costs rise.</p>
           </div>
 
           <div class="card">
@@ -170,6 +243,7 @@ interface Col {
               <li>With about {{ years() | fixed: 1 }} years and a small universe, a few lucky trades can dominate. Treat
                 differences without a "Beats buy &amp; hold" badge as noise.</li>
               <li>This is research, not advice: a backtest is not evidence of live profitability.</li>
+              <li><a routerLink="/guide" fragment="metrics">Every metric on this page, explained in the guide →</a></li>
             </ul>
           </div>
         </div>
@@ -187,6 +261,10 @@ interface Col {
     .ref-row td { background: var(--surface-2); }
     .notes { margin: 0; padding-left: 1.1rem; }
     .notes li + li { margin-top: 0.35rem; }
+    .lens td:first-child { min-width: 168px; }
+    .lens td.num { white-space: nowrap; }
+    .lens .ci-cell { flex-direction: column; align-items: flex-end; gap: 0.1rem; }
+    .lens .ci-cell .small { text-align: right; }
   `,
 })
 export class StrategiesPage {
@@ -199,24 +277,97 @@ export class StrategiesPage {
   protected readonly run = computed(() => valueOf(this.res)?.run ?? null);
   protected readonly results = computed(() => valueOf(this.res)?.results ?? []);
   protected readonly years = computed(() => this.results()[0]?.metrics.years ?? 0);
+  protected readonly runTone = computed(() => {
+    const anySupported = this.results().some((s) => s.family !== 'BENCHMARK' && supported(s.verdict));
+    return anySupported ? 'good' : verdictTone(this.run()?.summary) === 'good' ? 'good' : 'warn';
+  });
+
+  protected readonly headline = computed(() => {
+    const list = this.results();
+    if (!list.length) return null;
+    const ref = list.find((s) => s.strategyKey === REFERENCE_KEY);
+    const active = list.filter((s) => s.family !== 'BENCHMARK');
+    const best = [...active].sort((a, b) => (b.metrics.sharpe ?? -Infinity) - (a.metrics.sharpe ?? -Infinity))[0];
+    const ai = list.find((s) => s.strategyKey === AI_KEY);
+    return {
+      n: list.length,
+      years: list[0].metrics.years,
+      supported: active.filter((s) => supported(s.verdict)).length,
+      refCagr: ref?.metrics.cagr ?? null,
+      refSharpe: ref?.metrics.sharpe ?? null,
+      refDd: ref?.metrics.maxDrawdown ?? null,
+      bestKey: best?.strategyKey ?? '',
+      bestName: best?.name ?? '—',
+      bestSharpe: best?.metrics.sharpe ?? null,
+      bestSupported: best ? supported(best.verdict) : false,
+      aiExcess: ai?.metrics.excessReturn ?? null,
+      aiLo: ai?.metrics.excessCiLow ?? null,
+      aiHi: ai?.metrics.excessCiHigh ?? null,
+      aiDsr: ai?.metrics.deflatedSharpe ?? null,
+      aiSupported: ai ? supported(ai.verdict) : false,
+    };
+  });
 
   protected readonly cols: Col[] = [
-    { label: 'CAGR', hint: 'compound annual growth, after costs', get: (r) => r.metrics.cagr, fmt: (v) => fmtSignedPct(v, 1), higherIsBetter: true },
-    { label: 'Sharpe', hint: 'annualized, over cash', get: (r) => r.metrics.sharpe, fmt: (v) => v.toFixed(2), higherIsBetter: true },
-    { label: 'Max DD', hint: 'largest peak-to-trough fall', get: (r) => r.metrics.maxDrawdown, fmt: (v) => fmtPct(v, 1), higherIsBetter: true },
-    { label: 'Exposure', hint: 'average share of capital invested', get: (r) => r.metrics.exposure, fmt: (v) => fmtPct(v, 0), higherIsBetter: null },
-    { label: 'Trades', hint: 'round trips in the window', get: (r) => r.metrics.trades, fmt: (v) => v.toLocaleString('en-US'), higherIsBetter: null },
-    { label: 'Excess', hint: 'annualized vs equal-weight buy & hold, 95% CI', get: (r) => r.metrics.excessReturn, fmt: (v) => fmtSignedPct(v, 1), higherIsBetter: true },
-    { label: 'DSR', hint: 'Deflated Sharpe Ratio of the excess return (≥ 0.95 needed)', get: (r) => r.metrics.deflatedSharpe, fmt: (v) => v.toFixed(2), higherIsBetter: true },
+    { key: 'cagr', label: 'CAGR', hint: 'compound annual growth, after costs', topic: 'cagr', get: (r) => r.metrics.cagr, fmt: (v) => fmtSignedPct(v, 1), higherIsBetter: true, view: 'signed-bar' },
+    { key: 'sharpe', label: 'Sharpe', hint: 'return per unit of risk, annualized, over cash', topic: 'sharpe', get: (r) => r.metrics.sharpe, fmt: (v) => v.toFixed(2), higherIsBetter: true, view: 'signed-bar' },
+    { key: 'maxdd', label: 'Max DD', hint: 'largest peak-to-trough fall; closer to zero is better', topic: 'max-drawdown', get: (r) => r.metrics.maxDrawdown, fmt: (v) => fmtPct(v, 1), higherIsBetter: true, view: 'bar' },
+    { key: 'exposure', label: 'Exposure', hint: 'average share of capital invested', topic: 'exposure', get: (r) => r.metrics.exposure, fmt: (v) => fmtPct(v, 0), higherIsBetter: null, view: 'bar' },
+    { key: 'trades', label: 'Trades', hint: 'round trips in the window', topic: 'costs', get: (r) => r.metrics.trades, fmt: (v) => v.toLocaleString('en-US'), higherIsBetter: null, view: 'plain' },
+    { key: 'excess', label: 'Excess', hint: 'annualized return above equal-weight buy & hold, with a 95% confidence interval', topic: 'excess', get: (r) => r.metrics.excessReturn, fmt: (v) => fmtSignedPct(v, 1), higherIsBetter: true, view: 'ci' },
+    { key: 'dsr', label: 'DSR', hint: 'Deflated Sharpe Ratio: probability the edge is real after trying many strategies (≥ 0.95 needed)', topic: 'dsr', get: (r) => r.metrics.deflatedSharpe, fmt: (v) => v.toFixed(2), higherIsBetter: true, view: 'dsr' },
   ];
 
   protected cell(c: Col, s: StrategyResult): string {
     const v = c.get(s);
     if (v === null || v === undefined || !Number.isFinite(v)) return '—';
-    if (c.label === 'Excess' && s.metrics.excessCiLow != null && s.metrics.excessCiHigh != null) {
-      return `${c.fmt(v)} (${fmtSignedPct(s.metrics.excessCiLow, 1)} to ${fmtSignedPct(s.metrics.excessCiHigh, 1)})`;
-    }
     return c.fmt(v);
+  }
+
+  protected ciText(s: StrategyResult): string {
+    const lo = s.metrics.excessCiLow;
+    const hi = s.metrics.excessCiHigh;
+    return lo != null && hi != null ? `${fmtSignedPct(lo, 1)} to ${fmtSignedPct(hi, 1)}` : '';
+  }
+
+  /** Largest |value| per column, for bar scaling. */
+  protected readonly scale = computed<Record<string, number>>(() => {
+    const out: Record<string, number> = {};
+    for (const c of this.cols) {
+      let m = 0;
+      for (const s of this.results()) {
+        const v = c.get(s);
+        if (typeof v === 'number' && Number.isFinite(v)) m = Math.max(m, Math.abs(v));
+        if (c.key === 'excess') {
+          for (const e of [s.metrics.excessCiLow, s.metrics.excessCiHigh]) {
+            if (typeof e === 'number' && Number.isFinite(e)) m = Math.max(m, Math.abs(e));
+          }
+        }
+      }
+      out[c.key] = m || 1;
+    }
+    return out;
+  });
+
+  private readonly maxCostCagr = computed(() => {
+    let m = 0;
+    for (const s of this.results()) {
+      for (const v of Object.values(s.costSensitivity)) {
+        if (typeof v.cagr === 'number' && Number.isFinite(v.cagr)) m = Math.max(m, Math.abs(v.cagr));
+      }
+    }
+    return m || 1;
+  });
+
+  protected costTone(s: StrategyResult, bp: number): string {
+    const v = s.costSensitivity[bp + '']?.cagr;
+    if (typeof v !== 'number' || v === 0) return 'neutral';
+    return v > 0 ? 'good' : 'bad';
+  }
+
+  protected costHeat(s: StrategyResult, bp: number): number {
+    const v = s.costSensitivity[bp + '']?.cagr;
+    return typeof v === 'number' ? Math.min(1, Math.abs(v) / this.maxCostCagr()) : 0;
   }
 
   /** strategy key holding the best value per column (benchmarks excluded where the column compares to them) */
@@ -235,7 +386,7 @@ export class StrategiesPage {
           bestKey = s.strategyKey;
         }
       }
-      if (bestKey) out[c.label] = bestKey;
+      if (bestKey) out[c.key] = bestKey;
     }
     return out;
   });

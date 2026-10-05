@@ -6,18 +6,24 @@ import { apiUrl, valueOf } from '../core/api';
 import { FORMAT_PIPES } from '../core/format';
 import { latestByModel } from '../core/forecast-utils';
 import { CompanySummary, DividendStatus, ForecastSummary, MODEL_KINDS } from '../core/models';
+import { Icon } from '../shared/icon';
 import { UI } from '../shared/ui';
+import { VIZ } from '../shared/viz';
 
 @Component({
   selector: 'app-companies',
-  imports: [RouterLink, FormsModule, ...UI, ...FORMAT_PIPES],
+  imports: [RouterLink, FormsModule, Icon, ...UI, ...VIZ, ...FORMAT_PIPES],
   template: `
     <div class="page-head">
-      <div>
-        <h1>Companies</h1>
-        <p class="muted">Nasdaq universe, each compared with its sector benchmark ETF.</p>
+      <div class="page-title">
+        <app-page-icon name="building" area="research" />
+        <div>
+          <h1>Companies</h1>
+          <p class="muted">Nasdaq universe, each compared with its sector benchmark ETF.</p>
+        </div>
       </div>
       <div class="filters">
+        <a routerLink="/guide" fragment="page-companies" class="btn btn-help"><app-icon name="help" [size]="16" /> How to read this</a>
         <label class="field">
           Dividends
           <select [ngModel]="div()" (ngModelChange)="div.set($event)">
@@ -61,9 +67,9 @@ import { UI } from '../shared/ui';
                 <th>Benchmark</th>
                 <th>CIK</th>
                 <th class="num">Last close</th>
-                <th>Dividend</th>
-                <th>Baseline forecast</th>
-                <th>Augmented forecast</th>
+                <th>Dividend <app-help text="From recorded cash dividends: the payment frequency when regular, irregular or suspended otherwise, with the trailing 12-month yield." topic="reported-estimated" label="dividend status" /></th>
+                <th>Baseline forecast <app-help text="Latest probability that the stock beats its sector ETF over 21 trading days, from the model that sees prices and fundamentals only." topic="models" label="baseline forecast" /></th>
+                <th>Augmented forecast <app-help text="The same probability from the model that also sees policy events weighted by the company's documented exposure." topic="models" label="augmented forecast" /></th>
               </tr>
             </thead>
             <tbody>
@@ -98,6 +104,7 @@ import { UI } from '../shared/ui';
                       @if (cell.f; as f) {
                         <a [routerLink]="['/forecasts', f.id]" class="plain-link">
                           <app-forecast-prob [f]="f" [withContext]="false" />
+                          <div class="small nowrap" style="margin-top: 0.2rem"><app-lean [p]="f.probability" [lo]="f.probLow" [hi]="f.probHigh" /></div>
                           <div class="small muted nowrap">
                             {{ f.horizonTradingDays }} d · as of {{ f.asOfDate }} ·
                             {{ f.issuedAt | utc }}

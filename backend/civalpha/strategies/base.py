@@ -18,7 +18,7 @@ import pandas as pd
 
 from .panel import MarketPanel
 
-FAMILIES = ("BENCHMARK", "TREND", "MEAN_REVERSION", "FUNDAMENTAL", "EVENT", "AI")
+FAMILIES = ("BENCHMARK", "TREND", "MEAN_REVERSION", "FUNDAMENTAL", "EVENT", "SPECULATIVE", "AI")
 
 
 @dataclass

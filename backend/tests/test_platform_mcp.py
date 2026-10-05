@@ -35,7 +35,7 @@ def call(c, name, arguments=None, headers=None):
 def test_tools_resources_and_prompts_are_listed(mcp):
     tools = {t["name"]: t for t in rpc(mcp, "tools/list")["tools"]}
     for name in ("get_status", "get_company", "get_exposures", "get_forecast", "get_accuracy", "get_strategies", "get_decisions",
-                 "investment_candidates", "run_pipeline", "run_time_machine", "update_prices"):
+                 "investment_candidates", "run_pipeline", "run_time_machine", "update_prices", "get_doubler_study", "run_doubler_study"):
         assert name in tools, name
     # read and safe actions only: universe changes and new events stay in the UI / REST API
     assert not {"add_company", "add_event", "delete_company"} & set(tools)
@@ -61,7 +61,7 @@ def test_research_tools_answer_on_the_test_universe(mcp):
                        ("list_events", {}), ("list_events", {"category": "TRADE_TARIFF"}), ("get_current_forecasts", {}),
                        ("get_forecast_history", {"symbol": "META", "model_kind": "AUGMENTED"}), ("get_accuracy", {}),
                        ("get_strategies", {}), ("get_decisions", {}), ("get_decisions", {"as_of_date": "2026-01-02"}),
-                       ("list_time_machine_runs", {})):
+                       ("list_time_machine_runs", {}), ("get_doubler_study", {})):
         err, _ = call(mcp, name, args)
         assert err is None, (name, err)
     err, out = call(mcp, "investment_candidates")

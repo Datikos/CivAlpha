@@ -376,6 +376,37 @@ def build() -> MCPServer:
                                "rulesHolding": sorted(k for k, v in (x.get("ruleVotes") or {}).items() if v)}
                               for x in r.get("decisions", [])]}
 
+    # ------------------------------------------------------------------ doubler study
+    @tool_read
+    @_domain
+    def get_doubler_study(horizon: int = 63, episodes: int = 20) -> dict:
+        """Doubler study: how often a tracked stock doubled (+100% at the best close) within `horizon` trading days (21, 42 or
+        63), the list of such episodes, the profile of those stock-days, how often the point-in-time screen (volatile small
+        cap on a breakout or volume spike) finds them versus chance, and which stocks the screen flags today. Rates are
+        counts of history with block-bootstrap intervals, not odds for any stock; the loss rate sits next to every hit rate."""
+        r = read.doubler_study()
+        run = r.get("run")
+        if not run:
+            return {"run": None, "note": "No doubler study yet: run_doubler_study makes one (it also runs with every pipeline run)."}
+        res = run.get("result") or {}
+        h = (res.get("horizons") or {}).get(str(horizon))
+        if h is None:
+            raise Problem(f"horizon must be one of {list((res.get('horizons') or {}).keys())}")
+        keys = ("n", "hits", "hitRate", "hitCiLow", "hitCiHigh", "lossRate", "medianEndReturn", "meanEndReturn", "medianMaxReturn")
+        return {"runId": run.get("id"), "runAt": run.get("runAt"), "dataCutoff": res.get("dataCutoff"), "start": res.get("start"),
+                "years": res.get("years"), "universeSize": res.get("universeSize"), "stockDays": res.get("stockDays"),
+                "headline": res.get("headline"), "horizon": horizon, "verdict": h.get("verdict"), "lift": h.get("lift"),
+                "baseRate": _pick(h.get("base") or {}, *keys), "screen": _pick(h.get("screen") or {}, *keys),
+                "controlSameVolatilityNoTrigger": _pick(h.get("control") or {}, *keys),
+                "byYear": h.get("byYear"), "companiesWithHits": h.get("companiesWithHits"),
+                "episodes": (h.get("episodes") or [])[-max(0, min(episodes, 200)):],
+                "profile": [{**_pick(f, "feature", "label", "n", "medianAll", "medianHits")} for f in h.get("profile") or []],
+                "screenRule": res.get("screenRule"),
+                "today": {"asOfDate": (res.get("today") or {}).get("asOfDate"),
+                          "flagged": [_pick(x, "symbol", "name", "conditions", "features") for x in (res.get("today") or {}).get("stocks", []) if x.get("fires")],
+                          "notFlagged": [x.get("symbol") for x in (res.get("today") or {}).get("stocks", []) if not x.get("fires")]},
+                "disclaimers": res.get("disclaimers")}
+
     # ------------------------------------------------------------------ time machine
     @tool_read
     @_domain
@@ -468,6 +499,12 @@ def build() -> MCPServer:
         """Record the AI strategy's decisions for the latest trading day (or a given date)."""
         d = _date(as_of_date, "as_of_date")
         return _action(ctx, lambda: admin.strategy_decide(admin.DateIn(asOfDate=d)), wait_seconds)
+
+    @tool_action
+    @_domain
+    def run_doubler_study(ctx: Context, wait_seconds: int = 0) -> dict:
+        """Run the doubler study on the stored prices and filings and store it. Read it with get_doubler_study."""
+        return _action(ctx, admin.doubler_study, wait_seconds)
 
     @tool_action
     @_domain

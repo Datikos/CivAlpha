@@ -5,17 +5,25 @@ import { RouterLink } from '@angular/router';
 import { apiUrl, valueOf } from '../core/api';
 import { FORMAT_PIPES } from '../core/format';
 import { EVENT_CATEGORIES, PolicyEvent } from '../core/models';
+import { Icon } from '../shared/icon';
 import { UI } from '../shared/ui';
+import { VIZ } from '../shared/viz';
 import { EventForm } from './event-form';
 
 @Component({
   selector: 'app-events',
-  imports: [RouterLink, FormsModule, EventForm, ...UI, ...FORMAT_PIPES],
+  imports: [RouterLink, FormsModule, EventForm, Icon, ...UI, ...VIZ, ...FORMAT_PIPES],
   template: `
     <div class="page-head">
-      <div>
-        <h1>Political &amp; policy events</h1>
-        <p class="muted">US monetary policy and trade / tariff actions, each backed by stored source documents.</p>
+      <div class="page-title">
+        <app-page-icon name="landmark" area="research" />
+        <div>
+          <h1>Political &amp; policy events</h1>
+          <p class="muted">US monetary policy and trade / tariff actions, each backed by stored source documents.</p>
+        </div>
+      </div>
+      <div class="page-actions">
+        <a routerLink="/guide" fragment="page-events" class="btn btn-help"><app-icon name="help" [size]="16" /> How to read this</a>
       </div>
     </div>
 

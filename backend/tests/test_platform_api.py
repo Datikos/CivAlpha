@@ -7,7 +7,7 @@ READ_URLS = ["/api/meta", "/api/companies", "/api/companies/META", "/api/compani
              "/api/companies/META/financials", "/api/companies/META/dividends", "/api/companies/META/exposures", "/api/events", "/api/events?category=TRADE_TARIFF",
              "/api/forecasts/current", "/api/forecasts/history", "/api/forecasts/history?symbol=META&modelKind=AUGMENTED",
              "/api/accuracy", "/api/admin/jobs", "/api/strategies", "/api/decisions", "/api/decisions?date=2026-01-02",
-             "/api/timemachine", "/api/admin/universe", "/health"]
+             "/api/timemachine", "/api/doublers", "/api/admin/universe", "/health"]
 
 
 def test_read_endpoints_answer_without_errors(api):
@@ -16,7 +16,7 @@ def test_read_endpoints_answer_without_errors(api):
         assert r.status_code == 200, (url, r.status_code, r.text[:200])
     assert api.get("/api/companies/META").json()["symbol"] == "META"
     assert api.get("/api/companies/FB/prices").json()["symbol"] == "META"     # former ticker resolves
-    for url in ("/api/companies/NOPE", "/api/strategies/NOPE", "/api/timemachine/999999", "/api/forecasts/999999",
+    for url in ("/api/companies/NOPE", "/api/strategies/NOPE", "/api/timemachine/999999", "/api/doublers/999999", "/api/forecasts/999999",
                 "/api/filings/999999", "/api/events/999999", "/api/documents/999999"):
         assert api.get(url).status_code == 404, url
     assert api.get("/api/companies/NOPE").json() == {"error": "unknown symbol NOPE"}

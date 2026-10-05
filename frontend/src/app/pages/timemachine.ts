@@ -6,7 +6,9 @@ import { LinePoint, LineChart, LineSeries } from '../charts/line-chart';
 import { ApiService, apiUrl, errorMessage, valueOf } from '../core/api';
 import { FORMAT_PIPES, fmtSignedPct } from '../core/format';
 import { Job, TimeMachineRun, TimeMachineRunSummary, TmStock } from '../core/models';
+import { Icon } from '../shared/icon';
 import { UI } from '../shared/ui';
+import { VIZ } from '../shared/viz';
 
 const DAY = 86_400_000;
 const toX = (d: string) => Date.parse(d + 'T00:00:00Z');
@@ -17,15 +19,21 @@ function isoDaysAgo(n: number): string {
 
 @Component({
   selector: 'app-time-machine',
-  imports: [FormsModule, RouterLink, LineChart, ...UI, ...FORMAT_PIPES],
+  imports: [FormsModule, RouterLink, LineChart, Icon, ...UI, ...VIZ, ...FORMAT_PIPES],
   template: `
     <div class="page-head">
-      <div>
-        <h1>Time machine</h1>
-        <p class="muted">
-          Go back to a past close and forecast with only the data that existed then — the beat-the-sector odds, the AI's
-          buy decisions and a 10–90% return band — then see what actually happened 5, 10, 21 and 63 trading days later.
-        </p>
+      <div class="page-title">
+        <app-page-icon name="hourglass" area="strategy" />
+        <div>
+          <h1>Time machine</h1>
+          <p class="muted">
+            Go back to a past close and forecast with only the data that existed then — the beat-the-sector odds, the AI's
+            buy decisions and a 10–90% return band — then see what actually happened 5, 10, 21 and 63 trading days later.
+          </p>
+        </div>
+      </div>
+      <div class="page-actions">
+        <a routerLink="/guide" fragment="page-timemachine" class="btn btn-help"><app-icon name="help" [size]="16" /> How to read this</a>
       </div>
     </div>
 
@@ -61,68 +69,72 @@ function isoDaysAgo(n: number): string {
     <app-status [res]="runs" what="time machine runs" />
 
     @if (run.hasValue() && data(); as r) {
-      <div class="verdict" role="note"><strong>As of {{ r.asOfDate }}.</strong> {{ r.headline }}</div>
+      <app-verdict tone="info" [title]="'As of ' + r.asOfDate + '.'">{{ r.headline }}</app-verdict>
       <p class="small muted">
         Run {{ r.runAt | utc }} with data through {{ r.dataCutoff }}
       </p>
 
-      <div class="chips horizon" role="group" aria-label="Horizon">
-        @for (h of r.result.horizons; track h) {
-          <button type="button" class="chip" [class.active]="h + '' === horizon()" (click)="horizon.set(h + '')"
-                  [attr.aria-pressed]="h + '' === horizon()">
-            {{ h }} trading days
-          </button>
-        }
+      <div class="horizon-row">
+        <div class="seg" role="group" aria-label="Horizon">
+          @for (h of r.result.horizons; track h) {
+            <button type="button" [class.on]="h + '' === horizon()" (click)="horizon.set(h + '')" [attr.aria-pressed]="h + '' === horizon()">
+              {{ h }} trading days
+            </button>
+          }
+        </div>
         @if (sum(); as s) {
           <span class="small muted">{{ s.resolved ? s.resolved + ' outcomes known (to ' + s.endDate + ')' : 'outcome not known yet' }}</span>
         }
       </div>
 
       @if (sum(); as s) {
-        <div class="grid-3">
-          <div class="card">
-            <h3>Beat-the-sector odds</h3>
+        <div class="stats wide">
+          <div class="stat" [class]="'stat ' + (s.odds?.AUGMENTED ? ((s.odds?.AUGMENTED?.hitRate ?? 0) > 0.5 ? 'tone-good' : 'tone-warn') : 'tone-neutral')">
+            <div class="stat-label">Beat-the-sector odds <app-help text="Share of stocks where the probability pointed the right way (above 50% and the stock beat its ETF, or below and it did not). A coin would score about 50%." topic="hit-rate" label="hit rate" /></div>
             @if (s.odds?.AUGMENTED; as o) {
-              <p class="big">{{ o.hitRate | pct: 0 }} <span class="small muted">of {{ o.n }} calls right</span></p>
-              <dl class="kv small">
-                <dt>Brier</dt><dd>{{ o.brier | fixed: 3 }} <span class="muted">vs {{ o.brierBaseRate | fixed: 3 }} base rate (lower is better)</span></dd>
-                <dt>AUC</dt><dd>{{ o.auc | fixed: 2 }}</dd>
-                <dt>Top 5 − bottom 5</dt><dd>{{ o.topMinusBottomExcess | signedPct: 1 }} excess return</dd>
+              <div class="stat-value">{{ o.hitRate | pct: 0 }}<span class="unit">of {{ o.n }} calls right</span></div>
+              <app-meter [value]="o.hitRate" [target]="0.5" targetLabel="coin flip" label="Hit rate" />
+              <div class="stat-sub">
+                Brier {{ o.brier | fixed: 3 }} vs {{ o.brierBaseRate | fixed: 3 }} base rate
+                <span [class]="'badge tone-' + (o.brier < o.brierBaseRate ? 'good' : 'warn')">{{ o.brier < o.brierBaseRate ? '✓ better' : '≈ no better' }}</span>
+                · AUC {{ o.auc | fixed: 2 }} · top 5 − bottom 5 <app-delta [value]="o.topMinusBottomExcess" kind="pct" [digits]="1" />
                 @if (s.odds?.BASELINE; as b) {
-                  <dt>Baseline model</dt><dd>{{ b.hitRate | pct: 0 }} right, Brier {{ b.brier | fixed: 3 }}</dd>
+                  <div>Baseline model: {{ b.hitRate | pct: 0 }} right, Brier {{ b.brier | fixed: 3 }}</div>
                 }
-              </dl>
+              </div>
             } @else {
-              <p class="muted">Not known yet.</p>
+              <div class="stat-value muted">Not known yet</div>
             }
           </div>
-          <div class="card">
-            <h3>AI buy decisions</h3>
+          <div class="stat" [class]="'stat ' + aiTone(s)">
+            <div class="stat-label">AI buy decisions <app-help text="What the AI strategy would have bought at the next close, equal weight, against the return of every tracked stock over the same window." topic="page-decisions" label="AI picks" /></div>
             @if (s.ai; as a) {
               @if (a.picks.length) {
-                <p class="big">{{ a.picksReturn ?? null | signedPct: 1 }} <span class="small muted">picks vs {{ a.universeReturn | signedPct: 1 }} all stocks</span></p>
-                <dl class="kv small">
-                  <dt>Picked</dt><dd>{{ a.picks.join(', ') }}</dd>
-                  <dt>Beat their sector</dt><dd>{{ a.picksBeatSector }} of {{ a.picks.length }}</dd>
-                </dl>
+                <div class="stat-value"><app-delta [value]="a.picksReturn" kind="pct" [digits]="1" /><span class="unit">picks</span></div>
+                <div class="stat-sub">
+                  all stocks <app-delta [value]="a.universeReturn" kind="pct" [digits]="1" /> · picks vs all
+                  <app-delta [value]="(a.picksReturn ?? 0) - a.universeReturn" kind="pct" [digits]="1" />
+                  <div>{{ a.picks.join(', ') }} · {{ a.picksBeatSector }} of {{ a.picks.length }} beat their sector</div>
+                </div>
               } @else {
-                <p class="muted">The AI bought nothing that day (all stocks {{ a.universeReturn | signedPct: 1 }}).</p>
+                <div class="stat-value muted">Bought nothing</div>
+                <div class="stat-sub">all stocks <app-delta [value]="a.universeReturn" kind="pct" [digits]="1" /></div>
               }
-              <p class="small muted">Bought at the next close, equal weight.</p>
             } @else {
-              <p class="muted">Not known yet.</p>
+              <div class="stat-value muted">Not known yet</div>
             }
           </div>
-          <div class="card">
-            <h3>10–90% return band</h3>
+          <div class="stat" [class]="'stat ' + (s.range ? (s.range.coverage >= s.range.target - 0.05 ? 'tone-good' : 'tone-warn') : 'tone-neutral')">
+            <div class="stat-label">10–90% return band <app-help text="For each stock the model gave a band that should contain the actual return 80% of the time. Coverage near 80% with a narrower band than the naive one is what a useful band looks like." topic="coverage" label="band coverage" /></div>
             @if (s.range; as g) {
-              <p class="big">{{ g.coverage | pct: 0 }} <span class="small muted">of actual returns inside (target 80%)</span></p>
-              <dl class="kv small">
-                <dt>Naive band</dt><dd>{{ g.naiveCoverage | pct: 0 }} inside, width {{ g.naiveWidth | pct: 1 }} vs model {{ g.avgWidth | pct: 1 }}</dd>
-                <dt>Median miss</dt><dd>{{ g.medianAbsError | pct: 1 }} <span class="muted">vs {{ g.naiveMedianAbsError | pct: 1 }} naive</span></dd>
-              </dl>
+              <div class="stat-value">{{ g.coverage | pct: 0 }}<span class="unit">of actual returns inside</span></div>
+              <app-meter [value]="g.coverage" [target]="g.target" [targetLabel]="'target ' + (g.target * 100).toFixed(0) + '%'" label="Band coverage" />
+              <div class="stat-sub">
+                naive band {{ g.naiveCoverage | pct: 0 }} inside · width {{ g.avgWidth | pct: 1 }} vs naive {{ g.naiveWidth | pct: 1 }}
+                <div>median miss {{ g.medianAbsError | pct: 1 }} vs {{ g.naiveMedianAbsError | pct: 1 }} naive</div>
+              </div>
             } @else {
-              <p class="muted">Not known yet.</p>
+              <div class="stat-value muted">Not known yet</div>
             }
           </div>
         </div>
@@ -168,14 +180,18 @@ function isoDaysAgo(n: number): string {
                   <td><a [routerLink]="['/companies', x.s.symbol]" (click)="$event.stopPropagation()">{{ x.s.symbol }}</a></td>
                   <td>
                     @if (x.s.ai) {
-                      <span class="badge" [class.badge-ok]="x.s.ai.action === 'ENTER'">{{ x.s.ai.action === 'ENTER' ? 'Buy' : 'Out' }}</span>
+                      <span class="badge" [class]="'badge tone-' + (x.s.ai.action === 'ENTER' ? 'good' : 'neutral')">{{ x.s.ai.action === 'ENTER' ? '▲ Buy' : '○ Out' }}</span>
                     }
                   </td>
-                  <td class="num">{{ x.p ?? null | pct: 0 }}</td>
-                  <td class="num">{{ x.a?.excess ?? null | signedPct: 1 }}</td>
+                  <td class="num">
+                    @if (x.p !== undefined) {
+                      <app-cell-bar [value]="x.p" [max]="1" [text]="x.p | pct: 0" [tone]="x.p > 0.5 ? 'good' : x.p < 0.5 ? 'bad' : 'neutral'" />
+                    }
+                  </td>
+                  <td class="num"><app-delta [value]="x.a?.excess" kind="pct" [digits]="1" /></td>
                   <td>
                     @if (x.a && x.p !== undefined) {
-                      <span [class.good]="x.right" [class.bad]="!x.right">{{ x.right ? '✓ right' : '✗ wrong' }}</span>
+                      <span class="badge" [class]="'badge tone-' + (x.right ? 'good' : 'bad')">{{ x.right ? '✓ right' : '✗ wrong' }}</span>
                     }
                   </td>
                   <td class="num">
@@ -183,10 +199,10 @@ function isoDaysAgo(n: number): string {
                       {{ x.g.q10 | signedPct: 1 }} to {{ x.g.q90 | signedPct: 1 }}
                     }
                   </td>
-                  <td class="num">{{ x.a?.stockReturn ?? null | signedPct: 1 }}</td>
+                  <td class="num"><app-delta [value]="x.a?.stockReturn" kind="pct" [digits]="1" /></td>
                   <td>
                     @if (x.a && x.g) {
-                      <span [class.good]="x.inside" [class.bad]="!x.inside">{{ x.inside ? '✓' : '✗' }}</span>
+                      <span [class]="x.inside ? 'good' : 'bad'" [title]="x.inside ? 'Actual return inside the forecast band' : 'Actual return outside the band'">{{ x.inside ? '✓' : '✗' }}</span>
                     }
                   </td>
                 </tr>
@@ -207,17 +223,13 @@ function isoDaysAgo(n: number): string {
   `,
   styles: `
     .run-card .inline-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.75rem; }
-    .horizon { margin: 0.75rem 0; align-items: center; }
-    .horizon .chip { cursor: pointer; font: inherit; font-size: 0.85rem; padding: 0.15rem 0.7rem; }
-    .horizon .chip.active { border-color: var(--ink); font-weight: 700; }
-    .grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; }
-    .big { font-size: 1.6rem; font-weight: 700; margin: 0.25rem 0 0.5rem; }
-    .big .small { font-weight: 400; }
+    .horizon-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin: 0.75rem 0 1rem; }
     .chart-head { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
     tr.selected td { background: var(--surface-2); }
     tbody tr { cursor: pointer; }
-    .good { color: var(--good-ink); }
-    .bad { color: var(--bad-ink); }
+    .good { color: var(--good-ink); font-weight: 700; }
+    .bad { color: var(--bad-ink); font-weight: 700; }
+    .stat-sub .badge { margin-left: 0.25em; }
   `,
 })
 export class TimeMachinePage {
@@ -289,6 +301,12 @@ export class TimeMachinePage {
   }
 
   protected readonly sum = computed(() => this.data()?.result.summary[this.horizon()] ?? null);
+
+  protected aiTone(s: { ai?: { picks: string[]; picksReturn?: number; universeReturn: number } }): string {
+    const a = s.ai;
+    if (!a || !a.picks.length || a.picksReturn === undefined) return 'tone-neutral';
+    return a.picksReturn > a.universeReturn ? 'tone-good' : 'tone-bad';
+  }
 
   protected readonly rows = computed(() => {
     const h = this.horizon();

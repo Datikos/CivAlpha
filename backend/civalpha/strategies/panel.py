@@ -28,6 +28,8 @@ class MarketPanel:
     etf_px: pd.DataFrame      # benchmark ETF TR index (columns = symbols)
     etf_ret: pd.DataFrame     # daily returns of each benchmark ETF
     cash_ret: pd.Series       # daily return of cash (realized FEDFUNDS / 252, else 0)
+    close: pd.DataFrame       # raw (unadjusted) close per company, forward-filled
+    volume: pd.DataFrame      # shares traded per day, NaN when the provider gave none
     symbols: dict[int, str]
     names: dict[int, str]
     benchmark_of: dict[int, str]
@@ -55,8 +57,10 @@ class MarketPanel:
             mask = (cal >= lo) & ((cal < hi) if hi is not None else True)
             member.loc[mask, c] = True
         member &= px.notna()
+        close = pd.DataFrame({c: bundle.close.get(c, np.full(len(cal), np.nan)) for c in cids}, index=cal, dtype=float)
+        volume = pd.DataFrame({c: bundle.volume.get(c, np.full(len(cal), np.nan)) for c in cids}, index=cal, dtype=float)
         return MarketPanel(bundle=bundle, calendar=cal, px=px, ret=ret, member=member, bench_px=bench_px, etf_px=etf, etf_ret=etf_ret,
-                           cash_ret=_cash_returns(bundle.macro, cal),
+                           cash_ret=_cash_returns(bundle.macro, cal), close=close, volume=volume,
                            symbols={c: str(comp.loc[c, "symbol"]) for c in cids},
                            names={c: str(comp.loc[c, "name"]) if "name" in comp.columns else str(comp.loc[c, "symbol"]) for c in cids},
                            benchmark_of={c: str(comp.loc[c, "benchmark_symbol"]) for c in cids})
@@ -92,7 +96,8 @@ class MarketPanel:
 
 
     def fundamentals(self) -> dict[str, pd.DataFrame]:
-        """Report-based metrics as filed at each close (date x company), plus 'new_filing' (a report became public).
+        """Report-based metrics as filed at each close (date x company), plus 'new_filing' (a report became public)
+        and 'market_cap' (latest filed share count, split-adjusted, times the raw close; NaN before any filing).
 
         Each day uses the latest snapshot accepted at or before close(t). Valuation uses the latest filed share
         count, adjusted for splits after its report date, times the raw close of day t. Cached on the panel.
@@ -114,7 +119,7 @@ def _fundamental_matrices(p: "MarketPanel") -> dict[str, pd.DataFrame]:
     cids = list(p.px.columns)
     T, N = len(cal), len(cids)
     cal_ns = np.array([pit.close_ts(d).value for d in cal], dtype=np.int64)
-    mats = {k: np.full((T, N), np.nan) for k in [*FUND_FEATURES, "payout_ratio"]}
+    mats = {k: np.full((T, N), np.nan) for k in [*FUND_FEATURES, "payout_ratio", "market_cap"]}
     new = np.zeros((T, N), dtype=bool)
     actions = p.bundle.actions
     for j, c in enumerate(cids):
@@ -148,6 +153,7 @@ def _fundamental_matrices(p: "MarketPanel") -> dict[str, pd.DataFrame]:
             for ex, ratio in zip(pd.to_datetime(spl["ex_date"]).values, spl["value"].astype(float)):
                 factor = np.where((calv >= ex) & (sd < ex), factor * ratio, factor)
         mcap = close * sh * factor
+        mats["market_cap"][:, j] = np.where(mcap > 0, mcap, np.nan)
         with np.errstate(divide="ignore", invalid="ignore"):
             mats["earnings_yield"][:, j] = np.where(mcap > 0, vals["ttm_net_income"][np.maximum(idx, 0)] / mcap, np.nan)
             mats["sales_yield"][:, j] = np.where(mcap > 0, vals["ttm_revenue"][np.maximum(idx, 0)] / mcap, np.nan)

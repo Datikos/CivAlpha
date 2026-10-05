@@ -60,6 +60,7 @@ class DataBundle:
     membership: pd.DataFrame
     filings: pd.DataFrame = field(default_factory=pd.DataFrame)  # id, accession_no, form_type, accepted_at, url
     close: dict = field(default_factory=dict)       # company_id -> raw close aligned to calendar (forward-filled)
+    volume: dict = field(default_factory=dict)      # company_id -> shares traded per day aligned to calendar (NaN when unknown)
     actions: pd.DataFrame = field(default_factory=pd.DataFrame)  # corporate actions (splits for share counts)
     _fund_snap: dict = field(default_factory=dict)
     _expo_snap: dict = field(default_factory=dict)
@@ -71,14 +72,17 @@ class DataBundle:
         actions = actions.copy() if actions is not None else pd.DataFrame(columns=["company_id", "symbol", "ex_date", "action_type", "value"])
         if len(actions):
             actions["ex_date"] = pd.to_datetime(actions["ex_date"])
-        tr, raw = {}, {}
+        tr, raw, vol = {}, {}, {}
         sp = stock_prices.copy()
         sp["trade_date"] = pd.to_datetime(sp["trade_date"])
         for cid, g in sp.groupby("company_id"):
             a = actions[actions["company_id"] == cid] if "company_id" in actions else actions.iloc[0:0]
-            closes = g.set_index("trade_date")["close"].astype(float)
+            g = g[~g["trade_date"].duplicated(keep="last")].set_index("trade_date")
+            closes = g["close"].astype(float)
             tr[int(cid)] = total_return_index(closes, a, cal)
-            raw[int(cid)] = closes[~closes.index.duplicated(keep="last")].reindex(cal).ffill().to_numpy(float, copy=True)
+            raw[int(cid)] = closes.reindex(cal).ffill().to_numpy(float, copy=True)
+            if "volume" in g:
+                vol[int(cid)] = pd.to_numeric(g["volume"], errors="coerce").astype(float).reindex(cal).to_numpy(float, copy=True)
         bp = bench_prices.copy()
         bp["trade_date"] = pd.to_datetime(bp["trade_date"])
         btr = {}
@@ -87,7 +91,7 @@ class DataBundle:
             btr[sym] = total_return_index(g.set_index("trade_date")["close"].astype(float), a, cal)
         return DataBundle(companies=companies, calendar=cal, tr=tr, bench_tr=btr, facts=facts, exposures=exposures,
                           events=events, targets=targets, macro=macro, membership=membership,
-                          filings=filings if filings is not None else pd.DataFrame(), close=raw, actions=actions)
+                          filings=filings if filings is not None else pd.DataFrame(), close=raw, volume=vol, actions=actions)
 
     # ---------------------------------------------------------------- snapshots
     def fundamentals_at(self, company_id: int, as_of: pd.Timestamp) -> dict:

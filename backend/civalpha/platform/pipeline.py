@@ -5,6 +5,7 @@ from pathlib import Path
 
 
 from .. import service as ml
+from ..strategies import doublers
 from ..strategies import service as strategy_lab
 from .decisions import DecisionService
 from .errors import Problem
@@ -107,3 +108,7 @@ class Pipeline:
             log(f"AI decisions: {d.created} stored, {d.existing} already existed, {d.explained} explained")
         except Exception as e:  # noqa: BLE001 - the lab is optional; forecasts above are already stored
             log(f"strategy lab skipped: {e}")
+        try:
+            log("doubler study: " + str(doublers.study(engine())["headline"]))
+        except Exception as e:  # noqa: BLE001
+            log(f"doubler study skipped: {e}")

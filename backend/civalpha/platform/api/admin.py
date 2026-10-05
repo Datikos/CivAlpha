@@ -56,6 +56,11 @@ def strategy_decide(body: DateIn | None = None):
     return _submit("STRATEGY_DECIDE", {"asOfDate": d.isoformat()} if d else {})
 
 
+@router.post("/doublers/study")
+def doubler_study():
+    return _submit("DOUBLER_STUDY")
+
+
 @router.post("/timemachine")
 def time_machine(body: DateIn | None = None):
     if body is None or body.asOfDate is None:

@@ -1,21 +1,29 @@
 import { httpResource } from '@angular/common/http';
 import { Component, computed, effect, inject, input, signal, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { Router } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { apiUrl, valueOf } from '../core/api';
 import { FORMAT_PIPES } from '../core/format';
 import { CompanySummary, ForecastSummary, MODEL_KINDS, ModelKind } from '../core/models';
 import { ForecastTable } from '../shared/forecast-table';
+import { Icon } from '../shared/icon';
 import { UI } from '../shared/ui';
+import { VIZ } from '../shared/viz';
 
 @Component({
   selector: 'app-forecast-history',
-  imports: [FormsModule, ForecastTable, ...UI, ...FORMAT_PIPES],
+  imports: [FormsModule, RouterLink, ForecastTable, Icon, ...UI, ...VIZ, ...FORMAT_PIPES],
   template: `
     <div class="page-head">
-      <div>
-        <h1>Forecast history</h1>
-        <p class="muted">Every published forecast, all versions, newest first. Superseded versions are kept and marked.</p>
+      <div class="page-title">
+        <app-page-icon name="history" area="forecast" />
+        <div>
+          <h1>Forecast history</h1>
+          <p class="muted">Every published forecast, all versions, newest first. Superseded versions are kept and marked.</p>
+        </div>
+      </div>
+      <div class="page-actions">
+        <a routerLink="/guide" fragment="page-forecasts" class="btn btn-help"><app-icon name="help" [size]="16" /> How to read this</a>
       </div>
     </div>
 

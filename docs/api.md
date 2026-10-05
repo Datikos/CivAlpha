@@ -238,7 +238,7 @@ out-of-sample window after costs. Results are sorted by Sharpe.
      "verdict": "Beats buy-and-hold after costs: NOT supported"}
   ] }
 ```
-Families: `BENCHMARK`, `TREND`, `MEAN_REVERSION`, `FUNDAMENTAL`, `EVENT`, `AI`. Report-based strategies are `QUALITY_GROWTH`, `PEAD_SUE`, `VALUE_EY`, `GROSS_PROFIT` and `AI_FUND` (the AI on the financial-report profile only); decision factors of kind `FUNDAMENTAL` come from that profile. `DIV_YIELD` holds the 5 highest dividend yields; `AI_DIV` is `AI_GBM` plus the dividend signals (yield, change in the regular dividend, filed payout ratio). `config.dividendFeatureTest` compares the out-of-sample forecasts of the two models on the same rows: `brierDiff` = Brier(with) − Brier(without), negative when the dividend signals help, with a 95% CI from a bootstrap over 21-day blocks of dates. `excess*` compare daily net returns with
+Families: `BENCHMARK`, `TREND`, `MEAN_REVERSION`, `FUNDAMENTAL`, `EVENT`, `SPECULATIVE`, `AI`. `DOUBLER_SCREEN` (family `SPECULATIVE`) trades the doubler study's screen: hold 63 days with a 50% stop. Report-based strategies are `QUALITY_GROWTH`, `PEAD_SUE`, `VALUE_EY`, `GROSS_PROFIT` and `AI_FUND` (the AI on the financial-report profile only); decision factors of kind `FUNDAMENTAL` come from that profile. `DIV_YIELD` holds the 5 highest dividend yields; `AI_DIV` is `AI_GBM` plus the dividend signals (yield, change in the regular dividend, filed payout ratio). `config.dividendFeatureTest` compares the out-of-sample forecasts of the two models on the same rows: `brierDiff` = Brier(with) − Brier(without), negative when the dividend signals help, with a 95% CI from a bootstrap over 21-day blocks of dates. `excess*` compare daily net returns with
 `EW_BUY_HOLD` (annualized, 95% stationary block-bootstrap CI). `deflatedSharpe` is the Deflated Sharpe Ratio of that excess,
 deflated for `nCandidates` strategies. A verdict says SUPPORTED only with at least 3 years out of sample, an excess CI above
 0 and DSR ≥ 0.95. `equity` is sampled weekly. `run` is null and `results` empty before the first backtest.
@@ -265,6 +265,45 @@ trips: `companyId`, `symbol`, `entryDate`, `exitDate` (null = still open), `trad
 in probability compared with the feature at its training median. `explanation` is written by the language model only for
 ENTER/EXIT when `CIVALPHA_LLM_PROVIDER=anthropic`; it is null otherwise and never changes the decision. Decision rows are
 append-only (UPDATE/DELETE are rejected by the database).
+
+## Doubler study
+
+`GET /api/doublers` — the latest study (`run`, null before the first one) and the list of earlier `runs`
+(`id`, `runAt`, `dataCutoff`, `headline`). `GET /api/doublers/{id}` — one run (404 if unknown).
+
+The study asks, for every member stock-day `t` and horizon `h` in 21, 42 and 63 trading days: bought at the close of
+`t+1`, did the stock reach +100% at any close up to `t+1+h` (`hit`), and did it fall to −50% (`lost`)? Everything in
+`screen`/`today` and every feature uses data at or before close(`t`); the outcomes read later prices.
+```json
+{ "run": { "id": 1, "runAt": "2026-10-05T05:43:08Z", "dataCutoff": "2026-10-02", "headline": "Over 7.7 years and 25 stocks, ...",
+  "result": {
+    "start": "2019-01-02", "dataCutoff": "2026-10-02", "years": 7.7, "universeSize": 25, "stockDays": 48265,
+    "config": {"horizons": [21, 42, 63], "threshold": 1.0, "loss": 0.5, "volRankMin": 0.7, "maxMarketCap": 2e9, "maxPrice": 20, "...": "..."},
+    "horizons": {"63": {
+      "base":    {"n": 46665, "hits": 495, "hitRate": 0.0106, "lossRate": 0.0076, "medianEndReturn": 0.047, "meanEndReturn": 0.072, "medianMaxReturn": 0.124},
+      "screen":  {"n": 140, "hits": 13, "hitRate": 0.093, "hitCiLow": 0.008, "hitCiHigh": 0.175, "lossRate": 0.157, "medianEndReturn": -0.088, "p10EndReturn": -0.4, "p90EndReturn": 0.6},
+      "control": {"n": 1140, "hitRate": 0.071, "...": "same volatile, small stock-days without a trigger"},
+      "lift": 8.75, "verdict": "Finds doublers more often than chance: NOT supported (interval includes the base rate)",
+      "byYear": [{"year": 2020, "n": 6117, "hits": 116, "hitRate": 0.019, "lossRate": 0.003}],
+      "episodes": [{"companyId": 25, "symbol": "BDSX", "signalDate": "2026-04-21", "entryDate": "2026-04-22", "lastSignalDate": "2026-06-17",
+                    "signalDays": 31, "daysToDouble": 45, "doubledOn": "2026-06-26", "maxReturn": 1.12, "endReturn": 0.93, "maxDrawdown": -0.15}],
+      "companiesWithHits": ["AMD", "BDSX", "..."],
+      "profile": [{"feature": "vol_60", "label": "Realized volatility, 60 days (annualized)", "n": 45665, "medianAll": 0.32, "medianHits": 0.73,
+                   "byQuintile": [{"quintile": 1, "n": 9133, "hitRate": 0.0, "low": 0.08, "high": 0.21}]}]}},
+    "today": {"asOfDate": "2026-10-02", "stocks": [{"companyId": 25, "symbol": "BDSX", "name": "...", "fires": false,
+              "conditions": {"volatile": true, "small": false, "breakout": false, "volumeSpike": false},
+              "features": {"vol_60": 0.9, "vol_rank": 1.0, "breakout_252": -0.3, "volume_ratio": 0.8, "dollar_volume_20": 1.2e7, "market_cap": 3.1e9, "price": 29.5, "ret_21": 0.05, "dd_52w": -0.3}}]},
+    "screenRule": {"volatile": "...", "small": "...", "trigger": "..."}, "featureLabels": {"vol_60": "..."}, "disclaimers": ["..."] } },
+  "runs": [{"id": 1, "runAt": "...", "dataCutoff": "2026-10-02", "headline": "..."}] }
+```
+* `base` counts every member stock-day whose window has closed; `screen` the stock-days the screen fired on; `control` the
+  volatile, small stock-days without a trigger. `hitCi*` are 95% bootstrap intervals over blocks of 21 dates (nearby days
+  share most of their window). `lift` = screen hit rate / base rate.
+* An episode is one move per company: a run of hit stock-days (gaps up to 5 days bridged), with the first signal day,
+  the entry at the next close and the day the close first reached 2× that entry.
+* `profile` is the median of each feature on doubling stock-days vs all, and the hit rate by pooled quintile.
+* The verdict is SUPPORTED only when the screen fired on at least 30 stock-days and the interval lies above the base rate.
+  It is not investment advice; the loss rate sits next to every hit rate for a reason.
 
 ## Time machine
 
@@ -312,6 +351,7 @@ response is `401`. `GET /api/meta` reports `adminTokenRequired`.
 * `POST /api/admin/timemachine` body `{"asOfDate": "2025-06-30"}` → job — forecast as of that past close with only the
   data known then, then score it against what followed (400 for today or a future date)
 * `POST /api/admin/strategies/backtest` → job — backtest every strategy and store a new run (also part of every pipeline run)
+* `POST /api/admin/doublers/study` → job — run the doubler study and store it (also part of every pipeline run)
 * `POST /api/admin/strategies/decide` body `{"asOfDate": "2026-09-30"}` (optional) → job — store the AI's decisions for
   that trading day and explain ENTER/EXIT actions when a language model is configured
 * `POST /api/admin/sec/ingest` body `{"symbol":"AAPL"}` → job
@@ -366,9 +406,10 @@ Tools call the same code as the REST endpoints and return condensed JSON (also a
 | `get_strategies` / `get_strategy(key, trades?)` | `GET /api/strategies`, `GET /api/strategies/{key}` | no equity curves |
 | `get_decisions(as_of_date?)` | `GET /api/decisions` | top 3 factors and the rules holding each stock |
 | `list_time_machine_runs` / `get_time_machine_run(run_id, horizon?)` | `GET /api/timemachine`, `GET /api/timemachine/{id}` | per-stock prediction vs actual for one horizon |
+| `get_doubler_study(horizon?, episodes?)` | `GET /api/doublers` | base rate, screen vs control with intervals, latest episodes, profile medians, stocks flagged today |
 | `investment_candidates` | — | see below |
 | `list_jobs(limit?)` / `get_job(job_id, wait_seconds?)` | `GET /api/admin/jobs` | admin |
-| `run_pipeline`, `update_prices`, `ingest_sec_filings(symbol)`, `evaluate_models`, `issue_forecasts(as_of_date?)`, `run_strategy_backtest`, `make_ai_decisions(as_of_date?)`, `run_time_machine(as_of_date)`, `resolve_outcomes` | `POST /api/admin/**` | admin; each takes `wait_seconds?` (max 600) and returns the job with its log tail |
+| `run_pipeline`, `update_prices`, `ingest_sec_filings(symbol)`, `evaluate_models`, `issue_forecasts(as_of_date?)`, `run_strategy_backtest`, `make_ai_decisions(as_of_date?)`, `run_time_machine(as_of_date)`, `run_doubler_study`, `resolve_outcomes` | `POST /api/admin/**` | admin; each takes `wait_seconds?` (max 600) and returns the job with its log tail |
 
 `investment_candidates` returns:
 ```json

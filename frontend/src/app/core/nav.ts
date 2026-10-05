@@ -85,6 +85,13 @@ export const NAV_GROUPS: NavGroup[] = [
         exact: false,
         keywords: 'replay point in time',
       },
+      {
+        path: '/doublers',
+        label: 'Doubler study',
+        icon: 'arrow',
+        exact: false,
+        keywords: 'double 100% high risk screen speculative',
+      },
     ],
   },
   {
@@ -103,6 +110,18 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: 'database',
         exact: false,
         keywords: 'admin jobs sync ingest',
+      },
+    ],
+  },
+  {
+    label: 'Help',
+    links: [
+      {
+        path: '/guide',
+        label: 'Guide',
+        icon: 'book',
+        exact: false,
+        keywords: 'help manual docs documentation how to tutorial glossary faq shortcuts',
       },
     ],
   },

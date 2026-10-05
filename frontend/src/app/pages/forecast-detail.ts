@@ -5,25 +5,33 @@ import { DivergingBars, DivergingItem } from '../charts/diverging-bars';
 import { apiUrl, valueOf } from '../core/api';
 import { FORMAT_PIPES, fmtFixed, fmtPct, fmtSigned } from '../core/format';
 import { ForecastDetail, Provenance } from '../core/models';
+import { Icon } from '../shared/icon';
 import { UI } from '../shared/ui';
+import { VIZ } from '../shared/viz';
 
 @Component({
   selector: 'app-forecast-detail',
-  imports: [RouterLink, DivergingBars, ...UI, ...FORMAT_PIPES],
+  imports: [RouterLink, DivergingBars, Icon, ...UI, ...VIZ, ...FORMAT_PIPES],
   template: `
     <div class="crumbs"><a routerLink="/forecasts/history">Forecasts</a> / #{{ id() }}</div>
     <app-status [res]="res" what="forecast" />
     @if (f(); as f) {
       <div class="page-head">
-        <div>
-          <h1><a [routerLink]="['/companies', f.symbol]">{{ f.symbol }}</a> vs {{ f.benchmarkSymbol }}</h1>
-          <p class="muted">
-            <app-model-tag [kind]="f.modelKind" /> model · {{ f.companyName }} · forecast #{{ f.id }} · version
-            {{ f.version }}
-            <app-issue-mode [mode]="f.issueMode" />
-          </p>
+        <div class="page-title">
+          <app-page-icon name="pulse" area="forecast" />
+          <div>
+            <h1><a [routerLink]="['/companies', f.symbol]">{{ f.symbol }}</a> vs {{ f.benchmarkSymbol }}</h1>
+            <p class="muted">
+              <app-model-tag [kind]="f.modelKind" /> model · {{ f.companyName }} · forecast #{{ f.id }} · version
+              {{ f.version }}
+              <app-issue-mode [mode]="f.issueMode" />
+            </p>
+          </div>
         </div>
-        <a class="btn" [routerLink]="['/companies', f.symbol, 'forecasts']">Company forecast history</a>
+        <div class="page-actions">
+          <a routerLink="/guide" fragment="reading" class="btn btn-help"><app-icon name="help" [size]="16" /> How to read this</a>
+          <a class="btn" [routerLink]="['/companies', f.symbol, 'forecasts']">Company forecast history</a>
+        </div>
       </div>
 
       @if (newer(); as n) {
@@ -37,10 +45,11 @@ import { UI } from '../shared/ui';
         <div class="card forecast-hero">
           <span class="badge badge-forecast">FORECAST</span>
           <p class="small muted" style="margin: 0.5rem 0 0.25rem">{{ f.target }}</p>
-          <div class="big">{{ f.probability | pct }}</div>
+          <div class="big">{{ f.probability | pct }} <app-lean [p]="f.probability" [lo]="f.probLow" [hi]="f.probHigh" /></div>
           <p style="margin: 0.25rem 0 0.5rem">
             interval <strong>{{ f.probLow | pct }} – {{ f.probHigh | pct }}</strong>
             <app-interval-bar [p]="f.probability" [lo]="f.probLow" [hi]="f.probHigh" />
+            <app-help text="The 10th to 90th percentile of the probability across bootstrap refits of the model. It reflects estimation uncertainty only, not everything that could go wrong." topic="interval" label="the interval" />
           </p>
           <dl class="kv">
             <dt>Horizon</dt><dd>{{ f.horizonTradingDays }} trading days (close(t) → close(t+{{ f.horizonTradingDays }}))</dd>
@@ -66,17 +75,22 @@ import { UI } from '../shared/ui';
           <h3>Outcome</h3>
           @if (f.outcome; as o) {
             <p>
-              <span class="badge" [class.badge-ok]="o.outcome" [class.badge-fail]="!o.outcome">
-                {{ o.outcome ? 'Outperformed' : 'Did not outperform' }}
+              <span class="badge" [class]="'badge tone-' + (o.outcome ? 'good' : 'bad')">
+                {{ o.outcome ? '✓ Outperformed' : '✗ Did not outperform' }}
               </span>
               <span class="small muted">window ended {{ o.windowEndDate }}</span>
             </p>
             <dl class="kv">
-              <dt>{{ f.symbol }} return</dt><dd>{{ o.stockReturn | signedPct }}</dd>
-              <dt>{{ f.benchmarkSymbol }} return</dt><dd>{{ o.benchmarkReturn | signedPct }}</dd>
+              <dt>{{ f.symbol }} return</dt><dd><app-delta [value]="o.stockReturn" kind="pct" /></dd>
+              <dt>{{ f.benchmarkSymbol }} return</dt><dd><app-delta [value]="o.benchmarkReturn" kind="pct" /></dd>
               <dt>Excess return</dt>
-              <dd><span [class.pos]="o.excessReturn > 0" [class.neg]="o.excessReturn < 0">{{ o.excessReturn | signedPct }}</span></dd>
-              <dt>Brier score</dt><dd>{{ o.brier | fixed: 4 }} <span class="small muted">(lower is better; 0.25 = coin flip)</span></dd>
+              <dd><strong><app-delta [value]="o.excessReturn" kind="pct" /></strong></dd>
+              <dt>Brier score <app-help text="Squared gap between the probability and what happened (1 or 0). 0 is perfect, 0.25 is a coin flip, 1 is a confident miss." topic="brier" label="Brier score" /></dt>
+              <dd>
+                {{ o.brier | fixed: 4 }}
+                <span class="badge" [class]="'badge tone-' + (o.brier < 0.25 ? 'good' : 'warn')">{{ o.brier < 0.25 ? '✓ better than a coin flip' : '≈ no better than a coin flip' }}</span>
+                <app-meter [value]="0.25 - o.brier" [min]="-0.75" [max]="0.25" [target]="0" targetLabel="coin flip" [tone]="o.brier < 0.25 ? 'good' : 'warn'" label="Brier score against a coin flip" />
+              </dd>
             </dl>
           } @else {
             <p class="muted">Not yet resolved — the {{ f.horizonTradingDays }}-trading-day window has not closed.</p>
@@ -95,7 +109,7 @@ import { UI } from '../shared/ui';
         </div>
       </div>
 
-      <h2>Key factors</h2>
+      <h2>Key factors <app-help text="Each factor's contribution is its model coefficient times its standardized value, in log-odds. Positive pushes the probability up, negative pulls it down. Event factors are built from documented exposures and are estimates." topic="factors" label="key factors" /></h2>
       <p class="small muted">
         {{ factorNote() }}
       </p>
@@ -137,8 +151,7 @@ import { UI } from '../shared/ui';
                   <td class="num">{{ x.z | signed: 2 }}</td>
                   <td class="num">{{ x.coefficient | signed: 3 }}</td>
                   <td class="num">
-                    <strong [class.pos]="x.contribution > 0" [class.neg]="x.contribution < 0">{{ x.contribution | signed: 3 }}</strong>
-                    <span class="small muted">{{ x.contribution > 0 ? '↑' : x.contribution < 0 ? '↓' : '' }}</span>
+                    <strong><app-delta [value]="x.contribution" kind="fixed" [digits]="3" /></strong>
                   </td>
                   <td style="min-width: 220px">
                     @for (p of x.provenance ?? []; track $index) {

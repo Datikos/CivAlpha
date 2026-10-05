@@ -4,10 +4,11 @@ import { RouterLink } from '@angular/router';
 import { LineChart, LineSeries } from '../../charts/line-chart';
 import { dateMs, isoDay } from '../../charts/chart-utils';
 import { apiUrl, valueOf } from '../../core/api';
-import { FORMAT_PIPES, fmtSignedPct } from '../../core/format';
+import { FORMAT_PIPES } from '../../core/format';
 import { latestByModel } from '../../core/forecast-utils';
 import { DividendProfile, ForecastSummary, MODEL_KINDS, PriceSeries } from '../../core/models';
 import { UI } from '../../shared/ui';
+import { VIZ } from '../../shared/viz';
 import { CompanyContext } from './company-context';
 
 type Range = '6M' | '1Y' | '3Y' | '5Y';
@@ -15,7 +16,7 @@ const RANGE_DAYS: Record<Range, number> = { '6M': 183, '1Y': 365, '3Y': 3 * 365,
 
 @Component({
   selector: 'app-company-overview',
-  imports: [RouterLink, LineChart, ...UI, ...FORMAT_PIPES],
+  imports: [RouterLink, LineChart, ...UI, ...VIZ, ...FORMAT_PIPES],
   template: `
     @if (ctx.detail(); as c) {
       <div class="section">
@@ -36,6 +37,7 @@ const RANGE_DAYS: Record<Range, number> = { '6M': 183, '1Y': 365, '3Y': 3 * 365,
                     P({{ f.symbol }} outperforms {{ f.benchmarkSymbol }} over {{ f.horizonTradingDays }} trading days)
                   </p>
                   <app-forecast-prob [f]="f" />
+                  <p style="margin: 0.4rem 0 0"><app-lean [p]="f.probability" [lo]="f.probLow" [hi]="f.probHigh" /></p>
                   <p style="margin: 0.5rem 0 0">
                     <a [routerLink]="['/forecasts', f.id]">Explanation &amp; sources →</a>
                   </p>
@@ -54,8 +56,9 @@ const RANGE_DAYS: Record<Range, number> = { '6M': 183, '1Y': 365, '3Y': 3 * 365,
             <h3 style="margin: 0">Price vs benchmark (closes indexed to 100)</h3>
             @if (perf(); as p) {
               <p class="small muted" style="margin: 0">
-                {{ p.from }} → {{ p.to }}: {{ c.symbol }} {{ p.stock }}, {{ c.benchmarkSymbol }} {{ p.bench }},
-                excess {{ p.excess }}. Recorded prices (fact).
+                {{ p.from }} → {{ p.to }}: {{ c.symbol }} <app-delta [value]="p.stock" kind="pct" [digits]="1" />,
+                {{ c.benchmarkSymbol }} <app-delta [value]="p.bench" kind="pct" [digits]="1" />,
+                excess <strong><app-delta [value]="p.excess" kind="pct" [digits]="1" /></strong>. Recorded prices (fact).
               </p>
             }
           </div>
@@ -112,7 +115,7 @@ const RANGE_DAYS: Record<Range, number> = { '6M': 183, '1Y': 365, '3Y': 3 * 365,
             <p class="muted">No cash dividend recorded in the price history.</p>
           } @else {
             <div class="stats">
-              <div class="stat" title="Cash dividends with an ex-date in the last 12 months / last close">
+              <div class="stat tone-good" title="Cash dividends with an ex-date in the last 12 months / last close">
                 <div class="stat-label">Trailing 12-month yield</div>
                 <div class="stat-value">{{ d.trailingYield | pct: 2 }}</div>
                 <div class="small muted">
@@ -120,7 +123,7 @@ const RANGE_DAYS: Record<Range, number> = { '6M': 183, '1Y': 365, '3Y': 3 * 365,
                   @if (d.ttmSpecial) { (incl. {{ d.ttmSpecial | usd }} special) }
                 </div>
               </div>
-              <div class="stat" title="Latest regular payment × payments per year / last close (estimate)">
+              <div class="stat tone-warn" title="Latest regular payment × payments per year / last close (estimate)">
                 <div class="stat-label">Indicated yield <span class="badge badge-estimated">EST</span></div>
                 <div class="stat-value">{{ d.indicatedYield | pct: 2 }}</div>
                 <div class="small muted">{{ d.indicatedAnnual | usd }} a year</div>
@@ -342,9 +345,9 @@ export class CompanyOverview {
     return {
       from: a.date,
       to: z.date,
-      stock: fmtSignedPct(rs, 1),
-      bench: fmtSignedPct(rb, 1),
-      excess: fmtSignedPct(rs - rb, 1),
+      stock: rs,
+      bench: rb,
+      excess: rs - rb,
     };
   });
 }

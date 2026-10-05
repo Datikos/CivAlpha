@@ -10,6 +10,7 @@ import { MetaService } from '../core/meta.service';
 import { CompanySummary, Job } from '../core/models';
 import { Icon } from '../shared/icon';
 import { UI } from '../shared/ui';
+import { VIZ } from '../shared/viz';
 
 const ACTIVE = new Set(['RUNNING', 'PENDING', 'QUEUED', 'STARTED']);
 const JOBS_SHOWN = 10;
@@ -19,14 +20,21 @@ const JOBS_SHOWN = 10;
  */
 @Component({
   selector: 'app-admin',
-  imports: [FormsModule, RouterLink, Icon, ...UI, ...FORMAT_PIPES],
+  imports: [FormsModule, RouterLink, Icon, ...UI, ...VIZ, ...FORMAT_PIPES],
   template: `
     <div class="page-head">
-      <div>
-        <h1>Data &amp; pipeline</h1>
-        <p class="muted">
-          Keep the data fresh and the forecasts current. Everything runs as a background job.
-        </p>
+      <div class="page-title">
+        <app-page-icon name="database" area="data" />
+        <div>
+          <h1>Data &amp; pipeline</h1>
+          <p class="muted">
+            Keep the data fresh and the forecasts current. Everything runs as a background job.
+          </p>
+        </div>
+      </div>
+      <div class="page-actions">
+        <a routerLink="/guide" fragment="page-admin" class="btn btn-help"><app-icon name="help" [size]="16" /> How to use this</a>
+        <a routerLink="/guide" fragment="checklist" class="btn btn-help"><app-icon name="checklist" [size]="16" /> Setup checklist</a>
       </div>
     </div>
 
@@ -62,26 +70,26 @@ const JOBS_SHOWN = 10;
 
     @if (meta.meta(); as m) {
       <div class="stats">
-        <div class="stat">
-          <div class="stat-label">Data cutoff</div>
+        <div class="stat" [class]="'stat ' + (m.dataCutoff ? 'tone-info' : 'tone-warn')">
+          <div class="stat-label">Data cutoff <app-help text="The latest trading day with prices in the database. Forecasts, backtests and the time machine cannot see past it." topic="as-of" label="data cutoff" /></div>
           <div class="stat-value">{{ m.dataCutoff ?? '—' }}</div>
           <div class="small muted">latest price date</div>
         </div>
-        <div class="stat">
+        <div class="stat" [class]="'stat ' + (priceProvider() ? 'tone-good' : 'tone-warn')">
           <div class="stat-label">Prices</div>
           <div class="stat-value">{{ priceProvider() ? m.priceProvider : 'manual' }}</div>
           <div class="small muted">
-            {{ priceProvider() ? 'automatic provider' : 'CSV import only' }}
+            {{ priceProvider() ? '✓ automatic provider' : 'CSV import only' }}
           </div>
         </div>
-        <div class="stat">
+        <div class="stat" [class]="'stat ' + (m.secConfigured ? 'tone-good' : 'tone-warn')">
           <div class="stat-label">SEC EDGAR</div>
           <div class="stat-value">{{ m.secConfigured ? 'ready' : 'off' }}</div>
           <div class="small muted">
-            {{ m.secConfigured ? 'filings & fundamentals' : 'set SEC_USER_AGENT in .env' }}
+            {{ m.secConfigured ? '✓ filings & fundamentals' : 'set SEC_USER_AGENT in .env' }}
           </div>
         </div>
-        <div class="stat">
+        <div class="stat" [class]="'stat ' + (lastPipeline() ? (lastPipeline()!.status === 'SUCCEEDED' ? 'tone-good' : lastPipeline()!.status === 'FAILED' ? 'tone-bad' : 'tone-info') : 'tone-warn')">
           <div class="stat-label">Last pipeline run</div>
           @if (lastPipeline(); as j) {
             <div class="stat-value">
@@ -291,6 +299,14 @@ const JOBS_SHOWN = 10;
               (click)="run('AI decisions', api.decide())"
             >
               AI decisions
+            </button>
+            <button
+              type="button"
+              class="btn"
+              [disabled]="busy()"
+              (click)="run('Doubler study', api.doublerStudy())"
+            >
+              Doubler study
             </button>
           </div>
         </div>

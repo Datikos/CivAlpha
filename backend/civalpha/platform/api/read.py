@@ -448,6 +448,22 @@ def decisions(date_: str | None = Query(None, alias="date")):
     return {"asOfDate": value(d), "dates": [value(x) for x in dates], "decisions": rows}
 
 
+@router.get("/doublers")
+def doubler_study():
+    """Latest doubler study (null `run` until one has been made) and the list of earlier runs."""
+    runs = camel_all(db().all("SELECT id, run_at, data_cutoff, headline FROM doubler_study_run ORDER BY id DESC LIMIT 20"))
+    latest = db().one("SELECT id, run_at, data_cutoff, headline, result FROM doubler_study_run ORDER BY id DESC LIMIT 1")
+    return {"run": camel(latest) if latest else None, "runs": runs}
+
+
+@router.get("/doublers/{run_id}")
+def doubler_study_run(run_id: int):
+    r = db().one("SELECT id, run_at, data_cutoff, headline, result FROM doubler_study_run WHERE id = :id", id=run_id)
+    if r is None:
+        raise NotFound(f"no doubler study {run_id}")
+    return camel(r)
+
+
 @router.get("/timemachine")
 def time_machine_runs():
     return camel_all(db().all("SELECT id, as_of_date, run_at, data_cutoff, headline FROM time_machine_run ORDER BY id DESC LIMIT 50"))

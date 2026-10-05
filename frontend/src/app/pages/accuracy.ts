@@ -5,22 +5,35 @@ import { ReliabilityChart, ReliabilitySeries } from '../charts/reliability-chart
 import { apiUrl, valueOf } from '../core/api';
 import { FORMAT_PIPES, fmtFixed, fmtNum, fmtPct, fmtSigned, fmtSignedPct } from '../core/format';
 import { AccuracyResponse, MODEL_KINDS, ModelKind, ModelMetrics, TradingStats } from '../core/models';
+import { Icon } from '../shared/icon';
 import { UI, modelColor } from '../shared/ui';
+import { VIZ, verdictTone } from '../shared/viz';
 
 interface MetricRow {
+  key: string;
   label: string;
   hint: string;
+  topic: string;
   values: string[];
+  raw: (number | null | undefined)[];
   /** index of the better model, or -1 */
   better: number;
+  /** optional meter: scale and target */
+  meter?: { min: number; max: number; target: number | null; higherIsBetter: boolean };
+  /** show as a signed delta (sign colouring) */
+  signed?: 'pct' | 'fixed';
+  invert?: boolean;
 }
 
 function row<T>(
+  key: string,
   label: string,
   hint: string,
+  topic: string,
   get: (k: ModelKind) => T | undefined | null,
   fmt: (v: T) => string,
   higherIsBetter: boolean | null,
+  extra: Partial<MetricRow> = {},
 ): MetricRow {
   const raw = MODEL_KINDS.map((k) => get(k));
   const values = raw.map((v) => (v === undefined || v === null ? '—' : fmt(v)));
@@ -28,20 +41,26 @@ function row<T>(
   if (higherIsBetter !== null && typeof raw[0] === 'number' && typeof raw[1] === 'number' && raw[0] !== raw[1]) {
     better = (raw[1] > raw[0]) === higherIsBetter ? 1 : 0;
   }
-  return { label, hint, values, better };
+  return { key, label, hint, topic, values, raw: raw as (number | null | undefined)[], better, ...extra };
 }
 
 @Component({
   selector: 'app-accuracy',
-  imports: [RouterLink, ReliabilityChart, ...UI, ...FORMAT_PIPES],
+  imports: [RouterLink, ReliabilityChart, Icon, ...UI, ...VIZ, ...FORMAT_PIPES],
   template: `
     <div class="page-head">
-      <div>
-        <h1>Model accuracy</h1>
-        <p class="muted">
-          Walk-forward out-of-sample evaluation of BASELINE vs AUGMENTED, plus realized accuracy of forecasts
-          actually published.
-        </p>
+      <div class="page-title">
+        <app-page-icon name="target" area="forecast" />
+        <div>
+          <h1>Model accuracy</h1>
+          <p class="muted">
+            Walk-forward out-of-sample evaluation of BASELINE vs AUGMENTED, plus realized accuracy of forecasts
+            actually published.
+          </p>
+        </div>
+      </div>
+      <div class="page-actions">
+        <a routerLink="/guide" fragment="page-accuracy" class="btn btn-help"><app-icon name="help" [size]="16" /> How to read this</a>
       </div>
     </div>
 
@@ -50,7 +69,7 @@ function row<T>(
     @if (res.hasValue()) {
       @if (ev(); as e) {
         @if (e.verdict) {
-          <div class="verdict" role="note"><strong>Verdict.</strong> {{ e.verdict }}</div>
+          <app-verdict [tone]="verdictToneOf(e.verdict)">{{ e.verdict }}</app-verdict>
         }
         <p class="small muted">
           Evaluation #{{ e.id }} run {{ e.runAt | utc }} · data cutoff {{ e.dataCutoff ?? '—' }}
@@ -58,6 +77,33 @@ function row<T>(
           {{ e.config.embargo }} days · fold length {{ e.config.foldLength }} days · min. training
           {{ e.config.minTrainDays }} days · costs {{ e.config.costBpsPerSide }} bps per side
         </p>
+
+        @if (headline(); as h) {
+          <div class="stats wide">
+            <div class="stat" [class]="'stat ' + (h.brierTone)">
+              <div class="stat-label">Best Brier score <app-help text="Mean squared error of the probabilities, out of sample. 0 is perfect, 0.25 is what always saying 50% scores. Lower is better." topic="brier" label="Brier score" /></div>
+              <div class="stat-value">{{ h.brier | fixed: 4 }}</div>
+              <div class="stat-sub"><app-model-tag [kind]="h.brierModel" /> · vs 0.25 for a coin flip</div>
+              <app-meter [value]="0.25 - h.brier" [min]="-0.05" [max]="0.1" [target]="0" targetLabel="coin flip" [tone]="h.brierTone === 'tone-good' ? 'good' : 'warn'" label="Brier score against a coin flip" />
+            </div>
+            <div class="stat" [class]="'stat ' + h.aucTone">
+              <div class="stat-label">Best AUC <app-help text="How well the model ranks outperformers above underperformers. 0.5 is no skill, 1.0 is perfect ranking." topic="auc" label="AUC" /></div>
+              <div class="stat-value">{{ h.auc | fixed: 3 }}</div>
+              <div class="stat-sub"><app-model-tag [kind]="h.aucModel" /> · 0.5 = no discrimination</div>
+              <app-meter [value]="h.auc" [min]="0.4" [max]="0.7" [target]="0.5" targetLabel="no skill" label="AUC" />
+            </div>
+            <div class="stat" [class]="'stat ' + h.cmpTone">
+              <div class="stat-label">Does the event data help? <app-help text="The difference in Brier score between the AUGMENTED and the BASELINE model with a bootstrap 95% confidence interval. Negative means the event data helps; the interval must exclude zero to count." topic="confidence-interval" label="augmented vs baseline" /></div>
+              <div class="stat-value">{{ h.cmpText }}</div>
+              <div class="stat-sub">Brier difference <app-delta [value]="h.brierDiff" kind="fixed" [digits]="4" [invert]="true" /> · CI {{ h.ciLow | signed: 4 }} to {{ h.ciHigh | signed: 4 }}</div>
+            </div>
+            <div class="stat" [class]="'stat ' + h.tradeTone">
+              <div class="stat-label">Simulated trading, net <app-help text="Mean return per rebalance period after costs when the out-of-sample forecasts are turned into long/short positions. Only a t-statistic above 2 would make it distinguishable from zero." topic="t-stat" label="net return" /></div>
+              <div class="stat-value"><app-delta [value]="h.meanNet" kind="pct" [digits]="2" /></div>
+              <div class="stat-sub">per period · t = {{ h.tStat | signed: 2 }} {{ h.tStat !== null && h.tStat !== undefined && Math.abs(h.tStat) >= 2 ? '(significant)' : '(not distinguishable from zero)' }}</div>
+            </div>
+          </div>
+        }
 
         <div class="grid-2">
           <div class="card">
@@ -73,12 +119,25 @@ function row<T>(
                   </tr>
                 </thead>
                 <tbody>
-                  @for (r of metricRows(); track r.label) {
+                  @for (r of metricRows(); track r.key) {
                     <tr>
-                      <td>{{ r.label }}<div class="small muted">{{ r.hint }}</div></td>
+                      <td>
+                        {{ r.label }}<app-help [text]="r.hint" [topic]="r.topic" [label]="r.label" />
+                        <div class="small muted">{{ r.hint }}</div>
+                      </td>
                       @for (v of r.values; track $index) {
-                        <td class="num" [style.font-weight]="r.better === $index ? 700 : 400">
-                          {{ v }}{{ r.better === $index ? ' ✓' : '' }}
+                        <td class="num" [style.font-weight]="r.better === $index ? 650 : 400">
+                          @if (r.signed) {
+                            <app-delta [value]="r.raw[$index]" [kind]="r.signed" [digits]="r.signed === 'fixed' ? 4 : 1" [invert]="!!r.invert" />
+                          } @else {
+                            {{ v }}
+                          }
+                          @if (r.better === $index) {
+                            <span class="badge-best" title="Better of the two">✓</span>
+                          }
+                          @if (r.meter && r.raw[$index] !== null && r.raw[$index] !== undefined) {
+                            <app-meter [value]="r.raw[$index]" [min]="r.meter.min" [max]="r.meter.max" [target]="r.meter.target" [higherIsBetter]="r.meter.higherIsBetter" [label]="r.label" />
+                          }
                         </td>
                       }
                     </tr>
@@ -86,7 +145,7 @@ function row<T>(
                 </tbody>
               </table>
             </div>
-            <p class="small muted" style="margin-top: 0.5rem">✓ marks the better value; differences may not be significant — see the comparison.</p>
+            <p class="small muted" style="margin-top: 0.5rem"><span class="badge-best">✓</span> marks the better value; differences may not be significant — see the comparison.</p>
           </div>
 
           <div class="card">
@@ -95,37 +154,38 @@ function row<T>(
               <dl class="kv">
                 <dt>Brier difference</dt>
                 <dd>
-                  <strong>{{ c.brierDiff | signed: 4 }}</strong>
+                  <strong><app-delta [value]="c.brierDiff" kind="fixed" [digits]="4" [invert]="true" /></strong>
                   <span class="muted"> (95% CI {{ c.ciLow | signed: 4 }} to {{ c.ciHigh | signed: 4 }})</span>
                 </dd>
                 <dt>Significance</dt>
                 <dd>
                   @if (c.ciHigh < 0) {
-                    <span class="badge badge-ok">Augmented better (CI excludes 0)</span>
+                    <span class="badge tone-good">✓ Augmented better (CI excludes 0)</span>
                   } @else if (c.ciLow > 0) {
-                    <span class="badge badge-fail">Augmented worse (CI excludes 0)</span>
+                    <span class="badge tone-bad">✗ Augmented worse (CI excludes 0)</span>
                   } @else {
-                    <span class="badge">No significant difference (CI includes 0)</span>
+                    <span class="badge tone-neutral">≈ No significant difference (CI includes 0)</span>
                   }
                 </dd>
                 @if (c.foldsCompared) {
                   <dt>Folds won</dt>
                   <dd>
                     {{ c.foldsAugmentedBetter }} of {{ c.foldsCompared }}
+                    <app-meter class="meter-inline" [value]="c.foldsAugmentedBetter ?? 0" [max]="c.foldsCompared" [target]="c.foldsCompared / 2" targetLabel="half" label="Folds won by augmented" />
                     @if (c.signTestP !== null && c.signTestP !== undefined) {
                       <span class="small muted">(sign test p = {{ c.signTestP | fixed: 2 }})</span>
                     }
                   </dd>
                 }
                 @if (c.aucDiff !== null && c.aucDiff !== undefined) {
-                  <dt>AUC difference</dt><dd>{{ c.aucDiff | signed: 3 }}</dd>
+                  <dt>AUC difference</dt><dd><app-delta [value]="c.aucDiff" kind="fixed" [digits]="3" /></dd>
                 }
               </dl>
               <div class="ci-plot" role="img"
                 [attr.aria-label]="'Brier difference ' + c.brierDiff + ', 95% interval ' + c.ciLow + ' to ' + c.ciHigh">
                 <span class="ci-zero"></span>
-                <span class="ci-range" [style.left.%]="ciX(c.ciLow)" [style.width.%]="ciX(c.ciHigh) - ciX(c.ciLow)"></span>
-                <span class="ci-point" [style.left.%]="ciX(c.brierDiff)"></span>
+                <span class="ci-range" [class]="'ci-range tone-' + ciTone(c)" [style.left.%]="ciX(c.ciLow)" [style.width.%]="ciX(c.ciHigh) - ciX(c.ciLow)"></span>
+                <span class="ci-point" [class]="'ci-point tone-' + ciTone(c)" [style.left.%]="ciX(c.brierDiff)"></span>
               </div>
               <div class="small muted ci-axis"><span>← augmented better</span><span>0</span><span>augmented worse →</span></div>
               <p class="small muted" style="margin-top: 0.5rem">{{ c.note ?? 'Negative Brier difference = augmented better.' }}</p>
@@ -137,7 +197,7 @@ function row<T>(
 
         <div class="grid-2" style="margin-top: 1rem">
           <div class="card">
-            <h3>Reliability diagram</h3>
+            <h3>Reliability diagram <app-help text="Each dot is a bin of forecasts. The x-axis is what the model said, the y-axis is how often it happened. Dots on the diagonal mean the probabilities are honest; above it the model is under-confident, below it over-confident." topic="calibration" label="reliability diagram" /></h3>
             <p class="small muted">Out-of-sample predicted probability vs observed outperformance rate, per bin.</p>
             @if (relSeries().length) {
               <app-reliability-chart [series]="relSeries()" label="Reliability diagram, baseline vs augmented" />
@@ -184,11 +244,20 @@ function row<T>(
                   </tr>
                 </thead>
                 <tbody>
-                  @for (r of tradingRows(); track r.label) {
+                  @for (r of tradingRows(); track r.key) {
                     <tr>
-                      <td>{{ r.label }}<div class="small muted">{{ r.hint }}</div></td>
+                      <td>{{ r.label }}<app-help [text]="r.hint" [topic]="r.topic" [label]="r.label" /><div class="small muted">{{ r.hint }}</div></td>
                       @for (v of r.values; track $index) {
-                        <td class="num">{{ v }}</td>
+                        <td class="num">
+                          @if (r.signed) {
+                            <app-delta [value]="r.raw[$index]" [kind]="r.signed" [digits]="r.signed === 'pct' ? 3 : 2" />
+                          } @else {
+                            {{ v }}
+                          }
+                          @if (r.meter && r.raw[$index] !== null && r.raw[$index] !== undefined) {
+                            <app-meter [value]="r.raw[$index]" [min]="r.meter.min" [max]="r.meter.max" [target]="r.meter.target" [label]="r.label" />
+                          }
+                        </td>
                       }
                     </tr>
                   }
@@ -201,7 +270,7 @@ function row<T>(
           </div>
         </div>
 
-        <h2>Folds</h2>
+        <h2>Folds <app-help text="The evaluation walks forward through time in blocks (folds). Each fold trains only on samples whose outcome was known before the block began, then scores the block. A model that wins most folds is more convincing than one that wins the average." topic="walk-forward" label="folds" /></h2>
         @if (e.folds.length) {
           <div class="table-wrap">
             <table class="table compact">
@@ -224,12 +293,15 @@ function row<T>(
                     @for (k of kinds; track k) {
                       <td class="num">{{ fd.brier[k] | fixed: 4 }}</td>
                     }
-                    <td class="num">{{ foldDiff(fd.brier) }}</td>
+                    <td class="num heat" [class]="'num heat tone-' + foldTone(fd.brier)" [style.--h]="foldHeat(fd.brier)">
+                      <app-delta [value]="foldDiffValue(fd.brier)" kind="fixed" [digits]="4" [invert]="true" />
+                    </td>
                   </tr>
                 }
               </tbody>
             </table>
           </div>
+          <p class="small muted" style="margin-top: 0.4rem">Green cells: the augmented model was better in that fold; red: worse. Colour depth follows the size of the difference.</p>
         } @else {
           <p class="muted">No folds recorded.</p>
         }
@@ -248,7 +320,7 @@ function row<T>(
         <div class="table-wrap">
           <table class="table compact">
             <thead>
-              <tr><th>Mode</th><th>Model</th><th class="num">Issued</th><th class="num">Resolved</th><th class="num">Brier</th><th class="num">Hit rate</th></tr>
+              <tr><th>Mode</th><th>Model</th><th class="num">Issued</th><th class="num">Resolved</th><th class="num">Brier</th><th class="num">Hit rate <app-help text="Share of resolved forecasts that called the direction right (probability above 50% and the stock outperformed, or below and it did not)." topic="hit-rate" label="hit rate" /></th></tr>
             </thead>
             <tbody>
               @for (r of issuedRows(); track r.mode + r.kind) {
@@ -258,7 +330,12 @@ function row<T>(
                   <td class="num">{{ r.v.issued | num }}</td>
                   <td class="num">{{ r.v.resolved | num }}</td>
                   <td class="num">{{ r.v.brier | fixed: 4 }}</td>
-                  <td class="num">{{ r.v.hitRate | pct }}</td>
+                  <td class="num">
+                    {{ r.v.hitRate | pct }}
+                    @if (r.v.hitRate !== null) {
+                      <app-meter [value]="r.v.hitRate" [target]="0.5" targetLabel="coin flip" label="Hit rate" />
+                    }
+                  </td>
                 </tr>
               }
             </tbody>
@@ -278,13 +355,16 @@ function row<T>(
     .ci-plot { position: relative; height: 28px; margin-top: 0.75rem; }
     .ci-plot span { position: absolute; top: 50%; }
     .ci-zero { left: 50%; width: 1px; height: 28px; margin-top: -14px; background: var(--ink-muted); }
-    .ci-range { height: 4px; margin-top: -2px; border-radius: 2px; background: var(--series-2); opacity: 0.5; }
-    .ci-point { width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; background: var(--series-2); box-shadow: 0 0 0 2px var(--chart-surface); }
+    .ci-range { height: 6px; margin-top: -3px; border-radius: 3px; background: var(--tone-mark); opacity: 0.5; }
+    .ci-point { width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; background: var(--tone-mark); box-shadow: 0 0 0 2px var(--chart-surface); }
     .ci-axis { display: flex; justify-content: space-between; }
+    td .meter { display: block; width: auto; margin: 0.3rem 0 0; }
   `,
 })
 export class AccuracyPage {
   protected readonly kinds = MODEL_KINDS;
+  protected readonly Math = Math;
+  protected readonly verdictToneOf = verdictTone;
   protected readonly res = httpResource<AccuracyResponse>(() => apiUrl.accuracy());
 
   protected readonly ev = computed(() => {
@@ -300,17 +380,71 @@ export class AccuracyPage {
     };
   });
 
+  /** The four numbers that summarize the evaluation. */
+  protected readonly headline = computed(() => {
+    const e = this.ev();
+    if (!e) return null;
+    const m = e.metrics;
+    const pick = (key: 'brier' | 'auc', best: 'min' | 'max') => {
+      let model: ModelKind = 'BASELINE';
+      let val: number | null = null;
+      for (const k of MODEL_KINDS) {
+        const v = m[k]?.[key];
+        if (typeof v !== 'number') continue;
+        if (val === null || (best === 'min' ? v < val : v > val)) {
+          val = v;
+          model = k;
+        }
+      }
+      return { model, val };
+    };
+    const brier = pick('brier', 'min');
+    const auc = pick('auc', 'max');
+    const c = e.comparison;
+    const t = e.trading;
+    let tradeBest: Partial<TradingStats> | undefined;
+    for (const k of MODEL_KINDS) {
+      const v = t[k];
+      if (v && (tradeBest === undefined || (v.meanNet ?? -Infinity) > (tradeBest.meanNet ?? -Infinity))) tradeBest = v;
+    }
+    const tStat = tradeBest?.tStatNet ?? null;
+    const meanNet = tradeBest?.meanNet ?? null;
+    if (brier.val === null || auc.val === null) return null;
+    return {
+      brier: brier.val,
+      brierModel: brier.model,
+      brierTone: brier.val < 0.25 ? 'tone-good' : 'tone-warn',
+      auc: auc.val,
+      aucModel: auc.model,
+      aucTone: auc.val > 0.52 ? 'tone-good' : 'tone-warn',
+      brierDiff: c?.brierDiff ?? null,
+      ciLow: c?.ciLow ?? null,
+      ciHigh: c?.ciHigh ?? null,
+      cmpText: !c ? '—' : c.ciHigh < 0 ? 'Yes' : c.ciLow > 0 ? 'No, it hurts' : 'Not measurably',
+      cmpTone: !c ? 'tone-neutral' : c.ciHigh < 0 ? 'tone-good' : c.ciLow > 0 ? 'tone-bad' : 'tone-neutral',
+      meanNet,
+      tStat,
+      tradeTone: meanNet !== null && tStat !== null && tStat > 2 ? 'tone-good' : 'tone-warn',
+    };
+  });
+
   protected readonly metricRows = computed<MetricRow[]>(() => {
     const m = this.ev()?.metrics ?? {};
     const g = (key: keyof ModelMetrics) => (k: ModelKind) => m[k]?.[key];
     return [
-      row('n', 'out-of-sample predictions', g('n'), (v) => fmtNum(v), null),
-      row('Brier score', 'lower is better', g('brier'), (v) => fmtFixed(v, 4), false),
-      row('Brier skill', 'vs base-rate forecast; > 0 beats it', g('brierSkill'), (v) => fmtSigned(v, 4), true),
-      row('Log loss', 'lower is better', g('logLoss'), (v) => fmtFixed(v, 4), false),
-      row('AUC', '0.5 = no discrimination', g('auc'), (v) => fmtFixed(v, 3), true),
-      row('Accuracy', 'at 50% threshold', g('accuracy'), (v) => fmtPct(v), true),
-      row('Base rate', 'share of outperformers', g('baseRate'), (v) => fmtPct(v), null),
+      row('n', 'n', 'out-of-sample predictions', 'walk-forward', g('n'), (v) => fmtNum(v), null),
+      row('brier', 'Brier score', 'lower is better; 0.25 = coin flip', 'brier', g('brier'), (v) => fmtFixed(v, 4), false, {
+        meter: { min: 0.2, max: 0.3, target: 0.25, higherIsBetter: false },
+      }),
+      row('skill', 'Brier skill', 'vs base-rate forecast; > 0 beats it', 'brier-skill', g('brierSkill'), (v) => fmtSigned(v, 4), true, { signed: 'fixed' }),
+      row('logloss', 'Log loss', 'lower is better', 'log-loss', g('logLoss'), (v) => fmtFixed(v, 4), false),
+      row('auc', 'AUC', '0.5 = no discrimination', 'auc', g('auc'), (v) => fmtFixed(v, 3), true, {
+        meter: { min: 0.4, max: 0.7, target: 0.5, higherIsBetter: true },
+      }),
+      row('acc', 'Accuracy', 'at 50% threshold', 'hit-rate', g('accuracy'), (v) => fmtPct(v), true, {
+        meter: { min: 0.4, max: 0.6, target: 0.5, higherIsBetter: true },
+      }),
+      row('base', 'Base rate', 'share of outperformers', 'base-rate', g('baseRate'), (v) => fmtPct(v), null),
     ];
   });
 
@@ -318,15 +452,17 @@ export class AccuracyPage {
     const t = this.ev()?.trading ?? {};
     const g = (key: keyof TradingStats) => (k: ModelKind) => t[k]?.[key];
     return [
-      row('Periods', 'rebalances', g('periods'), (v) => fmtNum(v), null),
-      row('Mean gross', 'per period, before costs', g('meanGross'), (v) => fmtSignedPct(v, 3), true),
-      row('Mean net', 'per period, after costs', g('meanNet'), (v) => fmtSignedPct(v, 3), true),
-      row('t-stat (net)', 'mean net / standard error', g('tStatNet'), (v) => fmtSigned(v, 2), true),
-      row('Hit rate', 'periods with net > 0', g('hitRate'), (v) => fmtPct(v), true),
-      row('Sharpe (net)', 'annualized', g('sharpeNet'), (v) => fmtSigned(v, 2), true),
-      row('Annualized net', 'compounded', g('annualizedNet'), (v) => fmtSignedPct(v, 2), true),
-      row('Avg. positions', 'per period', g('avgPositions'), (v) => fmtNum(v, 1), null),
-      row('Cost per period', 'turnover × costs', g('turnoverCostPerPeriod'), (v) => fmtPct(v, 3), null),
+      row('periods', 'Periods', 'rebalances', 'walk-forward', g('periods'), (v) => fmtNum(v), null),
+      row('gross', 'Mean gross', 'per period, before costs', 'costs', g('meanGross'), (v) => fmtSignedPct(v, 3), true, { signed: 'pct' }),
+      row('net', 'Mean net', 'per period, after costs', 'costs', g('meanNet'), (v) => fmtSignedPct(v, 3), true, { signed: 'pct' }),
+      row('t', 't-stat (net)', 'mean net / standard error; |t| ≥ 2 is significant', 't-stat', g('tStatNet'), (v) => fmtSigned(v, 2), true, { signed: 'fixed' }),
+      row('hit', 'Hit rate', 'periods with net > 0', 'hit-rate', g('hitRate'), (v) => fmtPct(v), true, {
+        meter: { min: 0.3, max: 0.7, target: 0.5, higherIsBetter: true },
+      }),
+      row('sharpe', 'Sharpe (net)', 'annualized', 'sharpe', g('sharpeNet'), (v) => fmtSigned(v, 2), true, { signed: 'fixed' }),
+      row('ann', 'Annualized net', 'compounded', 'cagr', g('annualizedNet'), (v) => fmtSignedPct(v, 2), true, { signed: 'pct' }),
+      row('pos', 'Avg. positions', 'per period', 'exposure', g('avgPositions'), (v) => fmtNum(v, 1), null),
+      row('cost', 'Cost per period', 'turnover × costs', 'costs', g('turnoverCostPerPeriod'), (v) => fmtPct(v, 3), null),
     ];
   });
 
@@ -351,15 +487,40 @@ export class AccuracyPage {
 
   protected readonly fewResolved = computed(() => this.issuedRows().some((r) => r.mode === 'LIVE' && r.v.resolved < 30));
 
+  /** Largest |fold difference|, for heat scaling. */
+  private readonly maxFoldDiff = computed(() => {
+    let m = 0;
+    for (const fd of this.ev()?.folds ?? []) {
+      const d = this.foldDiffValue(fd.brier);
+      if (d !== null) m = Math.max(m, Math.abs(d));
+    }
+    return m || 1;
+  });
+
   protected ciX(v: number): number {
     const c = this.ev()?.comparison;
     const span = Math.max(Math.abs(c?.ciLow ?? 0), Math.abs(c?.ciHigh ?? 0), Math.abs(c?.brierDiff ?? 0), 1e-6) * 1.15;
     return 50 + (v / span) * 46;
   }
 
-  protected foldDiff(b: Partial<Record<ModelKind, number>>): string {
+  protected ciTone(c: { ciLow: number; ciHigh: number }): string {
+    return c.ciHigh < 0 ? 'good' : c.ciLow > 0 ? 'bad' : 'neutral';
+  }
+
+  protected foldDiffValue(b: Partial<Record<ModelKind, number>>): number | null {
     const a = b['AUGMENTED'];
     const base = b['BASELINE'];
-    return typeof a === 'number' && typeof base === 'number' ? fmtSigned(a - base, 4) : '—';
+    return typeof a === 'number' && typeof base === 'number' ? a - base : null;
+  }
+
+  protected foldTone(b: Partial<Record<ModelKind, number>>): string {
+    const d = this.foldDiffValue(b);
+    if (d === null || d === 0) return 'neutral';
+    return d < 0 ? 'good' : 'bad';
+  }
+
+  protected foldHeat(b: Partial<Record<ModelKind, number>>): number {
+    const d = this.foldDiffValue(b);
+    return d === null ? 0 : Math.min(1, Math.abs(d) / this.maxFoldDiff());
   }
 }

@@ -2,6 +2,7 @@ import { Component, computed, input } from '@angular/core';
 import { errorMessage } from '../core/api';
 import { fmtPct, fmtUtc, humanize } from '../core/format';
 import { DividendSummary, ForecastSummary, ModelKind } from '../core/models';
+import { leanOf } from './viz';
 
 /** LIVE vs REPLAY issue mode. */
 @Component({
@@ -125,6 +126,7 @@ export class StatusMessage {
   selector: 'app-interval-bar',
   template: `<svg
     class="interval-bar"
+    [class]="'interval-bar tone-' + tone()"
     width="88"
     height="12"
     viewBox="0 0 88 12"
@@ -146,6 +148,11 @@ export class IntervalBar {
   protected x(v: number): number {
     return 2 + Math.max(0, Math.min(1, v)) * 84;
   }
+  /** The bar is tinted by where the interval sits relative to 50%. */
+  protected readonly tone = computed(() => {
+    const l = leanOf(this.p(), this.lo(), this.hi());
+    return l === 'above' ? 'good' : l === 'below' ? 'bad' : 'forecast';
+  });
   protected readonly aria = computed(
     () =>
       `Probability ${fmtPct(this.p())}` +

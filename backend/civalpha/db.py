@@ -37,7 +37,8 @@ def load_bundle(engine: Engine) -> DataBundle:
         SELECT c.id, c.name, c.sector, c.industry, c.benchmark_symbol,
                (SELECT th.symbol FROM ticker_history th WHERE th.company_id = c.id ORDER BY th.valid_from DESC LIMIT 1) AS symbol
         FROM company c ORDER BY c.id""")
-    stock = _q(engine, "SELECT company_id, symbol, trade_date, close::float8 AS close FROM price_bar WHERE company_id IS NOT NULL")
+    stock = _q(engine, """SELECT company_id, symbol, trade_date, close::float8 AS close, volume::float8 AS volume
+                          FROM price_bar WHERE company_id IS NOT NULL""")
     bench = _q(engine, "SELECT symbol, trade_date, close::float8 AS close FROM price_bar WHERE company_id IS NULL")
     actions = _dates(_q(engine, "SELECT company_id, symbol, ex_date, action_type, value::float8 AS value FROM corporate_action"), ["ex_date"])
     facts = _q(engine, """SELECT id, company_id, taxonomy, concept, unit, value::float8 AS value, period_start, period_end,
@@ -127,6 +128,14 @@ def insert_strategy_run(engine: Engine, lab: dict) -> int:
                                                 holding_days, entry_reason, exit_reason)
                     VALUES (:run, :k, :c, :sym, :ed, :xd, :ret, :h, :er, :xr)"""), rows)
     return rid
+
+
+def insert_doubler_study(engine: Engine, res: dict) -> int:
+    with engine.begin() as c:
+        return int(c.execute(text("""
+            INSERT INTO doubler_study_run (data_cutoff, config, headline, result)
+            VALUES (:dc, CAST(:cfg AS jsonb), :h, CAST(:r AS jsonb)) RETURNING id"""),
+            dict(dc=res["dataCutoff"], cfg=json.dumps(_clean(res["config"])), h=res["headline"], r=json.dumps(_clean(res)))).scalar_one())
 
 
 def insert_time_machine(engine: Engine, res: dict) -> int:

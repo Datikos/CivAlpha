@@ -549,7 +549,7 @@ export interface AccuracyResponse {
 // ---------- Strategy lab ----------
 
 export type StrategyFamily =
-  'BENCHMARK' | 'TREND' | 'MEAN_REVERSION' | 'FUNDAMENTAL' | 'EVENT' | 'AI';
+  'BENCHMARK' | 'TREND' | 'MEAN_REVERSION' | 'FUNDAMENTAL' | 'EVENT' | 'SPECULATIVE' | 'AI';
 
 export interface StrategyMetrics {
   start: string;
@@ -790,6 +790,102 @@ export interface TimeMachineRun extends TimeMachineRunSummary {
     headline: string;
     dataCutoff: string;
   };
+}
+
+// ---------- Doubler study ----------
+
+/** Hit / loss rates and the return distribution over a set of stock-days. */
+export interface DoublerRates {
+  n: number;
+  hits: number;
+  hitRate: number | null;
+  lossRate: number | null;
+  medianEndReturn: number | null;
+  meanEndReturn: number | null;
+  medianMaxReturn: number | null;
+  p10EndReturn?: number | null;
+  p90EndReturn?: number | null;
+  /** block-bootstrap 95% interval of the hit rate (screen and control only) */
+  hitCiLow?: number | null;
+  hitCiHigh?: number | null;
+}
+
+export interface DoublerEpisode {
+  companyId: number;
+  symbol: string;
+  signalDate: string;
+  entryDate: string;
+  signalDays: number;
+  daysToDouble: number | null;
+  doubledOn: string | null;
+  maxReturn: number;
+  endReturn: number;
+  maxDrawdown: number;
+}
+
+export interface DoublerProfileRow {
+  feature: string;
+  label: string;
+  n: number;
+  medianAll?: number | null;
+  medianHits?: number | null;
+  byQuintile?: { quintile: number; n: number; hitRate: number | null; low: number | null; high: number | null }[];
+}
+
+export interface DoublerHorizon {
+  horizon: number;
+  base: DoublerRates;
+  byYear: { year: number; n: number; hits: number; hitRate: number | null; lossRate: number | null }[];
+  screen: DoublerRates;
+  control: DoublerRates;
+  lift: number | null;
+  profile: DoublerProfileRow[];
+  episodes: DoublerEpisode[];
+  companiesWithHits: string[];
+  verdict: string;
+}
+
+export type DoublerCondition = 'volatile' | 'breakout' | 'volumeSpike' | 'small';
+
+export interface DoublerTodayStock {
+  companyId: number;
+  symbol: string;
+  name: string;
+  fires: boolean;
+  conditions: Record<DoublerCondition, boolean>;
+  features: Record<string, number | null>;
+}
+
+export interface DoublerStudyResult {
+  version: string;
+  dataCutoff: string;
+  start: string;
+  years: number;
+  universeSize: number;
+  stockDays: number;
+  config: Record<string, unknown> & { horizons: number[]; threshold: number; loss: number };
+  featureLabels: Record<string, string>;
+  horizons: Record<string, DoublerHorizon>;
+  today: { asOfDate: string; stocks: DoublerTodayStock[] };
+  screenRule: { volatile: string; small: string; trigger: string };
+  disclaimers: string[];
+  headline: string;
+}
+
+export interface DoublerStudyRunSummary {
+  id: number;
+  runAt: string;
+  dataCutoff: string;
+  headline: string;
+}
+
+export interface DoublerStudyRun extends DoublerStudyRunSummary {
+  result: DoublerStudyResult;
+}
+
+export interface DoublerStudyResponse {
+  run: DoublerStudyRun | null;
+  runs: DoublerStudyRunSummary[];
 }
 
 // ---------- Admin ----------

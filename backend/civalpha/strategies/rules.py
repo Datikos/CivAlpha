@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 
 from .. import pit
+from . import doublers
 from .base import (Strategy, hold_between_rebalances, period_starts, prior_high, prior_low, rolling_std, rsi, sma,
                    state_machine)
 from .panel import MarketPanel
@@ -92,6 +93,13 @@ def _pead(p: MarketPanel, threshold: float = 1.0, hold: int = 60) -> pd.DataFram
     return state_machine(enter, never, max_hold=hold)
 
 
+# --------------------------------------------------------------------------- speculative
+def _doubler_screen(p: MarketPanel, cfg: doublers.DoublerConfig = doublers.DoublerConfig()) -> pd.DataFrame:
+    """The doubler study's screen as a trading rule: buy when it fires, hold `cfg.hold` days (the stop is an overlay)."""
+    never = pd.DataFrame(False, index=p.calendar, columns=p.px.columns)
+    return state_machine(doublers.screen(p, cfg), never, max_hold=cfg.hold)
+
+
 def _top_by(p: MarketPanel, score: pd.DataFrame, top: int, require_positive: bool = False) -> pd.DataFrame:
     s = score.where(p.member)
     if require_positive:
@@ -177,6 +185,13 @@ def rule_strategies() -> list[Strategy]:
                  "12 months / close)", "Sold at the next monthly rebalance if no longer in the top 5",
                  "High-dividend-yield investing (dividend yield and returns: Litzenberger & Ramaswamy 1979)",
                  "EQUAL", _dividend_yield, {"top": 5, "rebalance": "monthly"}),
+        Strategy("DOUBLER_SCREEN", "SPECULATIVE", "Doubler screen (volatile small cap on a trigger)",
+                 "Close ≤ $20 and market cap ≤ $2B (if filed), 60-day volatility in the top 30% of the universe, and a trigger: "
+                 "close within 2% of the prior 252-day high, or volume ≥ 2x its 20-day average",
+                 "After 63 trading days, or when the close falls 50% below its high since entry",
+                 "The profile of past short-period doublers (doubler study); a lottery-ticket rule, kept to measure its cost",
+                 "SLEEVE", _doubler_screen, {"maxPrice": 20, "maxMarketCap": 2e9, "volRankMin": 0.7, "breakoutDays": 252,
+                                             "volumeSpike": 2.0, "holdDays": 63}, trailing_stop=0.5),
         Strategy("EVENT_AVOID", "EVENT", "Avoid tariff / rate-shock stocks",
                  "Own every member", "Step aside while a recent official tariff or rate decision hits the company "
                  "(trade shock < −0.03 or rate shock < −0.01); return once it fades",

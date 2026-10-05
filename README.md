@@ -41,6 +41,9 @@ Requires Docker with Compose v2. The stack uses about 0.8 GB of RAM while idle a
    * evaluates the models, issues forecasts, runs the strategy lab and records the AI's decisions.
 
    Later runs, from the button or the optional schedule, only fetch what is new.
+5. Open **Guide** in the sidebar (`/guide`) for a tour of every page, a live setup checklist, an explanation of
+   each metric and badge, and a glossary. Every (i) icon on the platform opens a short explanation that links back
+   into the guide.
 
 Other commands:
 
@@ -55,7 +58,8 @@ docker compose down -v              # stop and delete the database and stored do
 ```
             ┌──────────── nginx + Angular (frontend :8088) ────────────┐
             │  pages: forecasts, companies, filings, exposure, events, │
-            │  strategies, AI decisions, time machine, accuracy, admin │
+            │  strategies, AI decisions, time machine, doublers, admin,│
+            │  guide (in-app manual, glossary, setup checklist)        │
             └───────────────────────────┬──────────────────────────────┘
                                         │ /api
 ┌───────────────────────────────────────▼──────────────────────────────┐
@@ -148,6 +152,7 @@ strategies on the same data, the same out-of-sample window and the same costs. T
 | Benchmark | Equal-weight buy & hold (the reference every verdict compares against); sector ETF basket |
 | Trend / momentum | 50/200-day golden cross (with and without a 10% trailing stop); 12-1 month momentum, top 5 monthly; Donchian 55/20 breakout |
 | Mean reversion | RSI(2) pullback above the 200-day average; Bollinger band (20, 2σ) bounce; weekly 5-day reversal, bottom 5 |
+| Speculative | Doubler screen: volatile, small, cheap stock on a breakout or volume spike; hold 63 days, 50% stop |
 | Fundamental / event | Quality & growth screen on as-filed XBRL data; post-earnings-announcement drift (earnings surprise ≥ 1, hold 60 days); value (top 5 earnings yield); gross profitability (top 5 gross profit / assets); dividend yield (top 5); stepping aside from tariff/rate shocks using SEC-filing exposures |
 | AI | Gradient-boosted trees that combine every rule's indicator with the financial-report profile, event shocks and macro (with and without a 10% trailing stop); the same model on the financial-report profile alone (`AI_FUND`); the same model plus dividend signals (`AI_DIV`), compared with it on the same out-of-sample forecasts |
 
@@ -204,6 +209,27 @@ It then compares these with what actually happened:
 A chart shows the real price path inside the forecast band. One date is one draw, so use the walk-forward accuracy and the
 strategy lab for evidence. The code is `backend/civalpha/timemachine.py`; `backend/tests/test_timemachine.py` checks that
 changing every later price leaves the predictions untouched.
+
+## Doubler study: how often a stock doubles in a short period
+
+**Doubler study** (also the last step of every pipeline run; `POST /api/admin/doublers/study`) asks a blunt question of
+the stored history: for every tracked stock and trading day, bought at the next close, did the stock reach +100% at any
+close within 21, 42 or 63 trading days, and did it fall to −50%? It reports:
+
+* the base rate (hits per stock-day) over the whole history and by year, with every episode (the first signal day,
+  the entry and the day the close first reached 2×);
+* what the doubling stock-days looked like beforehand: median volatility, breakout distance, volume, market cap, price
+  and drawdown versus all stock-days, and the hit rate by quintile of each;
+* a point-in-time screen for that profile (volatile, small and cheap, on a breakout or volume spike): its hit rate and
+  loss rate with block-bootstrap intervals, next to a control group of the same volatile stock-days without a trigger,
+  and the lift over chance; the verdict says SUPPORTED only when the interval lies above the base rate;
+* which tracked stocks the screen flags at the latest close.
+
+The same screen trades in the strategy lab as `DOUBLER_SCREEN` (family Speculative: hold 63 days, 50% stop), so its
+cost after fees shows next to the other rules. The code is `backend/civalpha/strategies/doublers.py`;
+`backend/tests/test_doublers.py` checks that changing every later price leaves the screen untouched. A doubling is
+rare, a halving is as common on the same stock-days, and a universe without delisted names overstates the base rate:
+the page says so.
 
 ## Sources and credentials
 
