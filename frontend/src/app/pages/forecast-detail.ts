@@ -1,10 +1,10 @@
 import { httpResource } from '@angular/common/http';
-import { Component, computed, input } from '@angular/core';
+import { Component, computed, input, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { DivergingBars, DivergingItem } from '../charts/diverging-bars';
 import { apiUrl, valueOf } from '../core/api';
 import { FORMAT_PIPES, fmtFixed, fmtPct, fmtSigned } from '../core/format';
-import { ForecastDetail, Provenance } from '../core/models';
+import { Factor, ForecastDetail, Provenance } from '../core/models';
 import { Icon } from '../shared/icon';
 import { UI } from '../shared/ui';
 import { VIZ } from '../shared/viz';
@@ -108,6 +108,103 @@ import { VIZ } from '../shared/viz';
           }
         </div>
       </div>
+
+      @if (f.versions.length > 1) {
+        <div class="card diff-card">
+          <div class="card-head">
+            <h3><app-icon name="diff" [size]="16" /> What changed <app-help text="This version against an earlier one of the same series: the probability move and, factor by factor, how much each contribution moved. Contributions are in log-odds; a factor that appears or disappears is marked." topic="version" label="version diff" /></h3>
+            <label class="small">
+              Compare v{{ f.version }} with
+              <select (change)="setCompare(+$any($event.target).value)">
+                @for (v of otherVersions(); track v.id) {
+                  <option [value]="v.id" [selected]="v.id === compareId()">v{{ v.version }} · {{ v.issuedAt | utc }}</option>
+                }
+              </select>
+            </label>
+          </div>
+          @if (prevRes.isLoading() && !prevRes.hasValue()) {
+            <p class="loading">Loading the earlier version…</p>
+          } @else if (diff(); as d) {
+            <div class="diff-head">
+              <div class="diff-prob">
+                <span class="small muted">v{{ d.prev.version }}</span>
+                <span class="prob">{{ d.prev.probability | pct }}</span>
+                <span class="small muted">[{{ d.prev.probLow | pct }}–{{ d.prev.probHigh | pct }}]</span>
+                <app-lean [p]="d.prev.probability" [lo]="d.prev.probLow" [hi]="d.prev.probHigh" />
+              </div>
+              <span class="dash-arrow" aria-hidden="true">→</span>
+              <div class="diff-prob">
+                <span class="small muted">v{{ f.version }}</span>
+                <span class="prob">{{ f.probability | pct }}</span>
+                <span class="small muted">[{{ f.probLow | pct }}–{{ f.probHigh | pct }}]</span>
+                <app-lean [p]="f.probability" [lo]="f.probLow" [hi]="f.probHigh" />
+              </div>
+              <div class="diff-sum">
+                <app-delta [value]="f.probability - d.prev.probability" kind="pp" [digits]="1" />
+                <div class="small muted">{{ d.reason }}</div>
+              </div>
+            </div>
+            @if (d.rows.length) {
+              <div class="table-wrap">
+                <table class="table compact">
+                  <thead>
+                    <tr>
+                      <th>Factor</th>
+                      <th class="num">v{{ d.prev.version }}</th>
+                      <th class="num">v{{ f.version }}</th>
+                      <th class="num">Δ contribution</th>
+                      <th class="num">Value before → after</th>
+                      <th>Sources (this version)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (r of d.rows; track r.feature) {
+                      <tr [class.row-dim]="r.delta === 0 && r.status === 'same'">
+                        <td>
+                          {{ r.label }}
+                          @if (r.status === 'new') { <span class="badge tone-info">new</span> }
+                          @else if (r.status === 'removed') { <span class="badge tone-neutral">removed</span> }
+                          <div class="small muted mono">{{ r.feature }}</div>
+                        </td>
+                        <td class="num">{{ r.before | signed: 3 }}</td>
+                        <td class="num">{{ r.after | signed: 3 }}</td>
+                        <td class="num heat" [class]="'num heat tone-' + (r.delta > 0 ? 'good' : r.delta < 0 ? 'bad' : 'neutral')" [style.--h]="r.heat">
+                          <app-delta [value]="r.delta" kind="fixed" [digits]="3" />
+                        </td>
+                        <td class="num small">{{ r.valueBefore | fixed: 4 }} → {{ r.valueAfter | fixed: 4 }}</td>
+                        <td>
+                          @for (p of r.provenance; track $index) {
+                            <div class="small">
+                              <span class="chip">{{ p.type | human }}</span>
+                              @if (internal(p); as link) {
+                                <a [routerLink]="link">{{ p.label }}</a>
+                              } @else if (p.url) {
+                                <a [href]="p.url" target="_blank" rel="noopener noreferrer">{{ p.label }} ↗</a>
+                              } @else {
+                                {{ p.label }}
+                              }
+                            </div>
+                          } @empty {
+                            <span class="muted small">—</span>
+                          }
+                        </td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+              <p class="small muted" style="margin-top: 0.4rem">
+                Sorted by the size of the move. Green raised the probability, red lowered it; unchanged factors are dimmed.
+                {{ d.changedFeatures }} of {{ d.rows.length }} factors moved.
+              </p>
+            } @else {
+              <p class="muted">No factor explanation on one of the versions, so only the probabilities can be compared.</p>
+            }
+          } @else if (prevRes.error()) {
+            <p class="muted">The earlier version could not be loaded.</p>
+          }
+        </div>
+      }
 
       <h2>Key factors <app-help text="Each factor's contribution is its model coefficient times its standardized value, in log-odds. Positive pushes the probability up, negative pulls it down. Event factors are built from documented exposures and are estimates." topic="factors" label="key factors" /></h2>
       <p class="small muted">
@@ -261,6 +358,15 @@ import { VIZ } from '../shared/viz';
       }
     }
   `,
+  styles: `
+    .diff-card { border-left: 4px solid var(--series-1); }
+    .diff-card h3 { display: inline-flex; align-items: center; gap: 0.4rem; }
+    .diff-head { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+    .diff-prob { display: inline-flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+    .diff-prob .prob { font-size: 1.1rem; }
+    .diff-sum { display: flex; flex-direction: column; }
+    .diff-sum .delta { font-size: 1.1rem; font-weight: 700; }
+  `,
 })
 export class ForecastDetailPage {
   readonly id = input.required<string>();
@@ -311,6 +417,73 @@ export class ForecastDetailPage {
   });
 
   protected readonly featureList = computed(() => Object.entries(this.f()?.features ?? {}));
+
+  // ----- version diff -----
+  private readonly chosenCompare = signal<number | null>(null);
+  protected readonly otherVersions = computed(() => this.versions().filter((v) => v.id !== this.f()?.id));
+  protected readonly compareId = computed<number | null>(() => {
+    const c = this.chosenCompare();
+    if (c && this.otherVersions().some((v) => v.id === c)) return c;
+    const f = this.f();
+    if (!f) return null;
+    const prev = this.otherVersions().filter((v) => v.version < f.version).sort((a, b) => b.version - a.version)[0];
+    return prev?.id ?? this.otherVersions()[0]?.id ?? null;
+  });
+  protected setCompare(id: number): void {
+    this.chosenCompare.set(id);
+  }
+  protected readonly prevRes = httpResource<ForecastDetail>(() => {
+    const id = this.compareId();
+    return id ? apiUrl.forecast(id) : undefined;
+  });
+
+  protected readonly diff = computed(() => {
+    const cur = this.f();
+    const prev = valueOf(this.prevRes);
+    if (!cur || !prev || prev.id === cur.id) return null;
+    const a = new Map((prev.explanation?.factors ?? []).map((x) => [x.feature, x]));
+    const b = new Map((cur.explanation?.factors ?? []).map((x) => [x.feature, x]));
+    const rows: {
+      feature: string;
+      label: string;
+      before: number | null;
+      after: number | null;
+      delta: number;
+      heat: number;
+      valueBefore: number | null;
+      valueAfter: number | null;
+      status: 'same' | 'new' | 'removed';
+      provenance: Provenance[];
+    }[] = [];
+    if (a.size || b.size) {
+      for (const feature of new Set([...a.keys(), ...b.keys()])) {
+        const x: Factor | undefined = a.get(feature);
+        const y: Factor | undefined = b.get(feature);
+        rows.push({
+          feature,
+          label: y?.label || x?.label || feature,
+          before: x?.contribution ?? null,
+          after: y?.contribution ?? null,
+          delta: (y?.contribution ?? 0) - (x?.contribution ?? 0),
+          heat: 0,
+          valueBefore: x?.value ?? null,
+          valueAfter: y?.value ?? null,
+          status: !x ? 'new' : !y ? 'removed' : 'same',
+          provenance: y?.provenance ?? x?.provenance ?? [],
+        });
+      }
+      const max = Math.max(...rows.map((r) => Math.abs(r.delta)), 1e-9);
+      for (const r of rows) r.heat = Math.abs(r.delta) / max;
+      rows.sort((p, q) => Math.abs(q.delta) - Math.abs(p.delta));
+    }
+    const newer = cur.version > prev.version ? cur : prev;
+    return {
+      prev,
+      rows,
+      changedFeatures: rows.filter((r) => Math.abs(r.delta) > 1e-6).length,
+      reason: newer.reason ?? (cur.version > prev.version ? 'Re-issued without a stated reason.' : ''),
+    };
+  });
 
   /** EVENT provenance → in-app route; external links handled in the template. */
   protected internal(p: Provenance): (string | number)[] | null {

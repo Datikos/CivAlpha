@@ -539,7 +539,7 @@ export class GuidePage {
         title: 'Forecasts issued',
         detail: 'The pipeline issues forecasts once about six months of prices exist for a stock and its benchmark ETF.',
         done: known(this.forecasts, () => (valueOf(this.forecasts)?.length ?? 0) > 0),
-        link: '/',
+        link: '/forecasts',
         linkLabel: 'Current forecasts',
       },
       {

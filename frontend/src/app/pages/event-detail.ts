@@ -3,23 +3,31 @@ import { Component, computed, input } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { apiUrl, valueOf } from '../core/api';
 import { FORMAT_PIPES } from '../core/format';
-import { PolicyEventDetail } from '../core/models';
+import { ModelKind, PolicyEventDetail } from '../core/models';
+import { Icon } from '../shared/icon';
 import { UI } from '../shared/ui';
+import { VIZ } from '../shared/viz';
 
 @Component({
   selector: 'app-event-detail',
-  imports: [RouterLink, ...UI, ...FORMAT_PIPES],
+  imports: [RouterLink, Icon, ...UI, ...VIZ, ...FORMAT_PIPES],
   template: `
     <div class="crumbs"><a routerLink="/events">Policy events</a> / #{{ id() }}</div>
     <app-status [res]="res" what="event" />
     @if (e(); as e) {
       <div class="page-head">
-        <div>
-          <h1>{{ e.title }}</h1>
-          <p class="muted">
-            {{ e.category | human }} · {{ e.eventType | human }}{{ e.actorName ? ' · ' + e.actorName : '' }} ·
-            <app-evidence-badge [status]="e.evidenceStatus" />
-          </p>
+        <div class="page-title">
+          <app-page-icon name="landmark" area="research" />
+          <div>
+            <h1>{{ e.title }}</h1>
+            <p class="muted">
+              {{ e.category | human }} · {{ e.eventType | human }}{{ e.actorName ? ' · ' + e.actorName : '' }} ·
+              <app-evidence-badge [status]="e.evidenceStatus" />
+            </p>
+          </div>
+        </div>
+        <div class="page-actions">
+          <a routerLink="/guide" fragment="page-events" class="btn btn-help"><app-icon name="help" [size]="16" /> How to read this</a>
         </div>
       </div>
 
@@ -61,6 +69,74 @@ import { UI } from '../shared/ui';
           }
         </div>
       </div>
+
+      <h2>Forecast impact <app-help text="Two views of what this event did to the forecasts. Re-issued: forecasts published because the event arrived, each next to the version it replaced. Before and after: for every exposed company, the last forecast before the event date against the first one on or after it, whatever caused the re-issue." topic="event-impact" label="forecast impact" /></h2>
+      @if (impact(); as im) {
+        @if (!im.reissued.length && !im.shift.length) {
+          <div class="empty-box">
+            No forecast has moved on account of this event yet.
+            @if (e.evidenceStatus !== 'OFFICIAL') { News-only events stay out of the models until an official document is linked. }
+            @else if (!e.affectedCompanies.length) { No tracked company has a documented exposure to its targets. }
+            @else { Forecasts dated after {{ e.eventDate }} will appear here once issued. }
+          </div>
+        } @else {
+          <div class="stats wide">
+            @for (s of im.summary; track s.model + s.source) {
+              <div class="stat" [class]="'stat tone-' + (s.n ? (s.mean > 0 ? 'good' : s.mean < 0 ? 'bad' : 'neutral') : 'neutral')">
+                <div class="stat-label"><app-model-tag [kind]="s.model" /> · {{ s.source }}</div>
+                <div class="stat-value"><app-delta [value]="s.mean" kind="pp" [digits]="1" /><span class="unit">mean move</span></div>
+                <div class="stat-sub">{{ s.n }} forecasts · {{ s.up }} up · {{ s.down }} down · {{ s.flat }} unchanged</div>
+              </div>
+            }
+          </div>
+          <div class="grid-2">
+            @if (im.reissued.length) {
+              <div class="card">
+                <h3>Re-issued because of this event ({{ im.reissued.length }})</h3>
+                <div class="table-wrap">
+                  <table class="table compact">
+                    <thead><tr><th>Company</th><th>Model</th><th class="num">Before</th><th class="num">After</th><th class="num">Move</th><th></th></tr></thead>
+                    <tbody>
+                      @for (r of im.reissued; track r.id) {
+                        <tr>
+                          <td><a [routerLink]="['/companies', r.symbol]">{{ r.symbol }}</a></td>
+                          <td><app-model-tag [kind]="r.modelKind" /></td>
+                          <td class="num">{{ r.previous?.probability | pct: 1 }}</td>
+                          <td class="num"><span class="prob">{{ r.probability | pct: 1 }}</span></td>
+                          <td class="num"><app-delta [value]="r.previous ? r.probability - r.previous.probability : null" kind="pp" [digits]="1" /></td>
+                          <td class="small nowrap"><a [routerLink]="['/forecasts', r.id]">v{{ r.version }} · what changed</a></td>
+                        </tr>
+                      }
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            }
+            @if (im.shift.length) {
+              <div class="card">
+                <h3>Before and after the event date ({{ e.eventDate }})</h3>
+                <div class="table-wrap">
+                  <table class="table compact">
+                    <thead><tr><th>Company</th><th>Model</th><th class="num">Before</th><th class="num">After</th><th class="num">Move</th></tr></thead>
+                    <tbody>
+                      @for (r of im.shift; track r.symbol + r.modelKind) {
+                        <tr>
+                          <td><a [routerLink]="['/companies', r.symbol]">{{ r.symbol }}</a></td>
+                          <td><app-model-tag [kind]="r.modelKind" /></td>
+                          <td class="num"><a [routerLink]="['/forecasts', r.before.id]">{{ r.before.probability | pct: 1 }}</a><div class="small muted">{{ r.before.asOfDate }}</div></td>
+                          <td class="num"><a [routerLink]="['/forecasts', r.after.id]">{{ r.after.probability | pct: 1 }}</a><div class="small muted">{{ r.after.asOfDate }}</div></td>
+                          <td class="num"><app-delta [value]="r.after.probability - r.before.probability" kind="pp" [digits]="1" /></td>
+                        </tr>
+                      }
+                    </tbody>
+                  </table>
+                </div>
+                <p class="small muted" style="margin-top: 0.4rem">Includes everything that happened between the two dates, not only this event.</p>
+              </div>
+            }
+          </div>
+        }
+      }
 
       @if (e.actor; as a) {
         <h2>Actor: {{ a.name }}</h2>
@@ -211,6 +287,35 @@ export class EventDetailPage {
           affectedCompanies: (v.affectedCompanies ?? []).map((c) => ({ ...c, paths: c.paths ?? [] })),
         }
       : null;
+  });
+
+  protected readonly impact = computed(() => {
+    const e = this.e();
+    if (!e) return null;
+    const reissued = e.reissuedForecasts ?? [];
+    const shift = e.forecastShift ?? [];
+    const summary: { model: ModelKind; source: string; n: number; mean: number; up: number; down: number; flat: number }[] = [];
+    const add = (model: ModelKind, source: string, moves: number[]) => {
+      if (!moves.length) return;
+      summary.push({
+        model,
+        source,
+        n: moves.length,
+        mean: moves.reduce((s, v) => s + v, 0) / moves.length,
+        up: moves.filter((v) => v > 0.0005).length,
+        down: moves.filter((v) => v < -0.0005).length,
+        flat: moves.filter((v) => Math.abs(v) <= 0.0005).length,
+      });
+    };
+    for (const model of ['BASELINE', 'AUGMENTED'] as ModelKind[]) {
+      add(model, 're-issued', reissued.filter((r) => r.modelKind === model && r.previous).map((r) => r.probability - r.previous!.probability));
+    }
+    if (!reissued.length) {
+      for (const model of ['BASELINE', 'AUGMENTED'] as ModelKind[]) {
+        add(model, 'before → after', shift.filter((r) => r.modelKind === model).map((r) => r.after.probability - r.before.probability));
+      }
+    }
+    return { reissued, shift, summary };
   });
 
   protected readonly attrs = computed(() =>

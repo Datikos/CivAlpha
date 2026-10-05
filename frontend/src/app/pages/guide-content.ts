@@ -34,8 +34,22 @@ export interface PageCard {
 
 export const PAGES: PageCard[] = [
   {
-    id: 'page-forecasts',
+    id: 'page-dashboard',
     path: '/',
+    title: 'Dashboard',
+    icon: 'grid',
+    area: 'forecast',
+    question: 'What changed since the last run?',
+    read: [
+      'Four tiles: pipeline health and data cutoff, the forecast lean split, the AI\'s entries and exits for today, and the two evidence verdicts in one word.',
+      '"Leans that changed" lists forecasts whose lean flipped between the newest as-of date and the previous one; "Windows that closed" scores the forecasts whose 21-day window ended in the last 10 days.',
+      '"Movers vs benchmark" ranks stocks by their 21-trading-day return minus their sector ETF\'s, with a sparkline of raw closes.',
+    ],
+    caution: 'A flip from coin flip to leans above is a change of the model\'s confidence, not of the world. Open the forecast and read what moved it.',
+  },
+  {
+    id: 'page-forecasts',
+    path: '/forecasts',
     title: 'Current forecasts',
     icon: 'pulse',
     area: 'forecast',
@@ -85,6 +99,19 @@ export const PAGES: PageCard[] = [
       'The list shows every tracked stock with its benchmark ETF, last close, dividend status and both latest forecasts.',
       'A company page has four tabs: Overview (price against the benchmark, dividends, key filed facts), Filings & financials (every 10-K, 10-Q and 8-K with XBRL values), Policy exposure (where the filings say the company is exposed to tariffs or rates), and Forecasts (its own history).',
       'Grey FILED and REPORTED badges mark facts taken straight from a filing; amber ESTIMATED marks a value the platform inferred.',
+    ],
+  },
+  {
+    id: 'page-compare',
+    path: '/compare',
+    title: 'Compare',
+    icon: 'columns',
+    area: 'research',
+    question: 'How do two or three stocks (or strategies) stack up side by side?',
+    read: [
+      'Tick up to three companies on the Companies page, or up to three strategies on the Strategy lab, and press Compare. The same rows appear for each column; the best value in a row is bold with a ✓.',
+      'For companies: price against the benchmark over a year, the 21-day move, both forecasts with their leans, the AI\'s current action, resolved-forecast accuracy, dividends and the latest filed facts.',
+      'For strategies: every metric of the backtest, the equity curves on one chart, and calendar-year returns.',
     ],
   },
   {
@@ -362,7 +389,9 @@ export const GLOSSARY: Term[] = [
   { id: 'walk-forward', term: 'Walk-forward evaluation', def: 'The history is cut into blocks. For each block the model is trained only on samples whose outcome was known before the block starts, then scored on the block. No block is ever used to tune the model that scores it.' },
   { id: 'out-of-sample', term: 'Out of sample', def: 'Data the model never saw during training. Every number on the Accuracy and Strategy lab pages is out of sample.' },
   { id: 'factors', term: 'Factors', def: 'For a forecast, each feature\'s coefficient times its standardized value, in log-odds. For an AI decision, each feature\'s contribution in probability points. Both are explanations of the model, not causes in the world.' },
-  { id: 'version', term: 'Forecast version', def: 'A forecast is never edited. New evidence for the same company, model and as-of date produces version n+1 that supersedes version n. Both stay visible.' },
+  { id: 'version', term: 'Forecast version', def: 'A forecast is never edited. New evidence for the same company, model and as-of date produces version n+1 that supersedes version n. Both stay visible, and the forecast page shows what changed between them, factor by factor.' },
+  { id: 'event-impact', term: 'Event impact', def: 'On an event page: the forecasts that were re-issued because the event arrived (each next to the version it replaced), and for every exposed company the last forecast before the event date against the first one after it.' },
+  { id: 'accuracy-over-time', term: 'Accuracy over time', def: 'Resolved live forecasts grouped by the month their window closed: mean Brier score and hit rate per month, so you can see whether the models are improving or decaying rather than only their average.' },
   { id: 'stock-days', term: 'Stock-days', def: 'One stock on one trading day. The doubler study counts them: 30 stocks over 250 days are 7,500 stock-days.' },
   { id: 'episode', term: 'Episode', def: 'In the doubler study, one move of +100%: the first day the screen flagged it, the entry, and the day the close first reached twice the entry.' },
   { id: 'rule-votes', term: 'Rule votes', def: 'On an AI decision card, which of the classic rules (golden cross, momentum, RSI pullback and so on) would hold the stock that day.' },

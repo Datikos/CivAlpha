@@ -108,10 +108,44 @@ def companies():
     for a in db().all("""SELECT company_id, ex_date, action_type, value FROM corporate_action
                          WHERE company_id IS NOT NULL AND action_type IN ('CASH_DIVIDEND', 'SPLIT')"""):
         actions.setdefault(a["company_id"], []).append((a["ex_date"], a["action_type"], a["value"]))
+    closes = _recent_closes()
     for c in out:
         c["latestForecasts"] = latest.get(c["id"], {})
         c["dividend"] = _dividend_summary(actions.get(c["id"], []), c["latestCloseDate"], c["latestClose"])
+        own = closes.get(("c", c["id"]), [])
+        bench = closes.get(("b", c["benchmarkSymbol"]), [])
+        c["recentCloses"] = own
+        c["change21d"] = _change(own)
+        c["benchmarkChange21d"] = _change(bench)
     return out
+
+
+RECENT_BARS = 22  # the last close plus 21 trading days: one forecast horizon
+
+
+def _recent_closes() -> dict[tuple, list[float]]:
+    """Last 22 closes per company and per benchmark ETF (ascending), for sparklines and the 21-day change."""
+    out: dict[tuple, list[float]] = {}
+    rows = db().all("""
+        SELECT company_id, symbol, close FROM (
+            SELECT company_id, symbol, close, trade_date,
+                   row_number() OVER (PARTITION BY coalesce(CAST(company_id AS text), symbol) ORDER BY trade_date DESC) AS rn
+            FROM price_bar
+            WHERE trade_date >= (SELECT max(trade_date) FROM price_bar) - 60
+        ) t WHERE rn <= :n ORDER BY trade_date""", n=RECENT_BARS)
+    benchmarks = {r["benchmark_symbol"] for r in db().all("SELECT DISTINCT benchmark_symbol FROM company")}
+    for r in rows:
+        if r["company_id"] is not None:
+            out.setdefault(("c", r["company_id"]), []).append(value(r["close"]))
+        elif r["symbol"] in benchmarks:
+            out.setdefault(("b", r["symbol"]), []).append(value(r["close"]))
+    return out
+
+
+def _change(closes: list[float]) -> float | None:
+    if len(closes) < 2 or not closes[0]:
+        return None
+    return closes[-1] / closes[0] - 1
 
 
 def _dividend_summary(actions: list, close_date: str | None, close: float | None) -> dict:

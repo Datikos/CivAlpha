@@ -1,5 +1,5 @@
 import { httpResource } from '@angular/common/http';
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, computed, inject } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { apiUrl, valueOf } from '../core/api';
 import { FORMAT_PIPES } from '../core/format';
@@ -9,8 +9,6 @@ import { ForecastSummary } from '../core/models';
 import { Icon } from '../shared/icon';
 import { UI } from '../shared/ui';
 import { VIZ, leanOf } from '../shared/viz';
-
-const WELCOME_KEY = 'civalpha.welcomed';
 
 @Component({
   selector: 'app-current-forecasts',
@@ -29,23 +27,6 @@ const WELCOME_KEY = 'civalpha.welcomed';
         <a routerLink="/forecasts/history" class="btn">Full history</a>
       </div>
     </div>
-
-    @if (showWelcome()) {
-      <div class="card welcome">
-        <div class="welcome-text">
-          <h3>New here? Start with the guide.</h3>
-          <p class="muted">
-            A five-minute tour of what the numbers mean, which page answers which question, and how to run the
-            pipeline. Every <span class="help-btn" style="display: inline-flex; vertical-align: middle"><app-icon name="info" [size]="12" /></span>
-            on the platform opens a short explanation.
-          </p>
-        </div>
-        <div class="welcome-actions">
-          <a routerLink="/guide" class="btn btn-primary"><app-icon name="book" [size]="16" /> Open the guide</a>
-          <button type="button" class="btn" (click)="dismissWelcome()">Not now</button>
-        </div>
-      </div>
-    }
 
     <div class="card">
       <h3>
@@ -155,7 +136,6 @@ export class CurrentForecastsPage {
   protected readonly meta = inject(MetaService);
   protected readonly res = httpResource<ForecastSummary[]>(() => apiUrl.forecastsCurrent());
   protected readonly rows = computed(() => groupByCompany(valueOf(this.res) ?? []));
-  protected readonly showWelcome = signal(readWelcome());
 
   protected readonly summary = computed(() => {
     const list = valueOf(this.res) ?? [];
@@ -181,21 +161,4 @@ export class CurrentForecastsPage {
       flat,
     };
   });
-
-  protected dismissWelcome(): void {
-    this.showWelcome.set(false);
-    try {
-      localStorage.setItem(WELCOME_KEY, '1');
-    } catch {
-      // storage unavailable: show again next time
-    }
-  }
-}
-
-function readWelcome(): boolean {
-  try {
-    return localStorage.getItem(WELCOME_KEY) !== '1';
-  } catch {
-    return true;
-  }
 }

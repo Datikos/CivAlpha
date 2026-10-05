@@ -23,9 +23,12 @@ Three kinds of numbers are kept apart everywhere:
    "latestForecasts": { "BASELINE": {"id": 10, "probability": 0.52, "asOfDate": "2026-09-30"},
                         "AUGMENTED": {"id": 11, "probability": 0.44, "asOfDate": "2026-09-30"} },
    "dividend": { "status": "REGULAR", "frequency": "QUARTERLY", "trailingYield": 0.0044, "indicatedYield": 0.0045,
-                 "lastExDate": "2026-08-11", "yearsPaid": 14 } }]
+                 "lastExDate": "2026-08-11", "yearsPaid": 14 },
+   "recentCloses": [228.1, 229.4, "...22 closes, oldest first"], "change21d": 0.031, "benchmarkChange21d": 0.012 }]
 ```
 `latestForecasts` keys may be missing. `dividend` is the summary of `GET /api/companies/{symbol}/dividends`.
+`recentCloses` holds the last 22 raw closes (one forecast horizon); `change21d` and `benchmarkChange21d` are the
+returns from the first to the last of them, for the stock and its benchmark ETF (`null` with fewer than two closes).
 
 `GET /api/companies/{symbol}` — symbol may be a historical ticker (e.g. `FB` resolves to META).
 ```json
@@ -139,8 +142,17 @@ A path reads: event → target (country/sector/product/cost) → company exposur
                "version": 1, "contentSha256": "...", "documentUrl": "/api/documents/12"}],
   "affectedCompanies": [{"symbol": "AAPL", "name": "Apple Inc.",
        "paths": [{"targetType": "COUNTRY", "targetCode": "CN", "exposureId": 4, "basis": "DIRECTLY_REPORTED",
-                  "confidence": "HIGH", "share": 0.18, "passageId": 9}]}] }
+                  "confidence": "HIGH", "share": 0.18, "passageId": 9}]}],
+  "reissuedForecasts": [{"symbol": "AAPL", "modelKind": "AUGMENTED", "id": 31, "version": 2, "issuedAt": "...",
+       "probability": 0.41, "probLow": 0.35, "probHigh": 0.47,
+       "previous": {"id": 22, "probability": 0.47, "probLow": 0.41, "probHigh": 0.53}}],
+  "forecastShift": [{"symbol": "AAPL", "modelKind": "AUGMENTED",
+       "before": {"id": 22, "asOfDate": "2025-04-01", "probability": 0.47},
+       "after": {"id": 31, "asOfDate": "2025-04-02", "probability": 0.41}}] }
 ```
+`reissuedForecasts` lists the forecasts published because this event arrived (an official event re-issues every exposed
+company; `previous` is the version each one superseded). `forecastShift` compares, for every exposed company and model,
+the last forecast before the event date with the first one on or after it, whatever caused the re-issue.
 `POST /api/events` — add a sourced event (a source URL is mandatory). Body:
 ```json
 { "category": "TRADE_TARIFF", "eventType": "TARIFF_IMPOSED", "title": "...", "summary": "...",

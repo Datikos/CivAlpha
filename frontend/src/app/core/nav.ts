@@ -21,10 +21,17 @@ export const NAV_GROUPS: NavGroup[] = [
     links: [
       {
         path: '/',
+        label: 'Dashboard',
+        icon: 'grid',
+        exact: true,
+        keywords: 'home overview today changes summary',
+      },
+      {
+        path: '/forecasts',
         label: 'Current forecasts',
         icon: 'pulse',
         exact: true,
-        keywords: 'home latest probability',
+        keywords: 'latest probability table',
       },
       {
         path: '/forecasts/history',
@@ -51,6 +58,13 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: 'building',
         exact: false,
         keywords: 'stocks tickers filings',
+      },
+      {
+        path: '/compare',
+        label: 'Compare',
+        icon: 'columns',
+        exact: false,
+        keywords: 'side by side versus companies strategies',
       },
       {
         path: '/events',

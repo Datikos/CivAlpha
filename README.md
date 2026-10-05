@@ -45,6 +45,14 @@ Requires Docker with Compose v2. The stack uses about 0.8 GB of RAM while idle a
    each metric and badge, and a glossary. Every (i) icon on the platform opens a short explanation that links back
    into the guide.
 
+The **Dashboard** (`/`) summarizes what changed since the last run: leans that flipped between the two newest as-of
+dates, forecast windows that closed in the last ten days with their scores, the AI's entries and exits, and the
+21-trading-day movers against their sector ETFs. Tables on **Companies** and the **Strategy lab** sort by any column
+(remembered per browser) and let you tick up to three rows to open a side-by-side **Compare** view. A forecast page
+shows what changed against any earlier version, factor by factor; an event page shows which forecasts it re-issued
+and how every exposed company's forecast moved across the event date; the **Accuracy** page charts Brier score and
+hit rate per month as live forecasts resolve.
+
 Other commands:
 
 ```bash
@@ -57,9 +65,9 @@ docker compose down -v              # stop and delete the database and stored do
 
 ```
             ┌──────────── nginx + Angular (frontend :8088) ────────────┐
-            │  pages: forecasts, companies, filings, exposure, events, │
-            │  strategies, AI decisions, time machine, doublers, admin,│
-            │  guide (in-app manual, glossary, setup checklist)        │
+            │  pages: dashboard, forecasts, companies, compare, filings,│
+            │  exposure, events, strategies, AI decisions, time machine,│
+            │  doublers, admin, guide (manual, glossary, checklist)    │
             └───────────────────────────┬──────────────────────────────┘
                                         │ /api
 ┌───────────────────────────────────────▼──────────────────────────────┐

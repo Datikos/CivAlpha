@@ -1,10 +1,11 @@
 import { httpResource } from '@angular/common/http';
-import { Component, computed } from '@angular/core';
+import { Component, computed, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
+import { LineChart, LineSeries } from '../charts/line-chart';
 import { ReliabilityChart, ReliabilitySeries } from '../charts/reliability-chart';
 import { apiUrl, valueOf } from '../core/api';
 import { FORMAT_PIPES, fmtFixed, fmtNum, fmtPct, fmtSigned, fmtSignedPct } from '../core/format';
-import { AccuracyResponse, MODEL_KINDS, ModelKind, ModelMetrics, TradingStats } from '../core/models';
+import { AccuracyResponse, ForecastSummary, MODEL_KINDS, ModelKind, ModelMetrics, TradingStats } from '../core/models';
 import { Icon } from '../shared/icon';
 import { UI, modelColor } from '../shared/ui';
 import { VIZ, verdictTone } from '../shared/viz';
@@ -46,7 +47,7 @@ function row<T>(
 
 @Component({
   selector: 'app-accuracy',
-  imports: [RouterLink, ReliabilityChart, Icon, ...UI, ...VIZ, ...FORMAT_PIPES],
+  imports: [RouterLink, ReliabilityChart, LineChart, Icon, ...UI, ...VIZ, ...FORMAT_PIPES],
   template: `
     <div class="page-head">
       <div class="page-title">
@@ -311,6 +312,53 @@ function row<T>(
         </div>
       }
 
+      <h2>Accuracy over time <app-help text="Resolved forecasts grouped by the month their window closed. The Brier line should stay below the 0.25 coin-flip line and the hit rate above 50% for the models to be worth anything; a few months prove little." topic="accuracy-over-time" label="accuracy over time" /></h2>
+      <p class="small muted">
+        Each month: the forecasts whose 21-day window closed that month, scored against what happened.
+        <label style="margin-left: 0.5rem"><input type="checkbox" [checked]="includeReplay()" (change)="includeReplay.set($any($event.target).checked)" /> include replayed forecasts</label>
+      </p>
+      @if (monthly(); as mo) {
+        @if (!mo.months.length) {
+          <p class="muted">No resolved {{ includeReplay() ? '' : 'live ' }}forecasts yet.</p>
+        } @else {
+          <div class="grid-2">
+            <div class="card">
+              <h3>Brier score by month</h3>
+              <app-line-chart [series]="mo.brierSeries" label="Mean Brier score per month, baseline vs augmented" [yFormat]="fixed3" [refY]="0.25" refLabel="coin flip" [height]="220" />
+            </div>
+            <div class="card">
+              <h3>Hit rate by month</h3>
+              <app-line-chart [series]="mo.hitSeries" label="Hit rate per month, baseline vs augmented" [yFormat]="pct0" [refY]="0.5" refLabel="coin flip" [yMin]="0" [yMax]="1" [height]="220" />
+            </div>
+          </div>
+          <details class="chart-table">
+            <summary>Data table ({{ mo.months.length }} months)</summary>
+            <div class="table-wrap">
+              <table class="table compact">
+                <thead><tr><th>Month</th>@for (k of kinds; track k) { <th class="num">n {{ k | human }}</th><th class="num">Brier</th><th class="num">Hit rate</th> }</tr></thead>
+                <tbody>
+                  @for (m of mo.months; track m.month) {
+                    <tr>
+                      <td>{{ m.month }}</td>
+                      @for (k of kinds; track k) {
+                        <td class="num">{{ m.byModel[k]?.n ?? 0 }}</td>
+                        <td class="num heat" [class]="'num heat tone-' + ((m.byModel[k]?.brier ?? 0.25) < 0.25 ? 'good' : 'bad')" [style.--h]="m.byModel[k] ? Math.min(1, Math.abs((m.byModel[k]!.brier - 0.25) / 0.1)) : 0">{{ m.byModel[k]?.brier | fixed: 4 }}</td>
+                        <td class="num">{{ m.byModel[k]?.hitRate | pct: 0 }}</td>
+                      }
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          </details>
+          @if (mo.months.length < 3) {
+            <p class="small muted">Fewer than three months of resolved forecasts: a trend cannot be read yet.</p>
+          }
+        }
+      } @else {
+        <app-status [res]="historyRes" what="forecast history" />
+      }
+
       <h2>Issued forecasts — realized accuracy</h2>
       <p class="small muted">
         Forecasts published by the platform and later resolved against outcomes. LIVE forecasts were published before
@@ -486,6 +534,45 @@ export class AccuracyPage {
   });
 
   protected readonly fewResolved = computed(() => this.issuedRows().some((r) => r.mode === 'LIVE' && r.v.resolved < 30));
+
+  // ----- accuracy over time -----
+  protected readonly includeReplay = signal(false);
+  protected readonly historyRes = httpResource<ForecastSummary[]>(() => apiUrl.forecastsHistory());
+  protected readonly fixed3 = (v: number) => fmtFixed(v, 3);
+  protected readonly pct0 = (v: number) => fmtPct(v, 0);
+  protected readonly monthly = computed(() => {
+    const list = valueOf(this.historyRes);
+    if (!list) return null;
+    const replay = this.includeReplay();
+    const acc = new Map<string, Record<string, { n: number; brier: number; hits: number }>>();
+    for (const f of list) {
+      if (!f.outcome || (!replay && f.issueMode !== 'LIVE')) continue;
+      const month = f.outcome.windowEndDate.slice(0, 7);
+      const by = acc.get(month) ?? {};
+      const m = by[f.modelKind] ?? { n: 0, brier: 0, hits: 0 };
+      m.n++;
+      m.brier += f.outcome.brier;
+      if (f.probability > 0.5 === f.outcome.outcome) m.hits++;
+      by[f.modelKind] = m;
+      acc.set(month, by);
+    }
+    const months = [...acc.keys()].sort().map((month) => {
+      const byModel: Partial<Record<ModelKind, { n: number; brier: number; hitRate: number }>> = {};
+      for (const k of MODEL_KINDS) {
+        const m = acc.get(month)![k];
+        if (m) byModel[k] = { n: m.n, brier: m.brier / m.n, hitRate: m.hits / m.n };
+      }
+      return { month, byModel };
+    });
+    const series = (pick: (v: { brier: number; hitRate: number }) => number): LineSeries[] =>
+      MODEL_KINDS.map((k) => ({
+        key: k,
+        label: k === 'BASELINE' ? 'Baseline' : 'Augmented',
+        color: modelColor(k),
+        points: months.filter((m) => m.byModel[k]).map((m) => ({ x: Date.parse(m.month + '-15T00:00:00Z'), y: pick(m.byModel[k]!) })),
+      })).filter((s) => s.points.length);
+    return { months, brierSeries: series((v) => v.brier), hitSeries: series((v) => v.hitRate) };
+  });
 
   /** Largest |fold difference|, for heat scaling. */
   private readonly maxFoldDiff = computed(() => {

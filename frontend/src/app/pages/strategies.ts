@@ -1,11 +1,14 @@
 import { httpResource } from '@angular/common/http';
 import { Component, computed, signal } from '@angular/core';
+import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { LineChart, LineSeries } from '../charts/line-chart';
 import { apiUrl, valueOf } from '../core/api';
 import { FORMAT_PIPES, fmtPct, fmtSignedPct } from '../core/format';
 import { StrategiesResponse, StrategyResult } from '../core/models';
+import { createSort } from '../core/sort';
 import { Icon } from '../shared/icon';
+import { SortTh } from '../shared/sort-th';
 import { UI } from '../shared/ui';
 import { VIZ, verdictTone } from '../shared/viz';
 
@@ -47,7 +50,7 @@ interface Col {
 
 @Component({
   selector: 'app-strategies',
-  imports: [RouterLink, LineChart, Icon, ...UI, ...VIZ, ...FORMAT_PIPES],
+  imports: [RouterLink, FormsModule, LineChart, Icon, SortTh, ...UI, ...VIZ, ...FORMAT_PIPES],
   template: `
     <div class="page-head">
       <div class="page-title">
@@ -102,21 +105,54 @@ interface Col {
         }
 
         <div class="card">
-          <h3>Comparison (out of sample, after costs)</h3>
+          <div class="card-head">
+            <h3>Comparison (out of sample, after costs)</h3>
+            <span class="small muted">click a header to sort · tick up to {{ MAX }} to compare</span>
+          </div>
+          <div class="filters">
+            <label class="field">
+              Family
+              <select [ngModel]="family()" (ngModelChange)="family.set($event)">
+                <option value="">All families</option>
+                @for (f of families(); track f) {
+                  <option [value]="f">{{ familyLabel[f] ?? f }}</option>
+                }
+              </select>
+            </label>
+            <label class="field">
+              Verdict
+              <select [ngModel]="verdictFilter()" (ngModelChange)="verdictFilter.set($event)">
+                <option value="">All</option>
+                <option value="supported">Beats buy &amp; hold</option>
+                <option value="not">Not supported</option>
+                <option value="positive">Excess interval above zero</option>
+              </select>
+            </label>
+            <label class="field">
+              Search
+              <input type="search" placeholder="Name" [ngModel]="q()" (ngModelChange)="q.set($event)" />
+            </label>
+            <span class="small muted">{{ visible().length }} of {{ results().length }}</span>
+          </div>
           <div class="table-wrap">
             <table class="table compact lens">
               <thead>
                 <tr>
-                  <th>Strategy</th>
+                  <th class="pick"><span class="sr-only">Compare</span></th>
+                  <th sortKey="name" [sort]="sort" defaultDir="asc">Strategy</th>
                   @for (c of cols; track c.key) {
-                    <th class="num">{{ c.label }}<app-help [text]="c.hint" [topic]="c.topic" [label]="c.label" /></th>
+                    <th class="num" [sortKey]="c.key" [sort]="sort">{{ c.label }}<app-help [text]="c.hint" [topic]="c.topic" [label]="c.label" /></th>
                   }
                   <th>Verdict</th>
                 </tr>
               </thead>
               <tbody>
-                @for (s of results(); track s.strategyKey) {
-                  <tr [class.ref-row]="s.strategyKey === refKey">
+                @for (s of visible(); track s.strategyKey) {
+                  <tr [class.ref-row]="s.strategyKey === refKey" [class.row-current]="picked().includes(s.strategyKey)">
+                    <td class="pick">
+                      <input type="checkbox" [checked]="picked().includes(s.strategyKey)" (change)="toggle(s.strategyKey)"
+                        [disabled]="!picked().includes(s.strategyKey) && picked().length >= MAX" [attr.aria-label]="'Compare ' + s.name" />
+                    </td>
                     <td>
                       <a [routerLink]="['/strategies', s.strategyKey]">{{ s.name }}</a>
                       <div class="small muted">{{ familyLabel[s.family] ?? s.family }}</div>
@@ -171,6 +207,19 @@ interface Col {
               </tbody>
             </table>
           </div>
+          @if (picked().length) {
+            <div class="compare-bar" role="region" aria-label="Compare selection">
+              <app-icon name="columns" [size]="18" />
+              <span class="chips">
+                @for (k of picked(); track k) {
+                  <button type="button" class="chip" (click)="toggle(k)" [title]="'Remove'">{{ nameOf(k) }} ✕</button>
+                }
+              </span>
+              <span class="small muted">{{ picked().length < 2 ? 'pick at least two' : picked().length + ' of ' + MAX }}</span>
+              <a class="btn btn-primary" [class.disabled]="picked().length < 2" [routerLink]="picked().length >= 2 ? '/strategies/compare' : null" [queryParams]="{ keys: picked().join(',') }">Compare</a>
+              <button type="button" class="btn btn-sm" (click)="picked.set([])">Clear</button>
+            </div>
+          }
           <p class="small muted" style="margin-top: 0.5rem">
             <span class="badge-best">✓</span> marks the best value in a column; bars are scaled to the column's largest
             value. "Excess" is the annualized return above equal-weight buy &amp; hold with a 95% block-bootstrap
@@ -261,10 +310,13 @@ interface Col {
     .ref-row td { background: var(--surface-2); }
     .notes { margin: 0; padding-left: 1.1rem; }
     .notes li + li { margin-top: 0.35rem; }
-    .lens td:first-child { min-width: 168px; }
+    .lens td:nth-child(2) { min-width: 168px; }
     .lens td.num { white-space: nowrap; }
     .lens .ci-cell { flex-direction: column; align-items: flex-end; gap: 0.1rem; }
     .lens .ci-cell .small { text-align: right; }
+    .filters { margin-bottom: 0.75rem; align-items: center; }
+    .chip { cursor: pointer; font: inherit; font-size: 0.78rem; }
+    .btn.disabled { opacity: 0.5; pointer-events: none; }
   `,
 })
 export class StrategiesPage {
@@ -274,8 +326,40 @@ export class StrategiesPage {
   protected readonly equityFmt = equityFormat;
   protected readonly isSupported = supported;
 
+  protected readonly MAX = 3;
+  protected readonly picked = signal<string[]>([]);
+  protected readonly family = signal('');
+  protected readonly verdictFilter = signal<'' | 'supported' | 'not' | 'positive'>('');
+  protected readonly q = signal('');
+  protected readonly sort = createSort('civalpha.sort.strategies', { key: 'sharpe', dir: 'desc' });
+
   protected readonly run = computed(() => valueOf(this.res)?.run ?? null);
   protected readonly results = computed(() => valueOf(this.res)?.results ?? []);
+  protected readonly families = computed(() => [...new Set(this.results().map((s) => s.family))]);
+  protected readonly visible = computed(() => {
+    const fam = this.family();
+    const vf = this.verdictFilter();
+    const q = this.q().trim().toLowerCase();
+    const list = this.results().filter((s) => {
+      if (fam && s.family !== fam) return false;
+      if (q && !s.name.toLowerCase().includes(q)) return false;
+      if (vf === 'supported') return supported(s.verdict);
+      if (vf === 'not') return s.family !== 'BENCHMARK' && !supported(s.verdict);
+      if (vf === 'positive') return (s.metrics.excessCiLow ?? -1) > 0;
+      return true;
+    });
+    const getters: Record<string, (r: StrategyResult) => number | string | null | undefined> = { name: (r) => r.name };
+    for (const c of this.cols) getters[c.key] = c.get;
+    return this.sort.order(list, getters);
+  });
+
+  protected toggle(key: string): void {
+    this.picked.update((p) => (p.includes(key) ? p.filter((k) => k !== key) : p.length < this.MAX ? [...p, key] : p));
+  }
+
+  protected nameOf(key: string): string {
+    return this.results().find((s) => s.strategyKey === key)?.name ?? key;
+  }
   protected readonly years = computed(() => this.results()[0]?.metrics.years ?? 0);
   protected readonly runTone = computed(() => {
     const anySupported = this.results().some((s) => s.family !== 'BENCHMARK' && supported(s.verdict));

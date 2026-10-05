@@ -15,6 +15,12 @@ def test_read_endpoints_answer_without_errors(api):
         r = api.get(url)
         assert r.status_code == 200, (url, r.status_code, r.text[:200])
     assert api.get("/api/companies/META").json()["symbol"] == "META"
+    meta = next(c for c in api.get("/api/companies").json() if c["symbol"] == "META")
+    assert isinstance(meta["recentCloses"], list) and "change21d" in meta and "benchmarkChange21d" in meta
+    event = api.get("/api/events").json()
+    if event:
+        detail = api.get(f"/api/events/{event[0]['id']}").json()
+        assert isinstance(detail["reissuedForecasts"], list) and isinstance(detail["forecastShift"], list)
     assert api.get("/api/companies/FB/prices").json()["symbol"] == "META"     # former ticker resolves
     for url in ("/api/companies/NOPE", "/api/strategies/NOPE", "/api/timemachine/999999", "/api/doublers/999999", "/api/forecasts/999999",
                 "/api/filings/999999", "/api/events/999999", "/api/documents/999999"):

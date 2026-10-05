@@ -37,6 +37,11 @@ export interface CompanySummary {
   latestCloseDate: string | null;
   latestForecasts?: Partial<Record<ModelKind, LatestForecastRef>> | null;
   dividend?: DividendSummary | null;
+  /** Last 22 raw closes, oldest first (one forecast horizon). */
+  recentCloses?: number[];
+  /** Return from the first to the last of recentCloses, for the stock and its benchmark ETF. */
+  change21d?: number | null;
+  benchmarkChange21d?: number | null;
 }
 
 /** NONE: no dividend recorded; SUSPENDED: the next regular payment is overdue. */
@@ -340,12 +345,35 @@ export interface AffectedCompany {
   paths: AffectedPath[];
 }
 
+/** A forecast published because an event arrived, next to the version it superseded. */
+export interface ReissuedForecast {
+  symbol: string;
+  modelKind: ModelKind;
+  id: number;
+  version: number;
+  issuedAt: string;
+  probability: number;
+  probLow: number | null;
+  probHigh: number | null;
+  previous: { id: number; probability: number; probLow: number | null; probHigh: number | null } | null;
+}
+
+/** Last forecast before the event date vs the first on or after it, per exposed company and model. */
+export interface ForecastShift {
+  symbol: string;
+  modelKind: ModelKind;
+  before: { id: number; asOfDate: string; probability: number };
+  after: { id: number; asOfDate: string; probability: number };
+}
+
 export interface PolicyEventDetail extends PolicyEvent {
   summary: string | null;
   attributes: Record<string, unknown> | null;
   actor: Actor | null;
   sources: EventSource[];
   affectedCompanies: AffectedCompany[];
+  reissuedForecasts?: ReissuedForecast[];
+  forecastShift?: ForecastShift[];
 }
 
 export interface NewEventRequest {

@@ -5,8 +5,24 @@ export const routes: Routes = [
   {
     path: '',
     pathMatch: 'full',
+    title: 'Dashboard · CivAlpha',
+    loadComponent: () => import('./pages/dashboard').then((m) => m.DashboardPage),
+  },
+  {
+    path: 'forecasts',
+    pathMatch: 'full',
     title: 'Current forecasts · CivAlpha',
     loadComponent: () => import('./pages/current-forecasts').then((m) => m.CurrentForecastsPage),
+  },
+  {
+    path: 'compare',
+    title: 'Compare companies · CivAlpha',
+    loadComponent: () => import('./pages/compare').then((m) => m.ComparePage),
+  },
+  {
+    path: 'strategies/compare',
+    title: 'Compare strategies · CivAlpha',
+    loadComponent: () => import('./pages/strategy-compare').then((m) => m.StrategyComparePage),
   },
   {
     path: 'companies',

@@ -95,7 +95,45 @@ def get_event(event_id: int):
             p.pop(k)
         co["paths"].append(p)
     e["affectedCompanies"] = list(affected.values())
+    e["reissuedForecasts"] = _reissued_forecasts(event_id)
+    e["forecastShift"] = _forecast_shift(event_id)
     return e
+
+
+def _reissued_forecasts(event_id: int) -> list[dict]:
+    """Forecasts published because of this event (an official event re-issues every exposed company), next to the version they replaced."""
+    return [{
+        "symbol": r["symbol"], "modelKind": r["model_kind"], "id": r["id"], "version": r["version"], "issuedAt": value(r["issued_at"]),
+        "probability": value(r["probability"]), "probLow": value(r["prob_low"]), "probHigh": value(r["prob_high"]),
+        "previous": None if r["prev_id"] is None else {
+            "id": r["prev_id"], "probability": value(r["prev_probability"]), "probLow": value(r["prev_low"]), "probHigh": value(r["prev_high"])},
+    } for r in db().all("""
+        SELECT f.id, f.symbol, f.model_kind, f.version, f.issued_at, f.probability, f.prob_low, f.prob_high,
+               p.id AS prev_id, p.probability AS prev_probability, p.prob_low AS prev_low, p.prob_high AS prev_high
+        FROM forecast f LEFT JOIN forecast p ON p.id = f.supersedes_id
+        WHERE f.reason LIKE :pat ORDER BY f.symbol, f.model_kind, f.version""", pat=f"New evidence: event #{event_id} (%")]
+
+
+def _forecast_shift(event_id: int) -> list[dict]:
+    """For every exposed company and model: the last forecast before the event date and the first one on or after it."""
+    return [{
+        "symbol": r["symbol"], "modelKind": r["model_kind"],
+        "before": {"id": r["before_id"], "asOfDate": value(r["before_date"]), "probability": value(r["before_p"])},
+        "after": {"id": r["after_id"], "asOfDate": value(r["after_date"]), "probability": value(r["after_p"])},
+    } for r in db().all("""
+        WITH aff AS (SELECT DISTINCT x.company_id FROM event_target t JOIN company_exposure x
+                       ON x.target_type = t.target_type AND x.target_code = t.target_code WHERE t.event_id = :id),
+             ev AS (SELECT event_date AS d FROM policy_event WHERE id = :id),
+             before AS (SELECT DISTINCT ON (f.company_id, f.model_kind) f.company_id, f.model_kind, f.symbol, f.id, f.probability, f.as_of_date
+                        FROM forecast f, ev WHERE f.company_id IN (SELECT company_id FROM aff) AND f.as_of_date < ev.d
+                        ORDER BY f.company_id, f.model_kind, f.as_of_date DESC, f.version DESC),
+             after AS (SELECT DISTINCT ON (f.company_id, f.model_kind) f.company_id, f.model_kind, f.id, f.probability, f.as_of_date
+                       FROM forecast f, ev WHERE f.company_id IN (SELECT company_id FROM aff) AND f.as_of_date >= ev.d
+                       ORDER BY f.company_id, f.model_kind, f.as_of_date ASC, f.version DESC)
+        SELECT b.symbol, b.model_kind, b.id AS before_id, b.probability AS before_p, b.as_of_date AS before_date,
+               a.id AS after_id, a.probability AS after_p, a.as_of_date AS after_date
+        FROM before b JOIN after a ON a.company_id = b.company_id AND a.model_kind = b.model_kind
+        ORDER BY b.symbol, b.model_kind""", id=event_id)]
 
 
 # --------------------------------------------------------------------------- create
