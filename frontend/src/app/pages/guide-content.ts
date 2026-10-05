@@ -175,6 +175,20 @@ export const PAGES: PageCard[] = [
     caution: 'One date is one draw. It is an illustration; the Accuracy and Strategy lab pages hold the multi-year evidence.',
   },
   {
+    id: 'page-signals',
+    path: '/signals',
+    title: 'Signal health',
+    icon: 'pulse',
+    area: 'strategy',
+    question: 'Which model inputs still carry information, and which are fading?',
+    read: [
+      'One row per feature the AI sees: prices, filed fundamentals, policy shocks, dividends, insiders, earnings. The sparkline is its monthly information coefficient: each day\'s rank correlation across stocks with the next 21 days\' excess return over the sector ETF, averaged per month.',
+      'Mean IC and its t-statistic over months say whether the input carried information at all; the IC information ratio says how steadily; "right sign" is the share of months it pointed the right way.',
+      'The grade is corrected for the number of features tested. "Decaying" marks an input that carried information over the whole history but lost its sign in the last 12 months: the classic trace of an edge others have found.',
+    ],
+    caution: 'With a few dozen stocks a monthly IC is noisy; read the month count and the right-sign share before trusting a mean.',
+  },
+  {
     id: 'page-playbook',
     path: '/playbook',
     title: 'Setup playbook',
@@ -227,7 +241,7 @@ export const PAGES: PageCard[] = [
     question: 'How do I refresh everything?',
     read: [
       'The status tiles show the data cutoff and whether the price provider and SEC access are configured; green means ready.',
-      '"Run pipeline" does everything in order: prices, filings, insider transactions, macro and events, evaluation, forecasts, outcome resolution, the strategy lab, AI decisions, the doubler study and the setup playbook. It only fetches what is new.',
+      '"Run pipeline" does everything in order: prices, filings, insider transactions, macro and events, evaluation, forecasts, outcome resolution, the strategy lab, AI decisions, the doubler study, the setup playbook and signal health. It only fetches what is new.',
       'Advanced lists each step separately. The jobs table shows progress and logs; it refreshes itself while something runs.',
     ],
   },
@@ -402,6 +416,22 @@ export const METRICS: MetricDoc[] = [
     what: 'The AI_SIZED strategy keeps AI_GBM\'s entries and exits but sizes each position as 0.04 divided by the stock\'s annualized 21-day volatility, capped at 20% of capital, with the whole book capped at 100% (no leverage). A stock at 32% volatility gets 12.5%, the equal slice; one at 64% gets 6%.',
     good: 'Sizing cannot create an edge, but it changes how much of one is kept: compare Sharpe and max drawdown with AI_GBM. A better Sharpe at a lower drawdown means the same calls were carried with less pain.',
     where: 'Strategy lab, AI decisions (sized weight on each card).',
+  },
+  {
+    id: 'ic',
+    name: 'Information coefficient (IC)',
+    short: 'the rank correlation between a signal and what followed',
+    what: 'On one day, the Spearman correlation across the tracked stocks between a feature\'s value and each stock\'s excess return over its sector ETF in the following 21 trading days; a month averages its days. The IC information ratio is the mean monthly IC divided by its standard deviation.',
+    good: 'A mean IC of 0.03 with a t-statistic above the corrected bar is a real, usable input; most inputs score near zero. An IC IR above 0.5 is steady.',
+    where: 'Signal health.',
+  },
+  {
+    id: 'decay',
+    name: 'Edge decay',
+    short: 'an input that used to work and no longer does',
+    what: 'The mean IC of the last 12 months compared with the earlier months. An input is flagged DECAYING when it was informative over the whole history but the last 12 months have the opposite sign.',
+    good: 'None flagged. A decaying input is a reason to retrain, drop the feature or stop trusting the setups built on it.',
+    where: 'Signal health.',
   },
   {
     id: 'payoff',

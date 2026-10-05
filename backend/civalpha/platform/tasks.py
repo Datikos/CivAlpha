@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .. import service as ml
 from .. import timemachine
-from ..strategies import doublers, setups
+from ..strategies import doublers, setups, signals
 from ..strategies import service as strategy_lab
 from .decisions import DecisionService
 from .errors import Problem
@@ -58,6 +58,11 @@ def strategy_decide(params: dict, log: Log) -> None:
 def doubler_study(params: dict, log: Log) -> None:
     _benchmarks(log)
     log(str(doublers.study(engine())["headline"]))
+
+
+def signal_study(params: dict, log: Log) -> None:
+    _benchmarks(log)
+    log(str(signals.study(engine())["headline"]))
 
 
 def setup_study(params: dict, log: Log) -> None:
@@ -153,6 +158,7 @@ TASKS = {
     "TIME_MACHINE": time_machine,
     "DOUBLER_STUDY": doubler_study,
     "SETUP_STUDY": setup_study,
+    "SIGNAL_STUDY": signal_study,
     "ISSUE_FORECASTS": issue_forecasts,
     "PRICE_SYNC": price_sync,
     "RESOLVE_OUTCOMES": resolve_outcomes,

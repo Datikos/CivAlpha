@@ -931,6 +931,57 @@ export interface InsiderProfile {
   note: string;
 }
 
+// ---------- Signal health ----------
+
+export type SignalGrade = 'INFORMATIVE' | 'SUGGESTIVE' | 'NOISE' | 'NOT_TESTABLE';
+
+export interface SignalRow {
+  feature: string;
+  label: string;
+  kind: string;
+  series: { month: string; ic: number; n: number }[];
+  months: number;
+  meanIc: number | null;
+  stdIc: number | null;
+  /** mean IC / standard deviation of monthly ICs */
+  icIr: number | null;
+  tStat: number | null;
+  /** share of months whose IC has the sign of the mean */
+  signHitRate: number | null;
+  recentIc: number | null;
+  earlierIc: number | null;
+  trend: number | null;
+  decaying: boolean;
+  grade: SignalGrade;
+  verdict: string;
+}
+
+export interface SignalStudyResult {
+  version: string;
+  dataCutoff: string;
+  start: string;
+  years: number;
+  universeSize: number;
+  rows: number;
+  config: Record<string, unknown> & { horizon: number; tests: number; bonferroniZ: number };
+  features: SignalRow[];
+  disclaimers: string[];
+  headline: string;
+}
+
+export interface SignalStudyRun {
+  id: number;
+  runAt: string;
+  dataCutoff: string;
+  headline: string;
+  result: SignalStudyResult;
+}
+
+export interface SignalStudyResponse {
+  run: SignalStudyRun | null;
+  runs: { id: number; runAt: string; dataCutoff: string; headline: string }[];
+}
+
 // ---------- Setup playbook ----------
 
 export type SetupGrade = 'SUPPORTED' | 'SUGGESTIVE' | 'NEGATIVE' | 'NOISE' | 'NOT_TESTABLE';

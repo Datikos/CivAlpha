@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 from .. import service as ml
-from ..strategies import doublers, setups
+from ..strategies import doublers, setups, signals
 from ..strategies import service as strategy_lab
 from .decisions import DecisionService
 from .errors import Problem
@@ -126,3 +126,7 @@ class Pipeline:
             log("setup playbook: " + str(setups.study(engine())["headline"]))
         except Exception as e:  # noqa: BLE001
             log(f"setup playbook skipped: {e}")
+        try:
+            log("signal health: " + str(signals.study(engine())["headline"]))
+        except Exception as e:  # noqa: BLE001
+            log(f"signal health skipped: {e}")

@@ -100,6 +100,13 @@ export const NAV_GROUPS: NavGroup[] = [
         keywords: 'replay point in time',
       },
       {
+        path: '/signals',
+        label: 'Signal health',
+        icon: 'pulse',
+        exact: false,
+        keywords: 'information coefficient IC decay features edge',
+      },
+      {
         path: '/playbook',
         label: 'Setup playbook',
         icon: 'zap',

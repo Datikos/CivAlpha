@@ -412,6 +412,25 @@ def build() -> MCPServer:
                 "transactions": [_pick(t, "ownerName", "relationship", "title", "transDate", "filedDate", "transCode", "codeLabel",
                                        "acquired", "shares", "price", "value", "sharesAfter", "signal") for t in r["transactions"]]}
 
+    # ------------------------------------------------------------------ signal health
+    @tool_read
+    @_domain
+    def get_signal_health(decaying_only: bool = False) -> dict:
+        """Signal health: for every model input (prices, filed fundamentals, policy shocks, dividends, insiders, earnings)
+        the monthly information coefficient against the 21-day excess return over the sector ETF: mean IC with its
+        t-statistic over months, IC information ratio, share of months with the right sign, the last 12 months against the
+        earlier ones, a grade corrected for the number of features tested, and a DECAYING flag when an input lost its sign
+        recently. This is how the platform notices an edge fading. Quote grades, not raw ICs."""
+        r = read.signal_study()
+        run = r.get("run")
+        if not run:
+            return {"run": None, "note": "No signal-health study yet: run_signal_study makes one (it also runs with every pipeline run)."}
+        res = run["result"]
+        rows = [_pick(f, "feature", "label", "kind", "months", "meanIc", "icIr", "tStat", "signHitRate", "recentIc", "earlierIc", "trend",
+                      "decaying", "grade", "verdict") for f in res["features"] if not decaying_only or f["decaying"]]
+        return {"runId": run["id"], "runAt": run["runAt"], "dataCutoff": res["dataCutoff"], "headline": res["headline"],
+                "tests": res["config"]["tests"], "bonferroniZ": res["config"]["bonferroniZ"], "features": rows, "disclaimers": res["disclaimers"]}
+
     # ------------------------------------------------------------------ setup playbook
     @tool_read
     @_domain
@@ -677,6 +696,13 @@ def build() -> MCPServer:
         """Load insider transactions (Forms 4) for every tracked company from the SEC's quarterly data sets plus each
         company's recent filings (also part of every pipeline run). Read them with get_insiders."""
         return _action(ctx, admin.insider_ingest, wait_seconds)
+
+    @tool_action
+    @_domain
+    def run_signal_study(ctx: Context, wait_seconds: int = 0) -> dict:
+        """Run the signal-health study (monthly IC per model input) on the stored data and store it. Read it with
+        get_signal_health."""
+        return _action(ctx, admin.signal_study, wait_seconds)
 
     @tool_action
     @_domain

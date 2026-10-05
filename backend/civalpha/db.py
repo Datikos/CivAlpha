@@ -149,6 +149,14 @@ def insert_setup_study(engine: Engine, res: dict) -> int:
             dict(dc=res["dataCutoff"], cfg=json.dumps(_clean(res["config"])), h=res["headline"], r=json.dumps(_clean(res)))).scalar_one())
 
 
+def insert_signal_study(engine: Engine, res: dict) -> int:
+    with engine.begin() as c:
+        return int(c.execute(text("""
+            INSERT INTO signal_study_run (data_cutoff, config, headline, result)
+            VALUES (:dc, CAST(:cfg AS jsonb), :h, CAST(:r AS jsonb)) RETURNING id"""),
+            dict(dc=res["dataCutoff"], cfg=json.dumps(_clean(res["config"])), h=res["headline"], r=json.dumps(_clean(res)))).scalar_one())
+
+
 def insert_time_machine(engine: Engine, res: dict) -> int:
     with engine.begin() as c:
         return int(c.execute(text("""

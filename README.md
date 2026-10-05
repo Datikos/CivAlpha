@@ -193,6 +193,18 @@ of distinct insiders buying and selling in the last 21 trading days; the setup p
 buying (two or more insiders) and cluster selling (three or more); and every company page shows the trades. Code:
 `backend/civalpha/platform/insiders.py`; `backend/tests/test_platform_insiders.py`.
 
+## Signal health: which inputs carry information, and which are fading
+
+The **Signal health** page (`/signals`, also the last step of every pipeline run) computes, for every feature the AI
+strategy sees, the information coefficient: on each day the Spearman rank correlation across the tracked stocks
+between the feature and the next 21 trading days' excess return over the sector ETF, averaged per month (cross-sectional
+by day, so a market-wide move cannot pose as a signal). Each input gets its mean IC with an autocorrelation-robust
+t-statistic over months, the IC information ratio (mean over standard deviation), the share of months with the
+expected sign, the last 12 months against the earlier ones, and a grade corrected for the number of features tested.
+An input that carried information over the whole history but lost its sign in the last 12 months is flagged
+DECAYING: edges decay as others find them, and this is how the platform notices. Code:
+`backend/civalpha/strategies/signals.py`; `backend/tests/test_signals.py`.
+
 ## Setup playbook: what a trader waits for, with base rates
 
 A discretionary trader does not forecast every stock every day; they wait for a situation. The **Playbook** page
@@ -488,7 +500,8 @@ docs/      api.md (REST contract and MCP tools)
 * **Modeling.**
   * Only two simple linear models exist.
   * Next steps: sector-neutral cross-sectional ranking, purged k-fold with an embargo for hyperparameters, and
-    proper significance testing across many universes.
+    proper significance testing across many universes. Signal health now tracks each input's IC over time, but the
+    models do not yet drop or reweight decaying inputs automatically.
   * Live, real-data accuracy can only build up over time.
 * **Breadth.**
   * Universe expansion ranks companies by the public float of their last 10-K (SEC XBRL frames), which lags the market

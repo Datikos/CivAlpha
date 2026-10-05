@@ -316,6 +316,14 @@ const JOBS_SHOWN = 10;
             >
               Setup playbook
             </button>
+            <button
+              type="button"
+              class="btn"
+              [disabled]="busy()"
+              (click)="run('Signal health', api.signalStudy())"
+            >
+              Signal health
+            </button>
           </div>
         </div>
       </div>

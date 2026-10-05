@@ -326,6 +326,13 @@ day in New York); other codes (grants A, exercises M, tax withholding F, gifts G
 the SEC's quarterly insider-transactions data sets for the lookback window plus each company's Form 4 XML filings newer than
 the latest data set. 404 for an unknown symbol.
 
+`GET /api/signals` — the latest signal-health study (`run`, null before the first one) and earlier `runs`; `GET /api/signals/{id}`
+one run. `run.result.features[]`: `feature`, `label`, `kind`, `series` (monthly `{month, ic, n}`), `months`, `meanIc`, `stdIc`, `icIr`
+(mean / std), `tStat` (over months), `signHitRate`, `recentIc` (last 12 months), `earlierIc`, `trend`, `decaying`, `grade`
+(`INFORMATIVE` when |t| clears the Bonferroni bar for `config.tests` features, `SUGGESTIVE` when |t| ≥ 2, `NOISE`, `NOT_TESTABLE`),
+`verdict`. The IC is the daily cross-sectional Spearman correlation between the feature and the `config.horizon`-day excess
+return over the sector ETF, averaged per month; `tStat` uses a Newey-West standard error over `config.hacLags` months. `POST /api/admin/signals/study` → job (also part of every pipeline run).
+
 `GET /api/setups` — the latest setup playbook (`run`, null before the first one) and the list of earlier `runs`
 (`id`, `runAt`, `dataCutoff`, `headline`). `GET /api/setups/{id}` — one run (404 if unknown). `run.result`:
 ```json
@@ -510,11 +517,12 @@ Tools call the same code as the REST endpoints and return condensed JSON (also a
 | `list_time_machine_runs` / `get_time_machine_run(run_id, horizon?)` | `GET /api/timemachine`, `GET /api/timemachine/{id}` | per-stock prediction vs actual for one horizon |
 | `get_earnings(symbol, announcements?)` | `GET /api/companies/{symbol}/earnings` | announcement times, session reactions, guidance tone with evidence, estimated next date |
 | `get_insiders(symbol, transactions?)` | `GET /api/companies/{symbol}/insiders` | open-market buying and selling over 21/63/252 trading days and the latest transactions |
+| `get_signal_health(decaying_only?)` | `GET /api/signals` | per model input: mean monthly IC, IC IR, t, right-sign share, last 12 months vs earlier, corrected grade, decay flag |
 | `get_setup_playbook(horizon?, fresh_only?)` | `GET /api/setups` | every setup's hit rate, lift, mean excess with interval, payoff and corrected verdict at one horizon, plus the stocks each setup fired on in the last sessions |
 | `get_doubler_study(horizon?, episodes?)` | `GET /api/doublers` | base rate, screen vs control with intervals, latest episodes, profile medians, stocks flagged today |
 | `investment_candidates` | — | see below |
 | `list_jobs(limit?)` / `get_job(job_id, wait_seconds?)` | `GET /api/admin/jobs` | admin |
-| `run_pipeline`, `update_prices`, `ingest_sec_filings(symbol)`, `evaluate_models`, `issue_forecasts(as_of_date?)`, `run_strategy_backtest`, `make_ai_decisions(as_of_date?)`, `run_time_machine(as_of_date)`, `ingest_earnings`, `ingest_insiders`, `run_setup_study`, `run_doubler_study`, `resolve_outcomes` | `POST /api/admin/**` | admin; each takes `wait_seconds?` (max 600) and returns the job with its log tail |
+| `run_pipeline`, `update_prices`, `ingest_sec_filings(symbol)`, `evaluate_models`, `issue_forecasts(as_of_date?)`, `run_strategy_backtest`, `make_ai_decisions(as_of_date?)`, `run_time_machine(as_of_date)`, `run_signal_study`, `ingest_earnings`, `ingest_insiders`, `run_setup_study`, `run_doubler_study`, `resolve_outcomes` | `POST /api/admin/**` | admin; each takes `wait_seconds?` (max 600) and returns the job with its log tail |
 | `add_company(symbol, name?, cik?, sector?, industry?, benchmark_symbol?, member_since?, ingest_sec?, sync_prices?, tags?)` | `POST /api/admin/universe/companies` (+ `GET .../enrich`) | admin; missing name / CIK / sector / industry / benchmark come from EDGAR (`filledFromSec`, `notes` on a sector that needs review); `ingest_sec` and `sync_prices` default to true and return the queued jobs; `nextSteps` lists what still has to be done by hand |
 | `discover_companies(min_public_float_usd?, exchanges?, limit?)` | `GET /api/admin/universe/discover` | candidates for a universe expansion with the quota and pipeline-time notes |
 | `expand_universe(min_public_float_usd?, exchanges?, limit?, tag?, symbols?, ingest_sec?, sync_prices?, wait_seconds?)` | `GET .../discover` + `POST /api/admin/universe/expand` | admin; adds the discovered candidates (or only `symbols` among them) in one job |

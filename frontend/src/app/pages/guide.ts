@@ -11,6 +11,7 @@ import {
   DecisionsResponse,
   DoublerStudyResponse,
   SetupStudyResponse,
+  SignalStudyResponse,
   ForecastSummary,
   StrategiesResponse,
 } from '../core/models';
@@ -497,6 +498,7 @@ export class GuidePage {
   private readonly decisions = httpResource<DecisionsResponse>(() => apiUrl.decisions());
   private readonly doublers = httpResource<DoublerStudyResponse>(() => apiUrl.doublers());
   private readonly setups = httpResource<SetupStudyResponse>(() => apiUrl.setups());
+  private readonly signals = httpResource<SignalStudyResponse>(() => apiUrl.signals());
 
   protected readonly steps = computed<Step[]>(() => {
     const m = this.meta.meta();
@@ -567,6 +569,14 @@ export class GuidePage {
         done: known(this.decisions, () => (valueOf(this.decisions)?.decisions?.length ?? 0) > 0),
         link: '/decisions',
         linkLabel: 'AI decisions',
+      },
+      {
+        id: 'signals',
+        title: 'Signal health run',
+        detail: 'Which model inputs carry information and which are decaying.',
+        done: known(this.signals, () => !!valueOf(this.signals)?.run),
+        link: '/signals',
+        linkLabel: 'Signal health',
       },
       {
         id: 'playbook',

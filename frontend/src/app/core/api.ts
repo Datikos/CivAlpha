@@ -54,6 +54,8 @@ export const apiUrl = {
   strategies: () => `${BASE}/strategies`,
   strategy: (key: string) => `${BASE}/strategies/${enc(key)}`,
   decisions: (date?: string | null) => withQuery(`${BASE}/decisions`, { date }),
+  signals: () => `${BASE}/signals`,
+  signalRun: (id: number | string) => `${BASE}/signals/${enc(String(id))}`,
   setups: () => `${BASE}/setups`,
   setupRun: (id: number | string) => `${BASE}/setups/${enc(String(id))}`,
   doublers: () => `${BASE}/doublers`,
@@ -91,6 +93,10 @@ export class ApiService {
 
   decide(): Observable<Job> {
     return this.http.post<Job>(`${BASE}/admin/strategies/decide`, {});
+  }
+
+  signalStudy(): Observable<Job> {
+    return this.http.post<Job>(`${BASE}/admin/signals/study`, {});
   }
 
   setupStudy(): Observable<Job> {

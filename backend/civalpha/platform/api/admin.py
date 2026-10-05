@@ -61,6 +61,11 @@ def doubler_study():
     return _submit("DOUBLER_STUDY")
 
 
+@router.post("/signals/study")
+def signal_study():
+    return _submit("SIGNAL_STUDY")
+
+
 @router.post("/setups/study")
 def setup_study():
     return _submit("SETUP_STUDY")

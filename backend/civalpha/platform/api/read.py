@@ -642,6 +642,22 @@ def doubler_study_run(run_id: int):
     return camel(r)
 
 
+@router.get("/signals")
+def signal_study():
+    """Latest signal-health study (null `run` until one has been made) and the list of earlier runs."""
+    runs = camel_all(db().all("SELECT id, run_at, data_cutoff, headline FROM signal_study_run ORDER BY id DESC LIMIT 20"))
+    latest = db().one("SELECT id, run_at, data_cutoff, headline, result FROM signal_study_run ORDER BY id DESC LIMIT 1")
+    return {"run": camel(latest) if latest else None, "runs": runs}
+
+
+@router.get("/signals/{run_id}")
+def signal_study_run(run_id: int):
+    r = db().one("SELECT id, run_at, data_cutoff, headline, result FROM signal_study_run WHERE id = :id", id=run_id)
+    if r is None:
+        raise NotFound(f"no signal study {run_id}")
+    return camel(r)
+
+
 @router.get("/setups")
 def setup_study():
     """Latest setup playbook (null `run` until one has been made) and the list of earlier runs."""
