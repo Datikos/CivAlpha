@@ -6,7 +6,7 @@ import { dateMs, isoDay } from '../../charts/chart-utils';
 import { apiUrl, valueOf } from '../../core/api';
 import { FORMAT_PIPES } from '../../core/format';
 import { latestByModel } from '../../core/forecast-utils';
-import { DividendProfile, ForecastSummary, MODEL_KINDS, PriceSeries } from '../../core/models';
+import { DividendProfile, EarningsProfile, ForecastSummary, GuidanceTone, InsiderProfile, MODEL_KINDS, PriceSeries } from '../../core/models';
 import { UI } from '../../shared/ui';
 import { VIZ } from '../../shared/viz';
 import { CompanyContext } from './company-context';
@@ -98,6 +98,114 @@ const RANGE_DAYS: Record<Range, number> = { '6M': 183, '1Y': 365, '3Y': 3 * 365,
                 </table>
               </div>
             </details>
+          }
+        }
+      </div>
+
+      <div class="card">
+        <div class="filters" style="justify-content: space-between; margin-bottom: 0.5rem">
+          <h3 style="margin: 0">Earnings <app-help text="Results announcements as the market saw them: the 8-K that made the numbers public, the stock's excess return over its sector ETF in the session the release first traded, and the guidance tone read from the press release by a keyword rule (an estimate, with the sentence it matched). The next date is estimated from past announcements." topic="earnings" label="earnings announcements" /></h3>
+          @if (earn(); as e) {
+            @if (e.nextEstimate.date) {
+              <span class="badge" [class]="'badge tone-' + ((e.nextEstimate.tradingDays ?? 99) <= 5 ? 'warn' : 'info')" title="Estimated from past announcements">next ~{{ e.nextEstimate.date }} · {{ e.nextEstimate.tradingDays }} trading days</span>
+            }
+          }
+        </div>
+        <app-status [res]="earnings" what="earnings announcements" />
+        @if (earn(); as e) {
+          @if (!e.announcements.length) {
+            <p class="muted">No results 8-K ingested yet. They arrive with the pipeline (SEC filings).</p>
+          } @else {
+            <div class="table-wrap">
+              <table class="table compact">
+                <thead>
+                  <tr><th>Made public</th><th>Traded in session</th><th class="num">Reaction vs ETF</th><th>Guidance (estimate)</th><th>Release</th></tr>
+                </thead>
+                <tbody>
+                  @for (a of e.announcements; track a.acceptedAt) {
+                    <tr>
+                      <td class="nowrap">{{ a.acceptedAt | utc }}</td>
+                      <td class="nowrap">{{ a.sessionDate ?? '—' }}</td>
+                      <td class="num"><app-delta [value]="a.reaction" kind="pct" [digits]="1" /></td>
+                      <td>
+                        <span class="badge" [class]="'badge tone-' + toneLabel[a.guidanceTone].tone" [title]="a.guidanceText || ''">{{ toneLabel[a.guidanceTone].label }}</span>
+                        @if (a.guidanceText) {
+                          <div class="small muted evidence" [title]="a.guidanceText">“{{ a.guidanceText }}”</div>
+                        }
+                      </td>
+                      <td class="nowrap small">
+                        @if (a.exhibitUrl) { <a [href]="a.exhibitUrl" target="_blank" rel="noopener" title="Press release on EDGAR">EDGAR ↗</a> }
+                        @if (a.exhibitDocumentUrl) { · <a [href]="a.exhibitDocumentUrl" target="_blank" rel="noopener" title="Stored copy">stored</a> }
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+            <p class="small muted" style="margin-top: 0.4rem">{{ e.note }} {{ e.announcementCount }} announcements on record.</p>
+          }
+        }
+      </div>
+
+      <div class="card">
+        <div class="filters" style="justify-content: space-between; margin-bottom: 0.5rem">
+          <h3 style="margin: 0">Insiders <app-help text="What officers, directors and 10% owners bought and sold in the open market, from their SEC Forms 4. Purchases carry information; sales mostly do not. Grants, option exercises and gifts are listed but not counted." topic="insiders" label="insider transactions" /></h3>
+          @if (ins(); as i) {
+            @if (i.windows['63d'].buyers + i.windows['63d'].sellers > 0) {
+              <span class="badge" [class]="'badge tone-' + (i.windows['63d'].netValue > 0 ? 'good' : i.windows['63d'].netValue < 0 ? 'bad' : 'neutral')">
+                {{ i.windows['63d'].netValue > 0 ? '▲ net buying' : i.windows['63d'].netValue < 0 ? '▼ net selling' : '• balanced' }} · 63 days
+              </span>
+            } @else {
+              <span class="badge tone-neutral">quiet · 63 days</span>
+            }
+          }
+        </div>
+        <app-status [res]="insiders" what="insider transactions" />
+        @if (ins(); as i) {
+          @if (!i.transactionCount) {
+            <p class="muted">No insider transactions loaded yet. They arrive with the pipeline (SEC Forms 4).</p>
+          } @else {
+            <div class="stats">
+              @for (w of insiderWindows; track w.key) {
+                <div class="stat" [class]="'stat tone-' + (i.windows[w.key].netValue > 0 ? 'good' : i.windows[w.key].netValue < 0 ? 'bad' : 'neutral')">
+                  <div class="stat-label">Last {{ w.label }}</div>
+                  <div class="stat-value"><app-delta [value]="i.windows[w.key].netValue" kind="num" [digits]="0" /><span class="unit">USD net</span></div>
+                  <div class="stat-sub">{{ i.windows[w.key].buyers }} buying · {{ i.windows[w.key].sellers }} selling · {{ i.windows[w.key].buys + i.windows[w.key].sells }} trades</div>
+                </div>
+              }
+            </div>
+            <div class="table-wrap" style="margin-top: 0.75rem">
+              <table class="table compact">
+                <thead>
+                  <tr><th>Insider</th><th>Trade</th><th>Date</th><th class="num">Shares</th><th class="num">Price</th><th class="num">Value</th><th class="num">Held after</th><th>Public</th></tr>
+                </thead>
+                <tbody>
+                  @for (t of shownInsiders(); track t.id) {
+                    <tr [class.quiet]="!t.signal">
+                      <td><strong>{{ t.ownerName }}</strong><div class="small muted">{{ t.title || t.relationship }}</div></td>
+                      <td>
+                        <span class="badge" [class]="'badge tone-' + (t.signal ? (t.acquired ? 'good' : 'bad') : 'neutral')">{{ t.acquired ? '▲' : '▼' }} {{ t.codeLabel }}</span>
+                      </td>
+                      <td class="nowrap">{{ t.transDate }}</td>
+                      <td class="num">{{ t.shares | num }}</td>
+                      <td class="num">{{ t.price === null ? '—' : (t.price | usd) }}</td>
+                      <td class="num">{{ t.value === null ? '—' : (t.value | usd) }}</td>
+                      <td class="num">{{ t.sharesAfter === null ? '—' : (t.sharesAfter | num) }}</td>
+                      <td class="nowrap small">
+                        {{ t.filedDate }}
+                        @if (t.url) { <a [href]="t.url" target="_blank" rel="noopener" title="Source on EDGAR">↗</a> }
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+            @if (i.transactions.length > INSIDERS_SHOWN) {
+              <button type="button" class="btn btn-link small" (click)="allInsiders.set(!allInsiders())">
+                {{ allInsiders() ? 'Show latest ' + INSIDERS_SHOWN : 'Show all ' + i.transactions.length + ' loaded' }}
+              </button>
+            }
+            <p class="small muted" style="margin-top: 0.4rem">{{ i.note }} Latest filing available {{ i.newestAvailableAt | utc }}.</p>
           }
         }
       </div>
@@ -266,6 +374,11 @@ const RANGE_DAYS: Record<Range, number> = { '6M': 183, '1Y': 365, '3Y': 3 * 365,
       </div>
     }
   `,
+  styles: `
+    tr.quiet td { opacity: 0.65; }
+    .evidence { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .btn-link { background: none; border: none; padding: 0.4rem 0; color: var(--accent); cursor: pointer; }
+  `,
 })
 export class CompanyOverview {
   protected readonly ctx = inject(CompanyContext);
@@ -288,6 +401,48 @@ export class CompanyOverview {
   protected readonly latest = computed(() => {
     const l = latestByModel(valueOf(this.fc) ?? []);
     return MODEL_KINDS.map((kind) => ({ kind, f: l[kind] ?? null }));
+  });
+
+  protected readonly earnings = httpResource<EarningsProfile>(() => {
+    const s = this.ctx.apiSymbol();
+    return s ? apiUrl.earnings(s) : undefined;
+  });
+  protected readonly earn = computed(() => valueOf(this.earnings));
+  protected readonly toneLabel: Record<GuidanceTone, { label: string; tone: string }> = {
+    RAISED: { label: '▲ guidance raised', tone: 'good' },
+    LOWERED: { label: '▼ guidance lowered', tone: 'bad' },
+    MAINTAINED: { label: '• guidance maintained', tone: 'neutral' },
+    PROVIDED: { label: '• outlook given', tone: 'info' },
+    NONE: { label: 'no outlook language', tone: 'neutral' },
+    UNKNOWN: { label: 'release not read', tone: 'neutral' },
+  };
+  protected readonly insiders = httpResource<InsiderProfile>(() => {
+    const s = this.ctx.apiSymbol();
+    return s ? apiUrl.insiders(s) : undefined;
+  });
+
+  protected readonly ins = computed(() => valueOf(this.insiders));
+
+  protected readonly INSIDERS_SHOWN = 8;
+
+  protected readonly allInsiders = signal(false);
+
+  protected readonly insiderWindows: { key: '21d' | '63d' | '252d'; label: string }[] = [
+
+    { key: '21d', label: '21 trading days' },
+
+    { key: '63d', label: '63 trading days' },
+
+    { key: '252d', label: 'year' },
+
+  ];
+
+  protected readonly shownInsiders = computed(() => {
+
+    const list = this.ins()?.transactions ?? [];
+
+    return this.allInsiders() ? list : list.slice(0, this.INSIDERS_SHOWN);
+
   });
 
   protected readonly div = httpResource<DividendProfile>(() => {

@@ -16,8 +16,14 @@ import pandas as pd
 from . import pit
 from .returns import HORIZON, excess_label, total_return_index
 
-BASELINE_FEATURES = ["mom_21", "mom_63", "mom_126_21", "vol_63", "rev_yoy", "gm_chg", "leverage"]
+from .earnings import EARNINGS_FEATURES, EARNINGS_LABELS, announcements, features_at as earnings_features_at
+
+INSIDER_FEATURES = ["insider_net_63d"]
+BASELINE_FEATURES = ["mom_21", "mom_63", "mom_126_21", "vol_63", "rev_yoy", "gm_chg", "leverage"] + INSIDER_FEATURES + EARNINGS_FEATURES
 EVENT_FEATURES = ["trade_shock", "rate_shock", "fedfunds_chg_x_lev"]
+INSIDER_WINDOW = 63          # trading days of insider trades summed (about a quarter)
+INSIDER_CODES = ("P", "S")   # open-market purchases and sales; grants, exercises, tax withholding and gifts carry no signal
+PRICE_TOLERANCE = 5.0        # a reported per-share price more than 5x off the close that day is a scale error: the close is used
 AUGMENTED_FEATURES = BASELINE_FEATURES + EVENT_FEATURES
 FEATURES = {"BASELINE": BASELINE_FEATURES, "AUGMENTED": AUGMENTED_FEATURES}
 
@@ -29,12 +35,16 @@ FEATURE_LABELS = {
     "rev_yoy": "Latest quarterly revenue growth, year over year (as filed)",
     "gm_chg": "Change in gross margin vs same quarter last year (as filed)",
     "leverage": "Long-term debt / total assets (as filed)",
+    "insider_net_63d": "Insiders' net open-market buying over 63 trading days (Forms 4) / market cap",
+    **{k: EARNINGS_LABELS[k] for k in EARNINGS_FEATURES},
     "trade_shock": "Recent tariff/trade actions x company exposure",
     "rate_shock": "Recent policy-rate decisions x relative leverage",
     "fedfunds_chg_x_lev": "3-month change in fed funds rate (vintage as published) x relative leverage",
 }
 FEATURE_KIND = {f: "PRICE" for f in ["mom_21", "mom_63", "mom_126_21", "vol_63"]}
 FEATURE_KIND.update({f: "FUNDAMENTAL" for f in ["rev_yoy", "gm_chg", "leverage"]})
+FEATURE_KIND.update({f: "INSIDER" for f in INSIDER_FEATURES})
+FEATURE_KIND.update({f: "EARNINGS" for f in EARNINGS_FEATURES})
 FEATURE_KIND.update({"trade_shock": "EVENT_FEATURE", "rate_shock": "EVENT_FEATURE", "fedfunds_chg_x_lev": "MACRO"})
 
 REVENUE_CONCEPTS = ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet"]
@@ -62,12 +72,17 @@ class DataBundle:
     close: dict = field(default_factory=dict)       # company_id -> raw close aligned to calendar (forward-filled)
     volume: dict = field(default_factory=dict)      # company_id -> shares traded per day aligned to calendar (NaN when unknown)
     actions: pd.DataFrame = field(default_factory=pd.DataFrame)  # corporate actions (splits for share counts)
+    insiders: pd.DataFrame = field(default_factory=pd.DataFrame)  # company_id, available_at (UTC), trans_code, acquired, shares, price, owner_cik
+    releases: pd.DataFrame = field(default_factory=pd.DataFrame)  # earnings releases: company_id, filing_id, accepted_at, guidance_tone
     _fund_snap: dict = field(default_factory=dict)
+    _insider_by_company: dict = field(default_factory=dict)
+    _ann_by_company: dict = field(default_factory=dict)
+    _close_ns: np.ndarray | None = None
     _expo_snap: dict = field(default_factory=dict)
 
     @staticmethod
     def build(companies, stock_prices, bench_prices, actions, facts, exposures, events, targets, macro,
-              membership, filings=None) -> "DataBundle":
+              membership, filings=None, insiders=None, releases=None) -> "DataBundle":
         cal = pd.DatetimeIndex(sorted(pd.to_datetime(bench_prices["trade_date"]).unique()))
         actions = actions.copy() if actions is not None else pd.DataFrame(columns=["company_id", "symbol", "ex_date", "action_type", "value"])
         if len(actions):
@@ -91,7 +106,9 @@ class DataBundle:
             btr[sym] = total_return_index(g.set_index("trade_date")["close"].astype(float), a, cal)
         return DataBundle(companies=companies, calendar=cal, tr=tr, bench_tr=btr, facts=facts, exposures=exposures,
                           events=events, targets=targets, macro=macro, membership=membership,
-                          filings=filings if filings is not None else pd.DataFrame(), close=raw, volume=vol, actions=actions)
+                          filings=filings if filings is not None else pd.DataFrame(), close=raw, volume=vol, actions=actions,
+                          insiders=_insider_frame(insiders),
+                          releases=releases if releases is not None else pd.DataFrame(columns=["company_id", "filing_id", "accepted_at", "guidance_tone"]))
 
     # ---------------------------------------------------------------- snapshots
     def fundamentals_at(self, company_id: int, as_of: pd.Timestamp) -> dict:
@@ -123,6 +140,60 @@ class DataBundle:
                 snaps.append({**fundamentals_from_records(vals), **profile_from_records(vals)})
             self._fund_snap[company_id] = (np.array(times_ns, dtype=np.int64), snaps)
         return self._fund_snap[company_id]
+
+    def insider_trades(self, company_id: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """(available_at ns, signed dollar value, is_buy, owner key) of the company's open-market insider trades, by time."""
+        if company_id not in self._insider_by_company:
+            t = self.insiders[self.insiders["company_id"] == company_id] if len(self.insiders) else self.insiders
+            t = t[t["trans_code"].isin(INSIDER_CODES)].sort_values("available_at", kind="stable")
+            price = plausible_prices(t, self.close.get(company_id), self.calendar)
+            value = t["shares"].astype(float).to_numpy() * price
+            sign = np.where(t["acquired"].to_numpy(bool), 1.0, -1.0)
+            owners = t["owner_cik"].fillna(t["owner_name"]).astype(str).to_numpy()
+            self._insider_by_company[company_id] = (np.array([pd.Timestamp(x).value for x in t["available_at"]], dtype=np.int64),
+                                                    sign * value, t["acquired"].to_numpy(bool), owners)
+        return self._insider_by_company[company_id]
+
+    def insider_signal(self, company_id: int, as_of: pd.Timestamp, since: pd.Timestamp) -> dict:
+        """Open-market insider trades that became available in (since, as_of]: net dollar value, distinct buyers and sellers."""
+        times, value, is_buy, owners = self.insider_trades(company_id)
+        lo = np.searchsorted(times, since.value, side="right")
+        hi = np.searchsorted(times, as_of.value, side="right")
+        v, b, o = value[lo:hi], is_buy[lo:hi], owners[lo:hi]
+        return {"net_value": float(v.sum()), "buyers": int(len(set(o[b]))), "sellers": int(len(set(o[~b]))),
+                "buys": int(b.sum()), "sells": int((~b).sum())}
+
+    def announcements(self, company_id: int) -> list:
+        """The company's results announcements (8-K Item 2.02) with their session index, cached."""
+        if company_id not in self._ann_by_company:
+            self._ann_by_company[company_id] = announcements(self.filings, self.releases, company_id, self.calendar)
+        return self._ann_by_company[company_id]
+
+    def earnings_at(self, company_id: int, idx: int, as_of: pd.Timestamp) -> dict:
+        tr_s, tr_b = self.tr.get(company_id), None
+        comp = self.companies.set_index("id") if "id" in self.companies else self.companies
+        if company_id in comp.index:
+            tr_b = self.bench_tr.get(comp.loc[company_id, "benchmark_symbol"])
+        if tr_s is None or tr_b is None:
+            return earnings_features_at(self.announcements(company_id), np.array([]), np.array([]), idx, as_of.value, self.calendar)
+        return earnings_features_at(self.announcements(company_id), tr_s, tr_b, idx, as_of.value, self.calendar)
+
+    def market_cap_at(self, company_id: int, idx: int, as_of: pd.Timestamp) -> float:
+        """Latest filed share count (split-adjusted after its report date) times the raw close of calendar day idx."""
+        snap = self.fundamentals_at(company_id, as_of)
+        shares = snap.get("shares")
+        close = self.close.get(company_id)
+        if shares is None or not np.isfinite(shares) or shares <= 0 or close is None or not np.isfinite(close[idx]):
+            return float("nan")
+        factor = 1.0
+        sd = snap.get("shares_date")
+        if sd is not None and len(self.actions):
+            day = self.calendar[idx]
+            spl = self.actions[(self.actions["company_id"] == company_id) & (self.actions["action_type"] == "SPLIT")]
+            for ex, ratio in zip(pd.to_datetime(spl["ex_date"]), spl["value"].astype(float)):
+                if pd.Timestamp(sd) < ex <= day:
+                    factor *= ratio
+        return float(shares * factor * close[idx])
 
     def exposures_at(self, company_id: int, as_of: pd.Timestamp) -> pd.DataFrame:
         if company_id not in self._expo_snap:
@@ -332,6 +403,8 @@ def build_rows(bundle: DataBundle, idx: int, as_of: pd.Timestamp | None = None, 
         f = price_features(tr_s, tr_b, idx)
         fund = bundle.fundamentals_at(cid, as_of)
         f.update({k: fund[k] for k in ("rev_yoy", "gm_chg", "leverage")})
+        f["insider_net_63d"] = insider_feature(bundle, cid, idx, as_of)
+        f.update({k: v for k, v in bundle.earnings_at(cid, idx, as_of).items() if k in EARNINGS_FEATURES})
         row = {"company_id": cid, "as_of_date": d, "idx": idx, "benchmark_symbol": bsym, **f,
                "_fact_accessions": fund.get("_facts", [])}
         if with_labels:
@@ -359,6 +432,49 @@ def build_rows(bundle: DataBundle, idx: int, as_of: pd.Timestamp | None = None, 
         r["_fedfunds_chg"] = ff
         r["_mean_leverage"] = mean_lev
     return rows
+
+
+def insider_feature(bundle: DataBundle, cid: int, idx: int, as_of: pd.Timestamp) -> float:
+    """Net open-market insider buying that became public in the last INSIDER_WINDOW trading days, as a share of market
+    cap: 0 when nothing was filed (not NaN: silence is information), NaN only without a market cap."""
+    mcap = bundle.market_cap_at(cid, idx, as_of)
+    if not np.isfinite(mcap) or mcap <= 0:
+        return float("nan")
+    since = pit.close_ts(bundle.calendar[max(0, idx - INSIDER_WINDOW)])
+    return bundle.insider_signal(cid, as_of, since)["net_value"] / mcap
+
+
+def plausible_prices(trades: pd.DataFrame, close: np.ndarray | None, calendar: pd.DatetimeIndex) -> np.ndarray:
+    """Per-share prices to value trades with: the reported price, unless it is missing or more than PRICE_TOLERANCE times
+    off the stock's close on the trade date (filers sometimes report the total, or the price in cents), in which case the
+    close on or before that date; 0 when neither is known."""
+    reported = pd.to_numeric(trades["price"], errors="coerce").to_numpy(float)
+    out = np.where(np.isfinite(reported) & (reported > 0), reported, 0.0)
+    if close is None or len(calendar) == 0 or "trans_date" not in trades:
+        return out
+    days = pd.to_datetime(trades["trans_date"], errors="coerce")
+    pos = np.searchsorted(calendar.values, days.values.astype("datetime64[ns]"), side="right") - 1
+    ok = (pos >= 0) & days.notna().to_numpy()
+    ref = np.full(len(trades), np.nan)
+    ref[ok] = close[pos[ok]]
+    has_ref = np.isfinite(ref) & (ref > 0)
+    bad = has_ref & ((out <= 0) | (out > PRICE_TOLERANCE * ref) | (out < ref / PRICE_TOLERANCE))
+    out[bad] = ref[bad]
+    return out
+
+
+def _insider_frame(insiders) -> pd.DataFrame:
+    cols = ["company_id", "available_at", "trans_date", "trans_code", "acquired", "shares", "price", "owner_cik", "owner_name"]
+    if insiders is None or len(insiders) == 0:
+        out = pd.DataFrame(columns=cols)
+        out["available_at"] = pd.to_datetime(out["available_at"], utc=True)
+        return out
+    out = insiders.copy()
+    out["available_at"] = pd.to_datetime(out["available_at"], utc=True)
+    for c in cols:
+        if c not in out:
+            out[c] = None
+    return out[cols]
 
 
 def build_panel(bundle: DataBundle, sample_every: int = 7, start_idx: int = MIN_HISTORY) -> pd.DataFrame:

@@ -182,7 +182,7 @@ export const PAGES: PageCard[] = [
     area: 'strategy',
     question: 'Which situations have been worth acting on, and which stocks are in one now?',
     read: [
-      'Each row is a setup a trader waits for: an earnings beat becoming public, a dividend raise, a new 52-week high, a golden cross, an oversold pullback, a crash, a volume surge, a tariff or rate shock. It fires on the first day the condition holds.',
+      'Each row is a setup a trader waits for: an insider buying in the open market, a results day on which the stock jumped or dropped, guidance raised or lowered, earnings due within a week, an earnings beat becoming public, a dividend raise, a new 52-week high, a golden cross, an oversold pullback, a crash, a volume surge, a tariff or rate shock. It fires on the first day the condition holds.',
       'The columns say what followed, as the excess return over the sector ETF from the next close: how often it fired, the hit rate against the base rate of all stock-days, the mean excess with its interval, and the payoff (average win over average loss).',
       'The grade is the honest part. SUPPORTED needs the mean excess to clear a bar corrected for the 45 setup-horizon pairs tested; SUGGESTIVE means only the plain 95% interval is above zero; NEGATIVE means the stock trailed its ETF after firing.',
       '"Firing now" lists the stocks each setup fired on in the last five sessions. It is a scan, not a signal: read the row\'s grade before caring.',
@@ -227,7 +227,7 @@ export const PAGES: PageCard[] = [
     question: 'How do I refresh everything?',
     read: [
       'The status tiles show the data cutoff and whether the price provider and SEC access are configured; green means ready.',
-      '"Run pipeline" does everything in order: prices, filings, macro and events, evaluation, forecasts, outcome resolution, the strategy lab, AI decisions, the doubler study and the setup playbook. It only fetches what is new.',
+      '"Run pipeline" does everything in order: prices, filings, insider transactions, macro and events, evaluation, forecasts, outcome resolution, the strategy lab, AI decisions, the doubler study and the setup playbook. It only fetches what is new.',
       'Advanced lists each step separately. The jobs table shows progress and logs; it refreshes itself while something runs.',
     ],
   },
@@ -446,6 +446,8 @@ export const GLOSSARY: Term[] = [
   { id: 'version', term: 'Forecast version', def: 'A forecast is never edited. New evidence for the same company, model and as-of date produces version n+1 that supersedes version n. Both stay visible, and the forecast page shows what changed between them, factor by factor.' },
   { id: 'event-impact', term: 'Event impact', def: 'On an event page: the forecasts that were re-issued because the event arrived (each next to the version it replaced), and for every exposed company the last forecast before the event date against the first one after it.' },
   { id: 'accuracy-over-time', term: 'Accuracy over time', def: 'Resolved live forecasts grouped by the month their window closed: mean Brier score and hit rate per month, so you can see whether the models are improving or decaying rather than only their average.' },
+  { id: 'earnings', term: 'Earnings announcements', def: 'Results become public with an 8-K (Item 2.02), days or weeks before the 10-Q or 10-K with the same numbers. The platform uses the 8-K\'s acceptance time: a release before the open trades that day, one after the close trades the next day, and that session\'s excess return over the sector ETF is the market\'s reaction. The guidance tone (raised, lowered, maintained, outlook given) is a keyword estimate from the press release with the matched sentence as evidence; the next date is a year after the announcement that followed the same announcement last year.' },
+  { id: 'insiders', term: 'Insider transactions', def: 'Trades by a company\'s officers, directors and 10% owners in its own stock, reported to the SEC on Form 4 within two business days. Open-market purchases (code P) are the informative ones; sales (S) are mostly diversification; grants, option exercises, tax withholding and gifts carry no signal and are listed for the record. The platform uses them point-in-time: a filing counts from the end of its filing day.' },
   { id: 'setup', term: 'Setup', def: 'A situation a trader waits for, recognisable at the close from data known then: a catalyst (an earnings surprise, a dividend change, a policy shock) or a technical state (a breakout, a cross, an oversold reading). The playbook scores each one on what followed.' },
   { id: 'stock-days', term: 'Stock-days', def: 'One stock on one trading day. The doubler study counts them: 30 stocks over 250 days are 7,500 stock-days.' },
   { id: 'episode', term: 'Episode', def: 'In the doubler study, one move of +100%: the first day the screen flagged it, the entry, and the day the close first reached twice the entry.' },

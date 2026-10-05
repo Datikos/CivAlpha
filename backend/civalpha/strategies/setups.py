@@ -35,7 +35,7 @@ N_BOOT = 1000
 SEED = 11
 MIN_TRIGGERS = 30
 FRESH_DAYS = 5
-FAMILIES = ("EARNINGS", "DIVIDEND", "TREND", "REVERSAL", "VOLUME", "EVENT")
+FAMILIES = ("EARNINGS", "DIVIDEND", "INSIDER", "TREND", "REVERSAL", "VOLUME", "EVENT")
 _N = NormalDist()
 
 
@@ -50,6 +50,10 @@ class SetupConfig:
     surge_move: float = 0.03
     trade_shock: float = -0.03
     rate_shock: float = -0.01
+    cluster_buyers: int = 2
+    cluster_sellers: int = 3
+    reaction_move: float = 0.05
+    pre_earnings_days: int = 5
 
     def params(self) -> dict:
         d = asdict(self)
@@ -104,6 +108,43 @@ def _dividend_cut(p: MarketPanel, cfg: SetupConfig) -> pd.DataFrame:
     return _dividend_change(p, False)
 
 
+def _earnings_reaction_up(p: MarketPanel, cfg: SetupConfig) -> pd.DataFrame:
+    e = p.earnings()
+    return e["announcement"] & (e["reaction"] >= cfg.reaction_move)
+
+
+def _earnings_reaction_down(p: MarketPanel, cfg: SetupConfig) -> pd.DataFrame:
+    e = p.earnings()
+    return e["announcement"] & (e["reaction"] <= -cfg.reaction_move)
+
+
+def _guidance_raised(p: MarketPanel, cfg: SetupConfig) -> pd.DataFrame:
+    e = p.earnings()
+    return e["announcement"] & (e["guidance_last"] > 0)
+
+
+def _guidance_lowered(p: MarketPanel, cfg: SetupConfig) -> pd.DataFrame:
+    e = p.earnings()
+    return e["announcement"] & (e["guidance_last"] < 0)
+
+
+def _pre_earnings(p: MarketPanel, cfg: SetupConfig) -> pd.DataFrame:
+    d = p.earnings()["days_to_earnings_est"]
+    return edge((d <= cfg.pre_earnings_days) & (d > 0))
+
+
+def _insider_buy(p: MarketPanel, cfg: SetupConfig) -> pd.DataFrame:
+    return edge(p.insiders()["insider_buyers_21d"] >= 1)
+
+
+def _insider_cluster_buy(p: MarketPanel, cfg: SetupConfig) -> pd.DataFrame:
+    return edge(p.insiders()["insider_buyers_21d"] >= cfg.cluster_buyers)
+
+
+def _insider_cluster_sell(p: MarketPanel, cfg: SetupConfig) -> pd.DataFrame:
+    return edge(p.insiders()["insider_sellers_21d"] >= cfg.cluster_sellers)
+
+
 def _breakout_52w(p: MarketPanel, cfg: SetupConfig) -> pd.DataFrame:
     return edge(p.px > prior_high(p.px, 252))
 
@@ -156,6 +197,17 @@ def setups() -> list[Setup]:
         Setup("EARNINGS_BEAT", "EARNINGS", "Earnings beat becomes public",
               "The day a quarterly or annual report is accepted with a standardized earnings surprise ≥ 1 (EPS vs the same quarter a year earlier, scaled by its usual variation)",
               "Post-earnings-announcement drift (Bernard & Thomas 1989)", _earnings_beat),
+        Setup("EARNINGS_REACTION_UP", "EARNINGS", "Results day: stock jumps",
+              "The session in which a results 8-K first traded, with an excess return over the sector ETF of +5% or more",
+              "Post-earnings-announcement drift measured by the market's reaction (Brandt, Kishore, Santa-Clara & Venkatachalam 2008)", _earnings_reaction_up),
+        Setup("EARNINGS_REACTION_DOWN", "EARNINGS", "Results day: stock drops",
+              "The session in which a results 8-K first traded, with an excess return of −5% or worse", "The drift after a negative reaction", _earnings_reaction_down),
+        Setup("GUIDANCE_RAISED", "EARNINGS", "Guidance raised",
+              "A results release whose text says guidance or outlook was raised (keyword rule, estimate)", "Guidance revisions move stocks for weeks (Anilowski, Feng & Skinner 2007)", _guidance_raised),
+        Setup("GUIDANCE_LOWERED", "EARNINGS", "Guidance lowered",
+              "A results release whose text says guidance or outlook was lowered (keyword rule, estimate)", "The negative side of guidance revisions", _guidance_lowered),
+        Setup("PRE_EARNINGS", "EARNINGS", "Earnings due within a week",
+              "The first day the estimated next results announcement is at most 5 trading days away", "Pre-earnings-announcement run-up (catalyst calendar)", _pre_earnings),
         Setup("EARNINGS_MISS", "EARNINGS", "Earnings miss becomes public",
               "The day a report is accepted with a standardized earnings surprise ≤ −1", "The mirror image of the drift", _earnings_miss),
         Setup("REVENUE_BEAT", "EARNINGS", "Revenue beat becomes public",
@@ -164,6 +216,15 @@ def setups() -> list[Setup]:
               "The ex-date of a regular dividend above the one paid a year earlier", "Dividend changes as management signals (Lintner 1956)", _dividend_raise),
         Setup("DIVIDEND_CUT", "DIVIDEND", "Dividend cut",
               "The ex-date of a regular dividend below the one paid a year earlier (or suspended)", "Dividend cuts as a distress signal", _dividend_cut),
+        Setup("INSIDER_BUY", "INSIDER", "An insider buys in the open market",
+              "The first close at which a Form 4 reporting an open-market purchase by an officer, director or 10% owner is public",
+              "Insiders' purchases predict returns; their sales mostly do not (Lakonishok & Lee 2001; Jeng, Metrick & Zeckhauser 2003)", _insider_buy),
+        Setup("INSIDER_CLUSTER_BUY", "INSIDER", "Insider cluster buying",
+              "Two or more different insiders with open-market purchases made public within 21 trading days",
+              "Cluster purchases carry more information than a single buy (Cohen, Malloy & Pomorski 2012)", _insider_cluster_buy),
+        Setup("INSIDER_CLUSTER_SELL", "INSIDER", "Insider cluster selling",
+              "Three or more different insiders with open-market sales made public within 21 trading days",
+              "The sell side of the same literature: usually diversification, sometimes not", _insider_cluster_sell),
         Setup("BREAKOUT_52W", "TREND", "New 52-week high",
               "First close above the highest close of the previous 252 trading days", "Breakout and 52-week-high momentum (George & Hwang 2004)", _breakout_52w),
         Setup("NEW_LOW_52W", "REVERSAL", "New 52-week low",

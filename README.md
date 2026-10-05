@@ -121,9 +121,10 @@ How an event is linked to a company:
 
 ## Forecasting
 
-* **Baseline model:** prices and filed fundamentals. Features are 1-, 3- and 6-month returns relative to the
-  benchmark, relative volatility, year-over-year revenue growth, the change in gross margin, and long-term debt
-  divided by assets.
+* **Baseline model:** prices, filed fundamentals and insider trades. Features are 1-, 3- and 6-month returns relative
+  to the benchmark, relative volatility, year-over-year revenue growth, the change in gross margin, long-term debt
+  divided by assets, insiders' net open-market buying over 63 trading days as a share of market cap, the market's
+  reaction to the last earnings announcement, and the last release's guidance tone.
 * **Augmented model:** the baseline features plus:
   * `trade_shock`: Σ over recent official tariff events of sign × severity × decay × exposure weight.
   * `rate_shock`: Σ over recent rate decisions of −Δrate × decay × leverage relative to the universe.
@@ -159,6 +160,39 @@ How an event is linked to a company:
   * `issue_mode` is `LIVE` or `REPLAY`. `REPLAY` means the forecast was published after its data cutoff, and the
     UI labels it.
 
+## Earnings announcements (8-K Item 2.02)
+
+Results become public with an 8-K, not with the 10-Q that follows weeks later, so the platform reads the 8-K's EDGAR
+acceptance time as the event: a release before the open trades that day, one after the close trades the next day, and
+that session's excess return over the sector ETF is the market's reaction. The press-release exhibit (EX-99.1, found
+through the filing's index headers) is stored and classified by keyword rules into a guidance tone (raised, lowered,
+maintained, outlook given, none) with the matched sentence as evidence; it is an ESTIMATED value. From past
+announcements the platform also estimates the next one: a year after the announcement that followed the same
+announcement last year. The session is decided in New York time (a 16:15 release trades the next day in summer and
+winter alike), unlike the platform's fixed 21:00 UTC as-of cutoff, which treats a summer after-close filing as known
+at that day's close; see the limitations.
+
+The forecasting models get the last reaction (zero after 63 trading days) and the last guidance tone; the AI strategy
+also sees trading days since the last announcement and until the estimated next one; the playbook tests results-day
+jumps and drops, guidance raised or lowered, and "earnings due within a week"; every company page shows the record.
+Code: `backend/civalpha/earnings.py` (point-in-time logic), `backend/civalpha/platform/earnings.py` (ingestion and rules);
+`backend/tests/test_earnings.py`.
+
+## Insider transactions (SEC Forms 4)
+
+What officers, directors and 10% owners buy and sell in their own company is public within two business days on Form 4.
+The pipeline loads them from two SEC sources: the quarterly insider-transactions data sets for the lookback window (one
+zip per quarter, every filer at once) and each company's Form 4 XML filings newer than the latest data set, so the signal
+does not lag a quarter. Only non-derivative transactions are stored; open-market purchases (P) and sales (S) are the
+signal, grants, exercises, tax withholding and gifts are kept for the record. A filing becomes available at the end of
+its filing day in New York, which is never earlier than the true acceptance time.
+
+They feed three places: the forecasting models get `insider_net_63d` (net open-market buying over 63 trading days as a
+share of market cap; zero when nothing was filed, because silence is information); the AI strategy also sees the number
+of distinct insiders buying and selling in the last 21 trading days; the setup playbook tests an insider purchase, cluster
+buying (two or more insiders) and cluster selling (three or more); and every company page shows the trades. Code:
+`backend/civalpha/platform/insiders.py`; `backend/tests/test_platform_insiders.py`.
+
 ## Setup playbook: what a trader waits for, with base rates
 
 A discretionary trader does not forecast every stock every day; they wait for a situation. The **Playbook** page
@@ -167,6 +201,8 @@ from data known then, each on the excess return over the sector ETF that followe
 
 | Family | Setups |
 |---|---|
+| Insider | an insider's open-market purchase becoming public; cluster buying (two or more insiders in 21 trading days); cluster selling (three or more) |
+| Earnings (announcement) | results day with the stock up or down 5% or more against its ETF; guidance raised or lowered (keyword estimate); earnings due within a week (estimated date) |
 | Earnings | an earnings beat or miss becoming public (standardized surprise ≥ 1 or ≤ −1 on the acceptance day); a revenue beat |
 | Dividend | a regular dividend raised or cut against a year earlier (on the ex-date) |
 | Trend | first close at a new 52-week high; golden cross; death cross |
@@ -460,6 +496,9 @@ docs/      api.md (REST contract and MCP tools)
     are caught by comparing with total assets and with the price per share the float implies; a float tagged too small
     simply fails the screen. Expect each pipeline run to take roughly 5-10 seconds
     more per stock: the feature builder and the AI's walk-forward training are not yet vectorized across companies.
+* **Point-in-time cutoff.** The as-of cutoff of a trading date is 21:00 UTC, which is 17:00 New York in summer: a
+  filing accepted between 16:00 and 17:00 on a summer day counts as known at that day's close. The earnings module
+  decides sessions in New York time; the other features still use the fixed cutoff.
 * **Operations.**
   * Admin protection is a single shared token. Real multi-user access needs proper authentication and roles.
   * The scheduler runs inside the worker, so a missed run while the stack is down is not caught up.

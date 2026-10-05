@@ -13,7 +13,8 @@ import pandas as pd
 
 from .. import pit
 from ..dividends import daily_dividend_features
-from ..features import MIN_HISTORY, DataBundle, build_rows
+from ..earnings import DAYS_CAP, REACTION_WINDOW, TONE_VALUE, next_estimate, session_excess
+from ..features import INSIDER_WINDOW, MIN_HISTORY, DataBundle, build_rows
 from ..fundamentals import FUND_FEATURES, PROFILE_KEYS
 
 
@@ -36,6 +37,8 @@ class MarketPanel:
     _features: pd.DataFrame | None = field(default=None, repr=False)
     _fund: dict | None = field(default=None, repr=False)
     _div: dict | None = field(default=None, repr=False)
+    _ins: dict | None = field(default=None, repr=False)
+    _earn: dict | None = field(default=None, repr=False)
 
     @staticmethod
     def from_bundle(bundle: DataBundle) -> "MarketPanel":
@@ -106,12 +109,105 @@ class MarketPanel:
             self._fund = _fundamental_matrices(self)
         return self._fund
 
+    def earnings(self) -> dict[str, pd.DataFrame]:
+        """Earnings-announcement signals at each close (date x company): 'announcement' (True in the session a results 8-K
+        first traded), 'reaction' (that session's excess return over the ETF, NaN elsewhere), earn_react_last, guidance_last,
+        days_since_earnings, days_to_earnings_est. Cached on the panel."""
+        if self._earn is None:
+            self._earn = _earnings_matrices(self)
+        return self._earn
+
+    def insiders(self) -> dict[str, pd.DataFrame]:
+        """Insider signals at each close (date x company), from Form 4 trades available at or before that close:
+        insider_buyers_21d / insider_sellers_21d (distinct insiders with open-market purchases / sales that became public in
+        the last 21 trading days), insider_net_63d (net open-market dollar value over 63 trading days / market cap; 0 when
+        nothing was filed). Cached on the panel."""
+        if self._ins is None:
+            self._ins = _insider_matrices(self)
+        return self._ins
+
     def dividends(self) -> dict[str, pd.DataFrame]:
         """Dividend signals at each close (date x company): div_yield and div_growth from the cash dividends with an
         ex-date on or before that day (dividends.daily_dividend_features), payout_ratio as filed. Cached on the panel."""
         if self._div is None:
             self._div = _dividend_matrices(self)
         return self._div
+
+
+INSIDER_SHORT_WINDOW = 21
+
+
+def _earnings_matrices(p: "MarketPanel") -> dict[str, pd.DataFrame]:
+    cal = p.calendar
+    cids = list(p.px.columns)
+    T, N = len(cal), len(cids)
+    ann = np.zeros((T, N), dtype=bool)
+    react = np.full((T, N), np.nan)
+    last = np.zeros((T, N))
+    guide = np.zeros((T, N))
+    since = np.full((T, N), float(DAYS_CAP))
+    to_next = np.full((T, N), float(DAYS_CAP))
+    for j, c in enumerate(cids):
+        events = p.bundle.announcements(c)
+        tr_s, tr_b = p.bundle.tr.get(c), p.bundle.bench_tr.get(p.benchmark_of[c])
+        if not events or tr_s is None or tr_b is None:
+            continue
+        for i, a in enumerate(events):
+            k = a.session_idx
+            if k >= T:
+                continue
+            ann[k, j] = True
+            r = session_excess(tr_s, tr_b, k)
+            react[k, j] = r
+            end = events[i + 1].session_idx if i + 1 < len(events) else T
+            end = min(end, T)
+            rng = np.arange(k, end)
+            since[rng, j] = np.minimum(DAYS_CAP, rng - k)
+            win = rng[rng - k <= REACTION_WINDOW]
+            last[win, j] = 0.0 if np.isnan(r) else r
+            guide[win, j] = TONE_VALUE.get(a.guidance, 0.0)
+            nxt = next_estimate(events[:i + 1], k, cal)
+            if nxt is not None:
+                to_next[rng, j] = np.clip(k + nxt - rng, 0, DAYS_CAP)
+    mk = lambda a: pd.DataFrame(a, index=cal, columns=cids)  # noqa: E731
+    return {"announcement": mk(ann), "reaction": mk(react), "earn_react_last": mk(last), "guidance_last": mk(guide),
+            "days_since_earnings": mk(since), "days_to_earnings_est": mk(to_next)}
+
+
+def _insider_matrices(p: "MarketPanel") -> dict[str, pd.DataFrame]:
+    cal = p.calendar
+    cids = list(p.px.columns)
+    T, N = len(cal), len(cids)
+    close_ns = np.array([pit.close_ts(d).value for d in cal], dtype=np.int64)
+    buyers = np.zeros((T, N))
+    sellers = np.zeros((T, N))
+    net = np.zeros((T, N))
+    for j, c in enumerate(cids):
+        times, value, is_buy, owners = p.bundle.insider_trades(c)
+        if not len(times):
+            continue
+        # a trade is known at the first close at or after it became available
+        at = np.searchsorted(close_ns, times, side="left")
+        ok = at < T
+        at, value, is_buy, owners = at[ok], value[ok], is_buy[ok], owners[ok]
+        daily = np.zeros(T)
+        np.add.at(daily, at, value)
+        cum = np.cumsum(daily)
+        net[:, j] = cum - np.concatenate([np.zeros(INSIDER_WINDOW), cum[:-INSIDER_WINDOW]])
+        for t in np.unique(at):
+            lo = t
+            hi = min(T, t + INSIDER_SHORT_WINDOW)
+            # every close from t to t + window - 1 sees this trade in its trailing window
+            for s in range(lo, hi):
+                w = (at > s - INSIDER_SHORT_WINDOW) & (at <= s)
+                buyers[s, j] = len(set(owners[w & is_buy]))
+                sellers[s, j] = len(set(owners[w & ~is_buy]))
+    mcap = p.fundamentals()["market_cap"].to_numpy(float)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        net_rel = np.where(mcap > 0, net / mcap, np.nan)
+    return {"insider_buyers_21d": pd.DataFrame(buyers, index=cal, columns=cids),
+            "insider_sellers_21d": pd.DataFrame(sellers, index=cal, columns=cids),
+            "insider_net_63d": pd.DataFrame(net_rel, index=cal, columns=cids)}
 
 
 def _fundamental_matrices(p: "MarketPanel") -> dict[str, pd.DataFrame]:

@@ -14,6 +14,8 @@ from .forecasts import ForecastService
 from .jobs import Log
 from .macro import MacroService
 from .market import MarketDataService, PriceSyncService
+from .earnings import EarningsIngestionService
+from .insiders import InsiderIngestionService
 from .sec import FilingIngestionService, SecClientFactory
 from .settings import settings
 from .sql import Db, db, engine
@@ -77,6 +79,14 @@ class Pipeline:
                     self.filings.ingest(sec, c["id"], log)
                 except Exception as e:  # noqa: BLE001 - one company's filings must not stop the run
                     log(f"SEC ingest failed for company {c['id']}: {e}")
+                try:
+                    EarningsIngestionService(self.db).ingest(sec, c["id"], log)
+                except Exception as e:  # noqa: BLE001
+                    log(f"earnings releases failed for company {c['id']}: {e}")
+            try:
+                InsiderIngestionService(self.db).ingest(sec, log)
+            except Exception as e:  # noqa: BLE001
+                log(f"insider transactions failed ({e}); continuing")
         else:
             log("SEC_USER_AGENT is not set (your name and contact e-mail, required by the SEC); SEC filings skipped")
         if self.s.fred.enabled:

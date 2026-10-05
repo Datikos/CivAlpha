@@ -388,6 +388,30 @@ def build() -> MCPServer:
                                "rulesHolding": sorted(k for k, v in (x.get("ruleVotes") or {}).items() if v)}
                               for x in r.get("decisions", [])]}
 
+    # ------------------------------------------------------------------ earnings
+    @tool_read
+    @_domain
+    def get_earnings(symbol: str, announcements: int = 8) -> dict:
+        """Earnings announcements for a company (results 8-Ks, Item 2.02): when each became public, the stock's excess
+        return over its sector ETF in the session it first traded, the guidance tone read from the press release
+        (RAISED / LOWERED / MAINTAINED / PROVIDED / NONE, a keyword estimate with the sentence as evidence), and the
+        estimated next announcement date. Former tickers resolve."""
+        r = read.company_earnings(symbol, max(1, min(announcements, 100)))
+        return {**_pick(r, "symbol", "asOf", "announcementCount", "nextEstimate", "note"),
+                "announcements": [_pick(a, "acceptedAt", "sessionDate", "reaction", "guidanceTone", "guidanceText", "exhibitUrl") for a in r["announcements"]]}
+
+    # ------------------------------------------------------------------ insiders
+    @tool_read
+    @_domain
+    def get_insiders(symbol: str, transactions: int = 20) -> dict:
+        """Insider transactions (SEC Forms 4) for a company: open-market buying and selling by officers, directors and 10%
+        owners over the last 21, 63 and 252 trading days (distinct buyers and sellers, net dollar value) and the latest
+        transactions with their code (P purchase, S sale; grants, exercises and gifts carry no signal). Former tickers resolve."""
+        r = read.company_insiders(symbol, max(1, min(transactions, 200)))
+        return {**_pick(r, "symbol", "windows", "transactionCount", "newestAvailableAt", "note"),
+                "transactions": [_pick(t, "ownerName", "relationship", "title", "transDate", "filedDate", "transCode", "codeLabel",
+                                       "acquired", "shares", "price", "value", "sharesAfter", "signal") for t in r["transactions"]]}
+
     # ------------------------------------------------------------------ setup playbook
     @tool_read
     @_domain
@@ -639,6 +663,20 @@ def build() -> MCPServer:
         """Record the AI strategy's decisions for the latest trading day (or a given date)."""
         d = _date(as_of_date, "as_of_date")
         return _action(ctx, lambda: admin.strategy_decide(admin.DateIn(asOfDate=d)), wait_seconds)
+
+    @tool_action
+    @_domain
+    def ingest_earnings(ctx: Context, wait_seconds: int = 0) -> dict:
+        """Read the press-release exhibit of every results 8-K not yet read and classify its guidance tone (also part of
+        every pipeline run). Read them with get_earnings."""
+        return _action(ctx, admin.earnings_ingest, wait_seconds)
+
+    @tool_action
+    @_domain
+    def ingest_insiders(ctx: Context, wait_seconds: int = 0) -> dict:
+        """Load insider transactions (Forms 4) for every tracked company from the SEC's quarterly data sets plus each
+        company's recent filings (also part of every pipeline run). Read them with get_insiders."""
+        return _action(ctx, admin.insider_ingest, wait_seconds)
 
     @tool_action
     @_domain

@@ -52,11 +52,14 @@ def load_bundle(engine: Engine) -> DataBundle:
     macro = _dates(_q(engine, "SELECT series_id, obs_date, value::float8 AS value, realtime_start, realtime_end FROM macro_observation"),
                    ["obs_date", "realtime_start", "realtime_end"])
     membership = _dates(_q(engine, "SELECT company_id, valid_from, valid_to FROM universe_membership"), ["valid_from", "valid_to"])
-    filings = _utc(_q(engine, "SELECT id, company_id, accession_no, form_type, accepted_at, source_document_id FROM filing"), ["accepted_at"])
+    filings = _utc(_q(engine, "SELECT id, company_id, accession_no, form_type, items, accepted_at, source_document_id FROM filing"), ["accepted_at"])
+    releases = _utc(_q(engine, "SELECT company_id, filing_id, accepted_at, guidance_tone FROM earnings_release"), ["accepted_at"])
+    insiders = _utc(_dates(_q(engine, """SELECT company_id, available_at, trans_date, trans_code, acquired, shares::float8 AS shares,
+                                                price::float8 AS price, owner_cik, owner_name FROM insider_transaction"""), ["trans_date"]), ["available_at"])
     if bench.empty:
         raise ValueError("No benchmark ETF prices are loaded. Update prices, or import a prices CSV that includes "
                          "the sector benchmark ETFs of your companies, before evaluating or issuing forecasts.")
-    return DataBundle.build(companies, stock, bench, actions, facts, expo, events, targets, macro, membership, filings)
+    return DataBundle.build(companies, stock, bench, actions, facts, expo, events, targets, macro, membership, filings, insiders, releases)
 
 
 def load_event_sources(engine: Engine) -> pd.DataFrame:

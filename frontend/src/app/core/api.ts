@@ -38,6 +38,8 @@ export const apiUrl = {
   financials: (symbol: string, asOf?: string | null) =>
     withQuery(`${BASE}/companies/${enc(symbol)}/financials`, { asOf }),
   dividends: (symbol: string) => `${BASE}/companies/${enc(symbol)}/dividends`,
+  insiders: (symbol: string) => `${BASE}/companies/${enc(symbol)}/insiders`,
+  earnings: (symbol: string) => `${BASE}/companies/${enc(symbol)}/earnings`,
   filings: (symbol: string) => `${BASE}/companies/${enc(symbol)}/filings`,
   filing: (id: number | string) => `${BASE}/filings/${enc(String(id))}`,
   exposures: (symbol: string, asOf?: string | null) =>

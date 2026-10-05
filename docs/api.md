@@ -293,6 +293,39 @@ append-only (UPDATE/DELETE are rejected by the database).
 
 ## Doubler study
 
+`GET /api/companies/{symbol}/earnings?limit=16` — results announcements (8-K Item 2.02) as the market saw them:
+```json
+{ "symbol": "NKE", "asOf": "2026-10-02", "announcementCount": 27,
+  "nextEstimate": {"date": "2026-12-18", "tradingDays": 54},
+  "announcements": [{"filingId": 812, "acceptedAt": "2026-10-01T20:15:15Z", "sessionDate": "2026-10-02", "reaction": -0.061,
+                     "guidanceTone": "PROVIDED", "guidanceText": "Outlook • Revenues are expected to decline high-single digits in fiscal 2027.",
+                     "exhibitName": "q1fy27exhibit991er.htm", "exhibitUrl": "https://www.sec.gov/Archives/...", "exhibitDocumentUrl": "/api/documents/91",
+                     "accessionNo": "0000320187-26-000184"}],
+  "note": "..." }
+```
+`reaction` is the stock's total return minus its sector ETF's in the session the release first traded (a release after the
+close trades the next day). `guidanceTone` is `RAISED`, `LOWERED`, `MAINTAINED`, `PROVIDED`, `NONE` or `UNKNOWN` (exhibit not
+found), a keyword estimate (method `RULE_KEYWORD`) with the matched sentence in `guidanceText`. The next date is a year after the
+announcement that followed the same announcement last year (else 91 days after the latest); `tradingDays` is never negative
+(0 = overdue). The session is decided in New York time: a release accepted after 16:00 trades the next trading day.
+
+`GET /api/companies/{symbol}/insiders?limit=60` — insider transactions (SEC Forms 4) as of now:
+```json
+{ "symbol": "META", "price": 712.1, "priceDate": "2026-10-02", "transactionCount": 143, "newestAvailableAt": "2026-10-02T03:59:59Z",
+  "windows": {"21d": {"buys": 0, "sells": 3, "buyers": 0, "sellers": 2, "netValue": -4200000.0, "boughtValue": 0.0, "soldValue": 4200000.0},
+              "63d": {"...": 0}, "252d": {"...": 0}},
+  "transactions": [{"id": 1, "accessionNo": "0001127602-26-012345", "ownerName": "Zuckerberg Mark", "ownerCik": "0001548760",
+                    "relationship": "Officer", "title": "Chairman and CEO", "transDate": "2026-09-30", "filedDate": "2026-10-02",
+                    "availableAt": "2026-10-03T03:59:59Z", "transCode": "S", "codeLabel": "Open-market sale", "acquired": false,
+                    "shares": 10000, "price": 705.5, "value": 7055000.0, "sharesAfter": 330000, "ownership": "I", "securityTitle": "Class A Common Stock",
+                    "source": "form4-xml", "signal": true, "documentUrl": "/api/documents/88", "url": "https://www.sec.gov/Archives/..."}],
+  "note": "..." }
+```
+Windows count open-market purchases (P) and sales (S) only, by the time the filing became available (the end of the filing
+day in New York); other codes (grants A, exercises M, tax withholding F, gifts G, ...) are listed with `signal` false. Sources:
+the SEC's quarterly insider-transactions data sets for the lookback window plus each company's Form 4 XML filings newer than
+the latest data set. 404 for an unknown symbol.
+
 `GET /api/setups` — the latest setup playbook (`run`, null before the first one) and the list of earlier `runs`
 (`id`, `runAt`, `dataCutoff`, `headline`). `GET /api/setups/{id}` — one run (404 if unknown). `run.result`:
 ```json
@@ -398,6 +431,8 @@ response is `401`. `GET /api/meta` reports `adminTokenRequired`.
 * `POST /api/admin/timemachine` body `{"asOfDate": "2025-06-30"}` → job — forecast as of that past close with only the
   data known then, then score it against what followed (400 for today or a future date)
 * `POST /api/admin/strategies/backtest` → job — backtest every strategy and store a new run (also part of every pipeline run)
+* `POST /api/admin/earnings/ingest` → job — read the press-release exhibit of every results 8-K not yet read and classify its guidance tone (also part of every pipeline run)
+* `POST /api/admin/insiders/ingest` → job — load insider transactions (Forms 4) for every tracked company (also part of every pipeline run)
 * `POST /api/admin/setups/study` → job — run the setup playbook and store it (also part of every pipeline run)
 * `POST /api/admin/doublers/study` → job — run the doubler study and store it (also part of every pipeline run)
 * `POST /api/admin/strategies/decide` body `{"asOfDate": "2026-09-30"}` (optional) → job — store the AI's decisions for
@@ -473,11 +508,13 @@ Tools call the same code as the REST endpoints and return condensed JSON (also a
 | `get_strategies` / `get_strategy(key, trades?)` | `GET /api/strategies`, `GET /api/strategies/{key}` | no equity curves |
 | `get_decisions(as_of_date?)` | `GET /api/decisions` | top 3 factors and the rules holding each stock |
 | `list_time_machine_runs` / `get_time_machine_run(run_id, horizon?)` | `GET /api/timemachine`, `GET /api/timemachine/{id}` | per-stock prediction vs actual for one horizon |
+| `get_earnings(symbol, announcements?)` | `GET /api/companies/{symbol}/earnings` | announcement times, session reactions, guidance tone with evidence, estimated next date |
+| `get_insiders(symbol, transactions?)` | `GET /api/companies/{symbol}/insiders` | open-market buying and selling over 21/63/252 trading days and the latest transactions |
 | `get_setup_playbook(horizon?, fresh_only?)` | `GET /api/setups` | every setup's hit rate, lift, mean excess with interval, payoff and corrected verdict at one horizon, plus the stocks each setup fired on in the last sessions |
 | `get_doubler_study(horizon?, episodes?)` | `GET /api/doublers` | base rate, screen vs control with intervals, latest episodes, profile medians, stocks flagged today |
 | `investment_candidates` | — | see below |
 | `list_jobs(limit?)` / `get_job(job_id, wait_seconds?)` | `GET /api/admin/jobs` | admin |
-| `run_pipeline`, `update_prices`, `ingest_sec_filings(symbol)`, `evaluate_models`, `issue_forecasts(as_of_date?)`, `run_strategy_backtest`, `make_ai_decisions(as_of_date?)`, `run_time_machine(as_of_date)`, `run_setup_study`, `run_doubler_study`, `resolve_outcomes` | `POST /api/admin/**` | admin; each takes `wait_seconds?` (max 600) and returns the job with its log tail |
+| `run_pipeline`, `update_prices`, `ingest_sec_filings(symbol)`, `evaluate_models`, `issue_forecasts(as_of_date?)`, `run_strategy_backtest`, `make_ai_decisions(as_of_date?)`, `run_time_machine(as_of_date)`, `ingest_earnings`, `ingest_insiders`, `run_setup_study`, `run_doubler_study`, `resolve_outcomes` | `POST /api/admin/**` | admin; each takes `wait_seconds?` (max 600) and returns the job with its log tail |
 | `add_company(symbol, name?, cik?, sector?, industry?, benchmark_symbol?, member_since?, ingest_sec?, sync_prices?, tags?)` | `POST /api/admin/universe/companies` (+ `GET .../enrich`) | admin; missing name / CIK / sector / industry / benchmark come from EDGAR (`filledFromSec`, `notes` on a sector that needs review); `ingest_sec` and `sync_prices` default to true and return the queued jobs; `nextSteps` lists what still has to be done by hand |
 | `discover_companies(min_public_float_usd?, exchanges?, limit?)` | `GET /api/admin/universe/discover` | candidates for a universe expansion with the quota and pipeline-time notes |
 | `expand_universe(min_public_float_usd?, exchanges?, limit?, tag?, symbols?, ingest_sec?, sync_prices?, wait_seconds?)` | `GET .../discover` + `POST /api/admin/universe/expand` | admin; adds the discovered candidates (or only `symbols` among them) in one job |

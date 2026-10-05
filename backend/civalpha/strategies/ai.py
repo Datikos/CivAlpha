@@ -37,6 +37,7 @@ import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier
 
 from ..dividends import DIV_FEATURES, DIV_LABELS
+from ..earnings import EARNINGS_LABELS
 from ..evaluation import EvalConfig, train_mask, walk_forward_folds
 from ..features import AUGMENTED_FEATURES, FEATURE_KIND, FEATURE_LABELS
 from ..fundamentals import FUND_FEATURES, FUND_LABELS
@@ -44,7 +45,11 @@ from .base import Strategy, prior_high, prior_low, rolling_std, rsi, sma
 from .panel import MarketPanel
 
 TECH_FEATURES = ["dist_sma50", "dist_sma200", "rsi2", "rsi14", "boll_z", "donchian_pos", "mom_12_1", "rev_5d", "vol_21", "dd_52w"]
-AI_FEATURES = AUGMENTED_FEATURES + TECH_FEATURES + FUND_FEATURES
+INSIDER_PANEL_FEATURES = ["insider_buyers_21d", "insider_sellers_21d"]     # insider_net_63d already comes with AUGMENTED_FEATURES
+EARNINGS_PANEL_FEATURES = ["days_since_earnings", "days_to_earnings_est"]  # earn_react_last and guidance_last come with AUGMENTED_FEATURES
+INSIDER_LABELS = {"insider_buyers_21d": "Insiders buying in the open market, last 21 days (distinct)",
+                  "insider_sellers_21d": "Insiders selling in the open market, last 21 days (distinct)"}
+AI_FEATURES = AUGMENTED_FEATURES + TECH_FEATURES + FUND_FEATURES + INSIDER_PANEL_FEATURES + EARNINGS_PANEL_FEATURES
 # the reports-only model: what the quarterly/annual filings say, nothing from prices except valuation and recency
 FUND_MODEL_FEATURES = ["rev_yoy", "gm_chg", "leverage"] + FUND_FEATURES
 AI_DIV_FEATURES = AI_FEATURES + DIV_FEATURES
@@ -90,7 +95,7 @@ class AiConfig:
 
 
 def feature_label(f: str) -> str:
-    return TECH_LABELS.get(f) or FUND_LABELS.get(f) or DIV_LABELS.get(f) or FEATURE_LABELS.get(f, f)
+    return TECH_LABELS.get(f) or FUND_LABELS.get(f) or DIV_LABELS.get(f) or INSIDER_LABELS.get(f) or EARNINGS_LABELS.get(f) or FEATURE_LABELS.get(f, f)
 
 
 def feature_kind(f: str) -> str:
@@ -98,6 +103,10 @@ def feature_kind(f: str) -> str:
         return "TECHNICAL"
     if f in DIV_LABELS:
         return "DIVIDEND"
+    if f in INSIDER_LABELS:
+        return "INSIDER"
+    if f in EARNINGS_PANEL_FEATURES:
+        return "EARNINGS"
     return "FUNDAMENTAL" if f in FUND_LABELS else FEATURE_KIND.get(f, "OTHER")
 
 
@@ -139,6 +148,12 @@ def dataset(p: MarketPanel, cfg: AiConfig) -> pd.DataFrame:
     div = p.dividends()
     for name in DIV_FEATURES:
         df[name] = div[name].to_numpy(float)[cal_pos, col_pos]
+    ins = p.insiders()
+    for name in INSIDER_PANEL_FEATURES:
+        df[name] = ins[name].to_numpy(float)[cal_pos, col_pos]
+    earn = p.earnings()
+    for name in EARNINGS_PANEL_FEATURES:
+        df[name] = earn[name].to_numpy(float)[cal_pos, col_pos]
     h = cfg.horizon
     s_fwd = p.px.shift(-(h + 1)) / p.px.shift(-1) - 1.0
     b_fwd = p.bench_px.shift(-(h + 1)) / p.bench_px.shift(-1) - 1.0

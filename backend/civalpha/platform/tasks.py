@@ -12,6 +12,8 @@ from ..strategies import service as strategy_lab
 from .decisions import DecisionService
 from .errors import Problem
 from .expand import UniverseExpansion
+from .earnings import EarningsIngestionService
+from .insiders import InsiderIngestionService
 from .forecasts import ForecastService
 from .jobs import Log
 from .market import MarketDataService, PriceSyncService
@@ -97,6 +99,26 @@ def sec_ingest(params: dict, log: Log) -> None:
     FilingIngestionService().ingest(SecClientFactory().configured(), int(cid), log)
 
 
+def earnings_ingest(params: dict, log: Log) -> None:
+    _require_universe()
+    sec = SecClientFactory().configured()
+    svc = EarningsIngestionService()
+    svc.reclassify(log)
+    total = 0
+    for c in UniverseService().companies():
+        try:
+            total += svc.ingest(sec, int(c["id"]), log).releases
+        except Exception as e:  # noqa: BLE001
+            log(f"earnings releases failed for company {c['id']}: {e}")
+    log(f"earnings releases: {total} read")
+
+
+def insider_ingest(params: dict, log: Log) -> None:
+    _require_universe()
+    r = InsiderIngestionService().ingest(SecClientFactory().configured(), log)
+    log(f"insiders: {r.datasets} data sets, {r.filings} recent Form 4 filings, {r.transactions} transactions stored")
+
+
 def universe_expand(params: dict, log: Log) -> None:
     sec = SecClientFactory().configured()
     ingest = FilingIngestionService()
@@ -137,4 +159,6 @@ TASKS = {
     "SEC_INGEST": sec_ingest,
     "PRICE_IMPORT": price_import,
     "UNIVERSE_EXPAND": universe_expand,
+    "INSIDER_INGEST": insider_ingest,
+    "EARNINGS_INGEST": earnings_ingest,
 }

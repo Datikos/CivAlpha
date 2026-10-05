@@ -99,6 +99,18 @@ def sec_ingest(body: SecIn):
     return _submit("SEC_INGEST", {"symbol": body.symbol, "companyId": cid})
 
 
+@router.post("/earnings/ingest")
+def earnings_ingest():
+    """Read the press-release exhibit of every results 8-K not yet read and classify its guidance tone."""
+    return _submit("EARNINGS_INGEST")
+
+
+@router.post("/insiders/ingest")
+def insider_ingest():
+    """Load insider transactions (SEC Forms 4) for every tracked company: the quarterly data sets plus recent filings."""
+    return _submit("INSIDER_INGEST")
+
+
 @router.post("/prices/import")
 async def price_import(file: UploadFile = File(...), provider: str = Form("CSV upload")):
     name = file.filename or "upload.csv"

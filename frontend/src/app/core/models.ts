@@ -854,6 +854,83 @@ export interface TimeMachineRun extends TimeMachineRunSummary {
   };
 }
 
+// ---------- Earnings announcements ----------
+
+export type GuidanceTone = 'RAISED' | 'LOWERED' | 'MAINTAINED' | 'PROVIDED' | 'NONE' | 'UNKNOWN';
+
+export interface EarningsAnnouncement {
+  filingId: number | null;
+  acceptedAt: string;
+  /** the session in which the release first traded */
+  sessionDate: string | null;
+  /** stock total return minus the sector ETF's in that session; null before prices exist */
+  reaction: number | null;
+  guidanceTone: GuidanceTone;
+  guidanceText: string | null;
+  exhibitName: string | null;
+  exhibitUrl: string | null;
+  exhibitDocumentUrl: string | null;
+  accessionNo: string | null;
+}
+
+export interface EarningsProfile {
+  symbol: string;
+  asOf: string;
+  announcements: EarningsAnnouncement[];
+  announcementCount: number;
+  nextEstimate: { date: string | null; tradingDays: number | null };
+  note: string;
+}
+
+// ---------- Insider transactions ----------
+
+export interface InsiderWindow {
+  buys: number;
+  sells: number;
+  buyers: number;
+  sellers: number;
+  netValue: number;
+  boughtValue: number;
+  soldValue: number;
+}
+
+export interface InsiderTransaction {
+  id: number;
+  accessionNo: string;
+  ownerName: string;
+  ownerCik: string | null;
+  relationship: 'Officer' | 'Director' | 'TenPercentOwner' | 'Other';
+  title: string | null;
+  transDate: string;
+  filedDate: string;
+  availableAt: string;
+  transCode: string;
+  codeLabel: string;
+  acquired: boolean;
+  shares: number;
+  price: number | null;
+  value: number | null;
+  sharesAfter: number | null;
+  ownership: string | null;
+  securityTitle: string | null;
+  source: string;
+  /** true for open-market purchases and sales (the informative codes) */
+  signal: boolean;
+  documentUrl: string | null;
+  url: string | null;
+}
+
+export interface InsiderProfile {
+  symbol: string;
+  price: number | null;
+  priceDate: string | null;
+  windows: Record<'21d' | '63d' | '252d', InsiderWindow>;
+  transactions: InsiderTransaction[];
+  transactionCount: number;
+  newestAvailableAt: string | null;
+  note: string;
+}
+
 // ---------- Setup playbook ----------
 
 export type SetupGrade = 'SUPPORTED' | 'SUGGESTIVE' | 'NEGATIVE' | 'NOISE' | 'NOT_TESTABLE';

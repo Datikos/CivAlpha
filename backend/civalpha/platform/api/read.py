@@ -2,11 +2,17 @@
 strategies, AI decisions and time-machine runs. Response shapes match docs/api.md."""
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Query, Response
 
+import numpy as np
+import pandas as pd
+
 from ...dividends import BUYBACK_CONCEPT, PAYOUT_CONCEPTS, dividend_profile, payout_from_facts
+from ...earnings import announcements, next_estimate, session_excess
+from ...returns import total_return_index
+from ... import pit
 from ..errors import BadRequest, NotFound
 from ..llm import provider
 from ..market import MarketDataService
@@ -265,6 +271,140 @@ def with_url(f: dict) -> dict:
     f["documentUrl"] = None if doc_id is None else f"/api/documents/{doc_id}"
     f["url"] = src
     return f
+
+
+@router.get("/companies/{symbol}/earnings")
+def company_earnings(symbol: str, limit: int = Query(16, ge=1, le=100)):
+    """Earnings announcements (results 8-Ks) with the market's reaction in the session they first traded, the guidance
+    tone read from each press release (estimate), and the estimated next announcement."""
+    cid = resolve(symbol)
+    bench = db().scalar("SELECT benchmark_symbol FROM company WHERE id = :id", id=cid)
+    bbars = db().all("SELECT trade_date, close::float8 AS close FROM price_bar WHERE company_id IS NULL AND symbol = :b ORDER BY trade_date", b=bench)
+    sbars = db().all("SELECT trade_date, close::float8 AS close FROM price_bar WHERE company_id = :id ORDER BY trade_date", id=cid)
+    acts = pd.DataFrame(db().all("SELECT company_id, symbol, ex_date, action_type, value::float8 AS value FROM corporate_action "
+                                 "WHERE company_id = :id OR (company_id IS NULL AND symbol = :b)", id=cid, b=bench),
+                        columns=["company_id", "symbol", "ex_date", "action_type", "value"])
+    if len(acts):
+        acts["ex_date"] = pd.to_datetime(acts["ex_date"])
+    cal = pd.DatetimeIndex(pd.to_datetime([b["trade_date"] for b in bbars]))
+    tr_s = tr_b = None
+    if len(cal) and sbars:
+        tr_s = total_return_index(pd.Series([b["close"] for b in sbars], index=pd.to_datetime([b["trade_date"] for b in sbars])),
+                                  acts[acts["company_id"] == cid] if len(acts) else None, cal)
+        tr_b = total_return_index(pd.Series([b["close"] for b in bbars], index=cal),
+                                  acts[acts["company_id"].isna()] if len(acts) else None, cal)
+    filings = pd.DataFrame(db().all("SELECT id, company_id, form_type, items, accepted_at FROM filing WHERE company_id = :id AND form_type = '8-K'", id=cid),
+                           columns=["id", "company_id", "form_type", "items", "accepted_at"])
+    rel_rows = camel_all(db().all("""
+        SELECT r.filing_id, r.accession_no, r.exhibit_name, r.guidance_tone, r.guidance_text, r.method, r.extractor_version,
+               r.exhibit_document_id, sd.url AS source_url
+        FROM earnings_release r LEFT JOIN source_document sd ON sd.id = r.exhibit_document_id WHERE r.company_id = :c""", c=cid))
+    releases = pd.DataFrame([{"company_id": cid, "filing_id": r["filingId"], "guidance_tone": r["guidanceTone"]} for r in rel_rows],
+                            columns=["company_id", "filing_id", "guidance_tone"])
+    rel = {r["filingId"]: r for r in rel_rows}
+    ann = announcements(filings, releases, cid, cal) if len(cal) else []
+    out = []
+    for a in reversed(ann):
+        k = a.session_idx
+        r = rel.get(a.filing_id, {})
+        reaction = None
+        if tr_s is not None and k < len(cal):
+            x = session_excess(tr_s, tr_b, k)
+            reaction = None if x != x else x
+        out.append({"filingId": a.filing_id, "acceptedAt": value(a.accepted_at.to_pydatetime()),
+                    "sessionDate": value(cal[k].date()) if k < len(cal) else None, "reaction": reaction,
+                    "guidanceTone": r.get("guidanceTone", "UNKNOWN"), "guidanceText": r.get("guidanceText"),
+                    "exhibitName": r.get("exhibitName"), "exhibitUrl": r.get("sourceUrl"),
+                    "exhibitDocumentUrl": None if r.get("exhibitDocumentId") is None else f"/api/documents/{r['exhibitDocumentId']}",
+                    "accessionNo": r.get("accessionNo")})
+    last_idx = len(cal) - 1
+    nxt = next_estimate(ann, last_idx, cal) if ann and len(cal) else None
+    next_date = None
+    if nxt is not None:
+        pos = last_idx + nxt
+        next_date = value(cal[pos].date()) if 0 <= pos < len(cal) else value((cal[-1] + pd.tseries.offsets.BDay(max(1, pos - last_idx))).date())
+    return {"symbol": TickerResolver().current_symbol(cid), "asOf": value(cal[-1].date()) if len(cal) else None,
+            "announcements": out[:limit], "announcementCount": len(ann), "nextEstimate": {"date": next_date, "tradingDays": nxt},
+            "note": "The reaction is the stock's total return minus its sector ETF's in the session the release first traded "
+                    "(a release after the close trades the next day). The guidance tone is a keyword estimate from the press "
+                    "release, with the matched sentence as evidence. The next date is estimated from past announcements."}
+
+
+INSIDER_PRICE_TOLERANCE = 5.0   # a reported price more than 5x off that day's close is a scale error in the filing
+
+
+def _close_on_or_before(closes: dict, days: list, d) -> float | None:
+    """The close on or before day `d` (a date, or an ISO string as camel-cased rows carry it)."""
+    if d is None or not days:
+        return None
+    import bisect
+    if isinstance(d, str):
+        d = date.fromisoformat(d[:10])
+    i = bisect.bisect_right(days, d) - 1
+    return closes[days[i]] if i >= 0 else None
+
+
+INSIDER_CODE_LABELS = {"P": "Open-market purchase", "S": "Open-market sale", "A": "Grant or award", "M": "Option exercise",
+                       "F": "Tax withholding", "G": "Gift", "D": "Disposition to issuer", "C": "Conversion", "J": "Other",
+                       "X": "Option exercise (in the money)", "W": "Will or inheritance"}
+
+
+@router.get("/companies/{symbol}/insiders")
+def company_insiders(symbol: str, limit: int = Query(60, ge=1, le=500)):
+    """Insider transactions (Forms 4) as of now: open-market buying and selling over the last 21, 63 and 252 trading days
+    (distinct insiders, counts, net dollar value) and the latest transactions."""
+    cid = resolve(symbol)
+    last = db().one("SELECT close, trade_date FROM price_bar WHERE company_id = :id ORDER BY trade_date DESC LIMIT 1", id=cid)
+    rows = camel_all(db().all("""
+        SELECT t.id, t.accession_no, t.owner_name, t.owner_cik, t.relationship, t.title, t.trans_date, t.filed_date, t.available_at,
+               t.trans_code, t.acquired, t.shares::float8 AS shares, t.price::float8 AS price, t.shares_after::float8 AS shares_after,
+               t.ownership, t.security_title, t.source, t.source_document_id, sd.url AS source_url
+        FROM insider_transaction t LEFT JOIN source_document sd ON sd.id = t.source_document_id
+        WHERE t.company_id = :id ORDER BY t.available_at DESC, t.trans_date DESC, t.id DESC LIMIT :n""", id=cid, n=limit))
+    closes = {c["trade_date"]: float(c["close"]) for c in db().all(
+        "SELECT trade_date, close::float8 AS close FROM price_bar WHERE company_id = :id ORDER BY trade_date", id=cid)}
+    close_days = sorted(closes)
+    for r in rows:
+        r["codeLabel"] = INSIDER_CODE_LABELS.get(r["transCode"], r["transCode"])
+        r["signal"] = r["transCode"] in ("P", "S")
+        ref = _close_on_or_before(closes, close_days, r["transDate"])
+        p = r["price"]
+        suspect = ref is not None and (p is None or p <= 0 or p > INSIDER_PRICE_TOLERANCE * ref or p < ref / INSIDER_PRICE_TOLERANCE)
+        r["priceSuspect"] = bool(suspect)
+        used = ref if suspect else p
+        r["value"] = None if used is None else r["shares"] * used
+        with_url(r)
+    signals = db().all("""SELECT acquired, shares::float8 AS shares, price::float8 AS price, trans_date, available_at,
+                                 coalesce(owner_cik, owner_name) AS owner
+                          FROM insider_transaction WHERE company_id = :id AND trans_code IN ('P', 'S')
+                            AND available_at > now() - make_interval(days => :d)""", id=cid, d=int(252 * 1.45))
+    now = datetime.now(timezone.utc)
+    windows = {}
+    for label, days in (("21d", 21), ("63d", 63), ("252d", 252)):
+        since = now - timedelta(days=int(days * 1.45))
+        w = {"buys": 0, "sells": 0, "netValue": 0.0, "boughtValue": 0.0, "soldValue": 0.0}
+        buyers, sellers = set(), set()
+        for t in signals:
+            if t["available_at"] <= since:
+                continue
+            ref = _close_on_or_before(closes, close_days, t["trans_date"])
+            p = t["price"]
+            if ref is not None and (p is None or p <= 0 or p > INSIDER_PRICE_TOLERANCE * ref or p < ref / INSIDER_PRICE_TOLERANCE):
+                p = ref
+            v = t["shares"] * (p or 0.0)
+            if t["acquired"]:
+                w["buys"] += 1; w["boughtValue"] += v; w["netValue"] += v; buyers.add(t["owner"])
+            else:
+                w["sells"] += 1; w["soldValue"] += v; w["netValue"] -= v; sellers.add(t["owner"])
+        windows[label] = {**w, "buyers": len(buyers), "sellers": len(sellers)}
+    total = db().scalar("SELECT count(*) FROM insider_transaction WHERE company_id = :id", id=cid)
+    newest = db().scalar("SELECT max(available_at) FROM insider_transaction WHERE company_id = :id", id=cid)
+    return {"symbol": TickerResolver().current_symbol(cid), "price": value(last["close"]) if last else None,
+            "priceDate": value(last["trade_date"]) if last else None, "windows": windows, "transactions": rows,
+            "transactionCount": total, "newestAvailableAt": value(newest),
+            "note": "Windows count trading days as 1.45 calendar days; only open-market purchases (P) and sales (S) are signals. "
+                    "Grants, exercises, tax withholding and gifts are listed for the record. A reported price more than 5x off "
+                    "that day's close is a scale error in the filing: the value then uses the close (priceSuspect)."}
 
 
 @router.get("/companies/{symbol}/filings")
