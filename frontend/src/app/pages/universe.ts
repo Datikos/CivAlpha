@@ -10,6 +10,7 @@ import { CompanyProfile, UniverseCompany, UniverseResponse } from '../core/model
 import { Icon } from '../shared/icon';
 import { UI } from '../shared/ui';
 import { VIZ } from '../shared/viz';
+import { UniverseExpand } from './universe-expand';
 
 interface Draft {
   symbol: string;
@@ -42,7 +43,7 @@ const TICKER = /^[A-Za-z0-9.\-]{1,10}$/;
 
 @Component({
   selector: 'app-universe',
-  imports: [FormsModule, RouterLink, Icon, ...UI, ...VIZ, ...FORMAT_PIPES],
+  imports: [FormsModule, RouterLink, Icon, UniverseExpand, ...UI, ...VIZ, ...FORMAT_PIPES],
   template: `
     <div class="page-head">
       <div class="page-title">
@@ -292,6 +293,8 @@ const TICKER = /^[A-Za-z0-9.\-]{1,10}$/;
         }
       </datalist>
     </section>
+
+    <app-universe-expand [autoPreview]="discoverParam() === '1'" (expanded)="res.reload()" />
 
     @if (data()?.tags?.length) {
       <p class="small muted tag-summary" style="margin: 1rem 0 0">
@@ -632,6 +635,8 @@ const TICKER = /^[A-Za-z0-9.\-]{1,10}$/;
 export class UniversePage {
   /** `/universe?add=NVDA` (from the command palette) looks the ticker up right away. */
   readonly addParam = input<string | undefined>(undefined, { alias: 'add' });
+  /** `/universe?discover=1` opens the expansion preview with the default filters. */
+  readonly discoverParam = input<string | undefined>(undefined, { alias: 'discover' });
 
   private readonly api = inject(ApiService);
   protected readonly meta = inject(MetaService);

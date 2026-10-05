@@ -11,6 +11,7 @@ from ..strategies import doublers
 from ..strategies import service as strategy_lab
 from .decisions import DecisionService
 from .errors import Problem
+from .expand import UniverseExpansion
 from .forecasts import ForecastService
 from .jobs import Log
 from .market import MarketDataService, PriceSyncService
@@ -91,6 +92,14 @@ def sec_ingest(params: dict, log: Log) -> None:
     FilingIngestionService().ingest(SecClientFactory().configured(), int(cid), log)
 
 
+def universe_expand(params: dict, log: Log) -> None:
+    sec = SecClientFactory().configured()
+    ingest = FilingIngestionService()
+    r = UniverseExpansion().run(params, log, ingest=lambda cid, lg: ingest.ingest(sec, int(cid), lg))
+    if not r.added:
+        raise Problem("no company could be added; see the log above")
+
+
 def price_import(params: dict, log: Log) -> None:
     path = Path(params["path"])
     try:
@@ -121,4 +130,5 @@ TASKS = {
     "RESOLVE_OUTCOMES": resolve_outcomes,
     "SEC_INGEST": sec_ingest,
     "PRICE_IMPORT": price_import,
+    "UNIVERSE_EXPAND": universe_expand,
 }

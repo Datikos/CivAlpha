@@ -4,6 +4,9 @@ import { Observable } from 'rxjs';
 import {
   AddCompanyRequest,
   AddCompanyResponse,
+  DiscoverResponse,
+  ExpandRequest,
+  ExpandResponse,
   CompanyProfile,
   Job,
   ModelKind,
@@ -113,6 +116,18 @@ export class ApiService {
   /** Name, CIK, exchange and a suggested sector / benchmark for a ticker, from SEC EDGAR. */
   enrichSymbol(symbol: string): Observable<CompanyProfile> {
     return this.http.get<CompanyProfile>(withQuery(`${BASE}/admin/universe/enrich`, { symbol }));
+  }
+
+  /** Candidates for a universe expansion: listed on `exchanges`, public float at least `minPublicFloat` US dollars. */
+  discoverCompanies(exchanges: string[], minPublicFloat: number, limit: number): Observable<DiscoverResponse> {
+    return this.http.get<DiscoverResponse>(
+      withQuery(`${BASE}/admin/universe/discover`, { exchanges: exchanges.join(','), minPublicFloat: String(minPublicFloat), limit: String(limit) }),
+    );
+  }
+
+  /** Queues one job that adds every candidate (sector from its SIC code) and starts its data loads. */
+  expandUniverse(body: ExpandRequest): Observable<ExpandResponse> {
+    return this.http.post<ExpandResponse>(`${BASE}/admin/universe/expand`, body);
   }
 
   addCompany(body: AddCompanyRequest): Observable<AddCompanyResponse> {

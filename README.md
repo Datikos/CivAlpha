@@ -35,6 +35,10 @@ Requires Docker with Compose v2. The stack uses about 0.8 GB of RAM while idle a
 3. On the **Universe** page, add the stocks to track. **Look up on SEC** fills in the CIK and name; then pick a
    sector, an industry and the sector benchmark ETF (for example `XLK` for technology). Optional **tags** are your own
    categories (a theme such as `AI`, a watchlist such as `core`) for filtering the **Companies** page; the models never see them.
+   **Expand the universe** adds many at once: every company listed on Nasdaq or NYSE with a public float above a threshold,
+   from SEC data alone, each with a sector suggested from its SIC code. Breadth matters: an edge that is invisible on 40
+   stocks can be measurable on 400. Mind the price provider's quota (Tiingo's free plan fetches about 50 symbols an hour;
+   each sync continues where the last one stopped) and that every pipeline run grows with the universe.
 4. On **Data & pipeline**, click **Run pipeline**. That one job:
    * downloads prices, dividends and splits for every stock and benchmark ETF;
    * ingests SEC filings (XBRL facts, passages, exposures);
@@ -428,6 +432,12 @@ docs/      api.md (REST contract and MCP tools)
   * Next steps: sector-neutral cross-sectional ranking, purged k-fold with an embargo for hyperparameters, and
     proper significance testing across many universes.
   * Live, real-data accuracy can only build up over time.
+* **Breadth.**
+  * Universe expansion ranks companies by the public float of their last 10-K (SEC XBRL frames), which lags the market
+    by up to a year; it is a size screen, not a tradability screen. Filers' scale errors (a float tagged 1,000× too big)
+    are caught by comparing with total assets and with the price per share the float implies; a float tagged too small
+    simply fails the screen. Expect each pipeline run to take roughly 5-10 seconds
+    more per stock: the feature builder and the AI's walk-forward training are not yet vectorized across companies.
 * **Operations.**
   * Admin protection is a single shared token. Real multi-user access needs proper authentication and roles.
   * The scheduler runs inside the worker, so a missed run while the stack is down is not caught up.

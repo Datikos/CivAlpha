@@ -3,8 +3,9 @@ from .client import (COMPANY_FACTS, COMPANY_TICKERS, SUBMISSIONS, FixtureSecClie
                      SecClientFactory, archive_url, company_facts_url, submissions_url)
 from .ingestion import FilingIngestionService, Result
 from .parsers import FactRow, FilePage, FilingMeta, Submissions
+from .discovery import Candidate, CompanyDiscovery, Discovery
 from .ticker_lookup import Match, SecTickerLookup
 
 __all__ = ["SUBMISSIONS", "COMPANY_FACTS", "COMPANY_TICKERS", "SecClient", "LiveSecClient", "FixtureSecClient", "RateLimiter",
            "SecClientFactory", "archive_url", "company_facts_url", "submissions_url", "FilingIngestionService", "Result",
-           "FactRow", "FilePage", "FilingMeta", "Submissions", "Match", "SecTickerLookup"]
+           "FactRow", "FilePage", "FilingMeta", "Submissions", "Match", "SecTickerLookup", "Candidate", "CompanyDiscovery", "Discovery"]

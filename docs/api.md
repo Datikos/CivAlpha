@@ -403,6 +403,19 @@ response is `401`. `GET /api/meta` reports `adminTokenRequired`.
 * `POST /api/admin/universe/companies/{id}/remove` / `/restore` body `{"effectiveDate"}` (optional, default today)
 * `POST /api/admin/universe/companies/{id}/ticker` body `{"symbol","effectiveDate"}`
 * `DELETE /api/admin/universe/companies/{id}` — only while no data is attached (400 otherwise)
+* `GET /api/admin/universe/discover?exchanges=Nasdaq,NYSE&minPublicFloat=2000000000&limit=100` → breadth: companies not yet
+  tracked, from SEC data alone (company_tickers_exchange.json joined with the dei:EntityPublicFloat XBRL frames of the last
+  eight quarters, newest value per CIK that is plausible next to the company's total assets and the price per share it
+  implies against shares outstanding, since filers sometimes tag a $4 billion float as $4 quadrillion), listed on `exchanges`, public float ≥ `minPublicFloat` USD,
+  largest first, one ticker per company. `{"candidates":[{"symbol","cik","name","exchange","publicFloat","floatAsOf"}],"matched","listed","alreadyTracked",
+  "frames","exchanges","minPublicFloat","limit","notes","sectorReviewTag"}`. `notes` state the price-provider quota (Tiingo's free
+  plan: 50 requests an hour) and the pipeline-time cost of the batch. 503 without `SEC_USER_AGENT`.
+* `POST /api/admin/universe/expand` body `{"candidates":[{"symbol","cik","name"}],"tag","tags","memberSince","ingestSec","syncPrices"}`
+  → `{"job","count","notes"}` — one `UNIVERSE_EXPAND` job adds every candidate with a sector, industry and benchmark ETF suggested
+  from its SIC code (an ambiguous code adds the company under the likeliest sector plus the tag `sector review`; an unmapped code
+  skips it and says so in the log), tagged with `tag`/`tags`, then queues one `PRICE_SYNC` (`syncPrices`, default true) and
+  ingests each company's filings inline (`ingestSec`, default true). At most 1000 candidates; 400 while another expansion is
+  queued or running.
 * `POST /api/admin/prices/sync` → job — download prices from the configured provider (`GET /api/meta` → `priceProvider`)
 
 Errors are `{"error": "explanation"}` with status 400 (invalid request) or 404 (unknown id/symbol).
@@ -441,6 +454,8 @@ Tools call the same code as the REST endpoints and return condensed JSON (also a
 | `list_jobs(limit?)` / `get_job(job_id, wait_seconds?)` | `GET /api/admin/jobs` | admin |
 | `run_pipeline`, `update_prices`, `ingest_sec_filings(symbol)`, `evaluate_models`, `issue_forecasts(as_of_date?)`, `run_strategy_backtest`, `make_ai_decisions(as_of_date?)`, `run_time_machine(as_of_date)`, `run_doubler_study`, `resolve_outcomes` | `POST /api/admin/**` | admin; each takes `wait_seconds?` (max 600) and returns the job with its log tail |
 | `add_company(symbol, name?, cik?, sector?, industry?, benchmark_symbol?, member_since?, ingest_sec?, sync_prices?, tags?)` | `POST /api/admin/universe/companies` (+ `GET .../enrich`) | admin; missing name / CIK / sector / industry / benchmark come from EDGAR (`filledFromSec`, `notes` on a sector that needs review); `ingest_sec` and `sync_prices` default to true and return the queued jobs; `nextSteps` lists what still has to be done by hand |
+| `discover_companies(min_public_float_usd?, exchanges?, limit?)` | `GET /api/admin/universe/discover` | candidates for a universe expansion with the quota and pipeline-time notes |
+| `expand_universe(min_public_float_usd?, exchanges?, limit?, tag?, symbols?, ingest_sec?, sync_prices?, wait_seconds?)` | `GET .../discover` + `POST /api/admin/universe/expand` | admin; adds the discovered candidates (or only `symbols` among them) in one job |
 | `set_company_tags(symbol, tags)` | `PUT /api/admin/universe/companies/{id}/tags` | admin; replaces the company's user-defined tags (`[]` clears); former tickers resolve |
 
 `investment_candidates` returns:

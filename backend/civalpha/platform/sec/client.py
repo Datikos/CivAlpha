@@ -106,7 +106,7 @@ class LiveSecClient:
 class FixtureSecClient:
     """Serves SEC URLs from a local directory laid out like the SEC hosts:
     data.sec.gov/submissions/... -> submissions/..., data.sec.gov/api/xbrl/companyfacts/... -> companyfacts/...,
-    www.sec.gov/Archives/... -> Archives/..., www.sec.gov/files/... -> files/...
+    data.sec.gov/api/xbrl/frames/... -> frames/..., www.sec.gov/Archives/... -> Archives/..., www.sec.gov/files/... -> files/...
     Used by the offline tests; parsing code is identical to live mode."""
 
     def __init__(self, root: str | os.PathLike):
@@ -128,6 +128,8 @@ class FixtureSecClient:
             rel = path[1:]
         elif host == "data.sec.gov" and path.startswith("/api/xbrl/companyfacts/"):
             rel = "companyfacts/" + path[len("/api/xbrl/companyfacts/"):]
+        elif host == "data.sec.gov" and path.startswith("/api/xbrl/frames/"):
+            rel = "frames/" + path[len("/api/xbrl/frames/"):]
         elif host == "www.sec.gov" and (path.startswith("/Archives/") or path.startswith("/files/")):
             rel = path[1:]
         else:

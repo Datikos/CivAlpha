@@ -536,6 +536,43 @@ def build() -> MCPServer:
                 "benchmarkSymbol": bench, "tags": UniverseService().tags_of(out["id"]), "filledFromSec": filled, "notes": notes,
                 "jobs": [_job(j, 5) for j in out["jobs"]], "nextSteps": out["nextSteps"]}
 
+    @tool_read
+    @_domain
+    def discover_companies(min_public_float_usd: float = 2e9, exchanges: list[str] | None = None, limit: int = 50) -> dict:
+        """Find US-listed companies not yet tracked, from SEC data alone: listed on `exchanges` (default Nasdaq and NYSE)
+        with a reported public float (10-K, market value held by non-affiliates) of at least `min_public_float_usd`,
+        largest first. This is the breadth lever: a signal that is invisible on 40 stocks may be measurable on 400. The
+        answer carries the candidates to pass to expand_universe and notes on the price-provider quota and pipeline time."""
+        r = universe_api.discover(",".join(exchanges or universe_api.DEFAULT_EXCHANGES), min_public_float_usd, limit)
+        return {**_pick(r, "matched", "listed", "alreadyTracked", "frames", "notes"),
+                "candidates": [_pick(c, "symbol", "name", "exchange", "publicFloat", "floatAsOf", "cik") for c in r["candidates"]]}
+
+    @tool_action
+    @_domain
+    def expand_universe(ctx: Context, min_public_float_usd: float = 2e9, exchanges: list[str] | None = None, limit: int = 50,
+                        tag: str | None = None, symbols: list[str] | None = None, ingest_sec: bool = True,
+                        sync_prices: bool = True, wait_seconds: int = 0) -> dict:
+        """Add many companies at once (the Universe page's "Expand"): the discover_companies result for these filters, or
+        only the listed `symbols` among them, each with a sector suggested from its SIC code; an ambiguous code adds the
+        company under the likeliest sector plus the tag "sector review". `tag` labels the whole batch (e.g. "nasdaq-large").
+        One job does the adding and, when `ingest_sec`, the first SEC ingest (about 10 s per company); `sync_prices` queues
+        a price sync, which a provider quota may spread over several runs. Follow the job with get_job."""
+        require_admin(ctx)
+        d = universe_api.discover(",".join(exchanges or universe_api.DEFAULT_EXCHANGES), min_public_float_usd, limit)
+        cands = d["candidates"]
+        if symbols:
+            want = {x.upper().strip() for x in symbols}
+            cands = [c for c in cands if c["symbol"] in want]
+            missing = sorted(want - {c["symbol"] for c in cands})
+            if missing:
+                raise ToolError(f"not among the discovered candidates: {', '.join(missing)} (use add_company for a single stock)")
+        if not cands:
+            raise ToolError("no new companies match these filters")
+        body = universe_api.ExpandIn(candidates=cands, tag=tag, ingestSec=ingest_sec, syncPrices=sync_prices)
+        out = universe_api.expand(body)
+        return {"count": out["count"], "symbols": [c["symbol"] for c in cands], "notes": out["notes"],
+                "job": _wait(out["job"], wait_seconds)}
+
     @tool_action
     @_domain
     def set_company_tags(ctx: Context, symbol: str, tags: list[str]) -> dict:

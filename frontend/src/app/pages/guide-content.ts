@@ -199,6 +199,7 @@ export const PAGES: PageCard[] = [
       'Add a ticker; "Look up on SEC" fills in the name and CIK. Pick a sector and the sector ETF it will be measured against (XLK for technology, XLV for health care, and so on).',
       'Tags are your own categories, comma-separated: a theme (AI, China exposed), a watchlist (core, watch only) or anything worth filtering by. Edit them in the table; they group the Companies page and never reach the models.',
       'Removing a stock ends its membership on a date; history is kept so past backtests do not change. Deleting is only possible before any data is attached.',
+      '"Expand the universe" finds every company on Nasdaq or NYSE above a public-float threshold from SEC data, previews the largest ones not yet tracked, and adds them in one job with a tag. Breadth is what makes a small edge measurable; the notes under the preview say what the batch costs in price-provider quota and pipeline time.',
     ],
     caution: 'Backdating "member since" puts a stock into backtests for periods when you had not chosen it yet, which flatters the results.',
   },
@@ -362,6 +363,14 @@ export const METRICS: MetricDoc[] = [
     what: 'How many times more often the outcome occurs when the screen fires than on a random stock-day.',
     good: '1× is chance. It counts only when the screen\'s confidence interval sits above the base rate.',
     where: 'Doubler study.',
+  },
+  {
+    id: 'breadth',
+    name: 'Breadth (universe size)',
+    short: 'the same small edge is invisible on 40 stocks and measurable on 400',
+    what: 'The fundamental law of active management: the information ratio grows with the square root of the number of independent bets. Ten times the stocks makes a given skill about three times as visible, and lets the statistical tests on the Accuracy and Strategy lab pages separate it from luck.',
+    good: 'More stocks of the kind the models are meant for. Public float, as reported in the 10-K, is the size screen the Universe page offers because it needs no market-data licence.',
+    where: 'Universe page (Expand the universe).',
   },
   {
     id: 'abstention',

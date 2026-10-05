@@ -1047,6 +1047,47 @@ export interface AddCompanyRequest {
   tags?: string[];
 }
 
+/** One company found by GET /admin/universe/discover (SEC exchange list + reported public float). */
+export interface DiscoveredCompany {
+  symbol: string;
+  cik: string;
+  name: string;
+  exchange: string;
+  publicFloat: number;
+  floatAsOf: string | null;
+}
+
+export interface DiscoverResponse {
+  candidates: DiscoveredCompany[];
+  /** companies on the chosen exchanges with a public float at or above the minimum */
+  matched: number;
+  /** companies on the chosen exchanges */
+  listed: number;
+  alreadyTracked: number;
+  /** the SEC public-float frames that were read, e.g. CY2025Q2I */
+  frames: string[];
+  exchanges: string[];
+  minPublicFloat: number;
+  limit: number;
+  notes: string[];
+  sectorReviewTag: string;
+}
+
+export interface ExpandRequest {
+  candidates: DiscoveredCompany[];
+  tag: string | null;
+  tags?: string[];
+  memberSince?: string | null;
+  ingestSec: boolean;
+  syncPrices: boolean;
+}
+
+export interface ExpandResponse {
+  job: Job;
+  count: number;
+  notes: string[];
+}
+
 export interface AddCompanyResponse {
   id: number;
   symbol: string;
