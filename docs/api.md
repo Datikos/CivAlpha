@@ -422,6 +422,7 @@ Tools call the same code as the REST endpoints and return condensed JSON (also a
 | `investment_candidates` | — | see below |
 | `list_jobs(limit?)` / `get_job(job_id, wait_seconds?)` | `GET /api/admin/jobs` | admin |
 | `run_pipeline`, `update_prices`, `ingest_sec_filings(symbol)`, `evaluate_models`, `issue_forecasts(as_of_date?)`, `run_strategy_backtest`, `make_ai_decisions(as_of_date?)`, `run_time_machine(as_of_date)`, `run_doubler_study`, `resolve_outcomes` | `POST /api/admin/**` | admin; each takes `wait_seconds?` (max 600) and returns the job with its log tail |
+| `add_company(symbol, name?, cik?, sector?, industry?, benchmark_symbol?, member_since?, ingest_sec?, sync_prices?)` | `POST /api/admin/universe/companies` (+ `GET .../enrich`) | admin; missing name / CIK / sector / industry / benchmark come from EDGAR (`filledFromSec`, `notes` on a sector that needs review); `ingest_sec` and `sync_prices` default to true and return the queued jobs; `nextSteps` lists what still has to be done by hand |
 
 `investment_candidates` returns:
 ```json

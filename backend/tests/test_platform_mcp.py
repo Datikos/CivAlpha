@@ -35,10 +35,13 @@ def call(c, name, arguments=None, headers=None):
 def test_tools_resources_and_prompts_are_listed(mcp):
     tools = {t["name"]: t for t in rpc(mcp, "tools/list")["tools"]}
     for name in ("get_status", "get_company", "get_exposures", "get_forecast", "get_accuracy", "get_strategies", "get_decisions",
-                 "investment_candidates", "run_pipeline", "run_time_machine", "update_prices", "get_doubler_study", "run_doubler_study"):
+                 "investment_candidates", "run_pipeline", "run_time_machine", "update_prices", "get_doubler_study", "run_doubler_study",
+                 "add_company"):
         assert name in tools, name
-    # read and safe actions only: universe changes and new events stay in the UI / REST API
-    assert not {"add_company", "add_event", "delete_company"} & set(tools)
+    # read, safe actions and adding a company only: removals, edits and new events stay in the UI / REST API
+    assert not {"add_event", "delete_company", "remove_company", "edit_company"} & set(tools)
+    assert tools["add_company"]["annotations"]["readOnlyHint"] is False
+    assert tools["add_company"]["inputSchema"]["required"] == ["symbol"]
     assert tools["get_company"]["annotations"]["readOnlyHint"] is True
     assert tools["run_pipeline"]["annotations"]["readOnlyHint"] is False
     assert not any(t["annotations"]["destructiveHint"] for t in tools.values())
@@ -112,6 +115,64 @@ def test_management_tools_queue_jobs_and_follow_the_admin_token_rule(mcp, monkey
     finally:
         monkeypatch.setenv("CIVALPHA_ADMIN_TOKEN", "")
         settings.settings.cache_clear()
+
+
+def test_add_company_adds_to_the_universe_and_queues_its_jobs(mcp, monkeypatch):
+    from civalpha.platform import settings
+
+    err, out = call(mcp, "add_company", {"symbol": "nvda", "name": "NVIDIA Corporation", "cik": "1045810", "sector": "Technology",
+                                         "industry": "SEMICONDUCTORS", "member_since": "2024-01-02", "sync_prices": False})
+    assert err is None, err
+    assert out["symbol"] == "NVDA" and out["cik"] == "1045810" and out["benchmarkSymbol"] == "XLK"      # ETF from the sector
+    assert out["filledFromSec"] == {"benchmarkSymbol": "XLK"} and out["notes"] == []
+    assert [j["jobType"] for j in out["jobs"]] == ["SEC_INGEST"] and out["jobs"][0]["status"] == "QUEUED"
+    assert any("prices" in step for step in out["nextSteps"])
+    err, companies = call(mcp, "list_companies")
+    assert err is None and "NVDA" in {c["symbol"] for c in companies["result"]}
+    row = next(c for c in mcp.get("/api/admin/universe").json()["companies"] if c["symbol"] == "NVDA")
+    assert row["active"] and row["cik"] == "0001045810" and row["memberSince"] == "2024-01-02"
+
+    err, _ = call(mcp, "add_company", {"symbol": "NVDA", "name": "x", "cik": "1045810", "sector": "Technology"})
+    assert "already" in err                                                             # domain error, not a crash
+    err, _ = call(mcp, "add_company", {"symbol": "AMD", "name": "x", "cik": "2488", "sector": "Chips"})
+    assert "unknown sector" in err and "benchmark_symbol" in err
+    err, _ = call(mcp, "add_company", {"symbol": "AMD", "name": "x", "cik": "2488", "sector": "Technology", "member_since": "soon"})
+    assert "YYYY-MM-DD" in err
+    err, _ = call(mcp, "add_company", {"symbol": "AMD", "name": "x", "cik": "2488", "sector": "Technology", "member_since": "2999-01-01"})
+    assert "future" in err
+
+    monkeypatch.setenv("CIVALPHA_ADMIN_TOKEN", "s3cret")
+    settings.settings.cache_clear()
+    try:
+        err, _ = call(mcp, "add_company", {"symbol": "AMD", "name": "x", "cik": "2488", "sector": "Technology"})
+        assert err is not None and "admin token required" in err
+    finally:
+        monkeypatch.setenv("CIVALPHA_ADMIN_TOKEN", "")
+        settings.settings.cache_clear()
+
+
+def test_add_company_fills_identity_and_sector_from_edgar(mcp, monkeypatch):
+    """With only a ticker, the tool asks EDGAR (here a stubbed profiler) for name, CIK and a sector suggestion."""
+    from civalpha.platform import mcp_server
+    from civalpha.platform.sec.profile import Profile
+
+    def fake_profile(self, symbol):
+        p = Profile(symbol.upper(), cik="0000320193", name="Apple Inc.", sector="Technology", benchmark_symbol="XLK",
+                    industry="CONSUMER_ELECTRONICS", sector_confidence="review", sector_note="SIC 3571 → Technology (XLK)")
+        p.sector_alternatives = [{"sector": "Technology", "benchmarkSymbol": "XLK"}, {"sector": "Industrials", "benchmarkSymbol": "XLI"}]
+        return p
+
+    monkeypatch.setattr(mcp_server.CompanyProfiler, "profile", fake_profile)
+    err, out = call(mcp, "add_company", {"symbol": "AAPL", "ingest_sec": False, "sync_prices": False})
+    assert err is None, err
+    assert out["name"] == "Apple Inc." and out["cik"] == "0000320193" and out["sector"] == "Technology" and out["benchmarkSymbol"] == "XLK"
+    assert set(out["filledFromSec"]) == {"name", "cik", "sector", "industry", "benchmarkSymbol"}
+    assert any("Industrials" in n for n in out["notes"])                                 # the review note names the alternatives
+    assert out["jobs"] == [] and len(out["nextSteps"]) >= 2
+
+    monkeypatch.setattr(mcp_server.CompanyProfiler, "profile", lambda self, symbol: Profile(symbol, warnings=["not in SEC company_tickers.json"]))
+    err, _ = call(mcp, "add_company", {"symbol": "ZZZZ"})
+    assert "no name/CIK" in err and "company_tickers" in err
 
 
 def test_stdio_trusts_the_operator_but_http_needs_the_token(monkeypatch):

@@ -299,7 +299,11 @@ jobs and ask where the evidence points. The server is `backend/civalpha/platform
   `run_strategy_backtest`, `make_ai_decisions`, `run_time_machine`, `resolve_outcomes`, with `list_jobs` / `get_job`
   to follow them. Each accepts `wait_seconds` (up to 600) to wait for the job to finish. When `CIVALPHA_ADMIN_TOKEN`
   is set they need the same token as the REST API, sent as the `X-Admin-Token` header (or `Authorization: Bearer`).
-  Universe changes and new events stay in the UI and the REST API.
+* **`add_company(symbol, ...)`:** adds a stock to the research universe like the Universe page does. Only the ticker is
+  required; name, CIK, sector, industry and benchmark ETF are filled in from SEC EDGAR when omitted (the answer says
+  what was filled and when the sector suggestion needs review). It queues an SEC ingest and a price sync unless told
+  not to. Same admin-token rule as the job tools. Removing or editing companies and adding events stay in the UI
+  and the REST API.
 * Resources `civalpha://about` and `civalpha://status`; prompt `investment_review(symbol)` walks through the evidence
   for one stock.
 

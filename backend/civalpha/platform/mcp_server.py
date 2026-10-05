@@ -24,11 +24,14 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from starlette.routing import Route
 
-from .api import admin, events as events_api, read
+from . import sectors
+from .api import admin, events as events_api, read, universe as universe_api
 from .errors import BadRequest, NotFound, Problem, Unavailable
 from .jobs import Jobs
 from .rows import camel
+from .sec.profile import CompanyProfiler
 from .settings import settings
+from .sql import db
 
 READ = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
 ACTION = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=True)
@@ -473,6 +476,54 @@ def build() -> MCPServer:
     def ingest_sec_filings(ctx: Context, symbol: str, wait_seconds: int = 0) -> dict:
         """Fetch new SEC filings for one company (XBRL facts, passages, exposures)."""
         return _action(ctx, lambda: admin.sec_ingest(admin.SecIn(symbol=symbol)), wait_seconds)
+
+    @tool_action
+    @_domain
+    def add_company(ctx: Context, symbol: str, name: str | None = None, cik: str | None = None, sector: str | None = None,
+                    industry: str | None = None, benchmark_symbol: str | None = None, member_since: str | None = None,
+                    ingest_sec: bool = True, sync_prices: bool = True) -> dict:
+        """Add a US-listed company to the research universe (same as the Universe page's "Add company"). Only `symbol` is
+        required: a missing name, CIK, sector, industry or benchmark ETF is filled in from SEC EDGAR (the sector is suggested
+        from the SIC code; the answer says what was filled and whether the suggestion needs review). `sector` is one of
+        Technology, Health Care, Financials, Consumer Discretionary, Consumer Staples, Communication Services, Industrials,
+        Energy, Materials, Utilities, Real Estate; `benchmark_symbol` defaults to that sector's ETF. `member_since`
+        (YYYY-MM-DD) defaults to today. By default an SEC ingest and a price sync are queued so filings and prices arrive;
+        follow them with get_job. The company has no forecasts until the pipeline has run."""
+        require_admin(ctx)
+        sym = (symbol or "").upper().strip()
+        if not sym:
+            raise ToolError("symbol is required")
+        filled: dict = {}
+        notes: list[str] = []
+        if not (name and cik and sector):
+            p = CompanyProfiler(db(), universe_api._lookup).profile(sym)
+            if p.existing:
+                state = "an active member" if p.existing["active"] else "a removed member; restore it from the Universe page"
+                raise ToolError(f"{p.existing['symbol']} is already in the database (company {p.existing['companyId']}, {state})")
+            notes.extend(p.warnings)
+            given = {"name": name, "cik": cik, "sector": sector, "industry": industry}
+            found = {"name": p.name, "cik": p.cik, "sector": p.sector, "industry": p.industry}
+            filled = {k: v for k, v in found.items() if v and not given[k]}
+            name, cik = name or p.name, cik or p.cik
+            if not sector and p.sector:
+                sector, industry = p.sector, industry or p.industry
+                if p.sector_confidence == "review":
+                    notes.append(f"{p.sector_note}; alternatives: " + ", ".join(a["sector"] for a in p.sector_alternatives))
+            if not name or not cik:
+                raise ToolError(f"EDGAR has no name/CIK for {sym}: " + "; ".join(notes or ["pass name and cik yourself"]))
+            if not sector:
+                raise ToolError(f"no sector could be suggested for {sym}; pass sector (and benchmark_symbol): " + "; ".join(notes))
+        bench = (benchmark_symbol or sectors.SECTOR_ETF.get(sector) or "").upper().strip()
+        if not bench:
+            raise ToolError(f"unknown sector {sector!r}; use one of {', '.join(sectors.SECTOR_ETF)} or pass benchmark_symbol")
+        if not benchmark_symbol:
+            filled["benchmarkSymbol"] = bench
+        body = universe_api.AddIn(symbol=sym, name=name, cik=cik, sector=sector, industry=industry, benchmarkSymbol=bench,
+                                  memberSince=_date(member_since, "member_since"), ingestSec=ingest_sec, syncPrices=sync_prices)
+        out = universe_api.add(body)
+        return {"id": out["id"], "symbol": out["symbol"], "name": name, "cik": cik, "sector": sector, "industry": industry,
+                "benchmarkSymbol": bench, "filledFromSec": filled, "notes": notes,
+                "jobs": [_job(j, 5) for j in out["jobs"]], "nextSteps": out["nextSteps"]}
 
     @tool_action
     @_domain
