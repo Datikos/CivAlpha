@@ -20,6 +20,13 @@ uses samples with t + 1 + horizon < R (walk-forward with an expanding window, re
 Decision rule (hysteresis keeps turnover down): ENTER when p >= entry_p and the stock ranks in the top
 `max_positions`; EXIT when p < exit_p; otherwise HOLD / STAY_OUT. Each position gets 1/max_positions of
 capital, the rest stays in cash, so the model also decides how much is invested.
+
+Two variants test the decision layer on the same probabilities, the way a discretionary trader works:
+  * AI_CONF (abstention): enter only at a higher probability (confident_entry_p) and exit at a higher one
+    (confident_exit_p); it trades less and sits in cash more.
+  * AI_SIZED (position sizing): the same entries and exits as AI_GBM, but each position is sized by its
+    21-day volatility (size_by_volatility): vol_budget / vol_21 of capital, capped at max_weight, total
+    capped at 1. A calm stock gets more, a volatile one less, and the book shrinks when markets get wild.
 """
 from __future__ import annotations
 
@@ -50,6 +57,8 @@ TECH_LABELS = {
 AI_KEY = "AI_GBM"
 AI_FUND_KEY = "AI_FUND"
 AI_DIV_KEY = "AI_DIV"
+AI_CONF_KEY = "AI_CONF"
+AI_SIZED_KEY = "AI_SIZED"
 ALGORITHM = "hist_gradient_boosting"
 CODE_VERSION = "strategy-0.1.0"
 
@@ -62,6 +71,10 @@ class AiConfig:
     entry_p: float = 0.55
     exit_p: float = 0.48
     max_positions: int = 8
+    confident_entry_p: float = 0.60   # AI_CONF: a higher bar to enter...
+    confident_exit_p: float = 0.50    # ...and to stay
+    vol_budget: float = 0.04          # AI_SIZED: weight = vol_budget / annualized 21-day volatility
+    max_weight: float = 0.20          # AI_SIZED: cap per position
     max_iter: int = 150
     learning_rate: float = 0.05
     max_depth: int = 3
@@ -71,6 +84,9 @@ class AiConfig:
 
     def params(self) -> dict:
         return {k: v for k, v in asdict(self).items()}
+
+    def confident(self) -> "AiConfig":
+        return AiConfig(**{**asdict(self), "entry_p": self.confident_entry_p, "exit_p": self.confident_exit_p})
 
 
 def feature_label(f: str) -> str:
@@ -230,8 +246,34 @@ def decide_positions(prob: pd.DataFrame, member: pd.DataFrame, cfg: AiConfig, st
     return pd.DataFrame(W, index=prob.index, columns=prob.columns), pd.DataFrame(A, index=prob.index, columns=prob.columns)
 
 
+def size_by_volatility(weights: pd.DataFrame, vol: pd.DataFrame, cfg: AiConfig) -> pd.DataFrame:
+    """Replace the equal 1/max_positions slices with volatility-scaled sizes.
+
+    A held name gets vol_budget / vol of capital (vol = annualized 21-day volatility known at that close), capped at
+    max_weight, so riskier names get less and the invested total falls when volatility rises. If the total would
+    exceed 1 every position is scaled down (no leverage). A held name without a volatility estimate keeps its
+    equal slice. Names the decision rule does not hold stay at 0, so entries and exits are unchanged.
+    """
+    held = weights > 0
+    v = vol.reindex(index=weights.index, columns=weights.columns).astype(float)
+    sized = (cfg.vol_budget / v.where(v > 0)).clip(upper=cfg.max_weight)
+    sized = sized.where(sized.notna(), 1.0 / cfg.max_positions).where(held, 0.0)
+    tot = sized.sum(axis=1)
+    return sized.div(tot.where(tot > 1.0, 1.0), axis=0)
+
+
+def sized_weight(weight: float, vol: float, cfg: AiConfig) -> float:
+    """One position's volatility-scaled size (see size_by_volatility), before the no-leverage cap."""
+    if weight <= 0:
+        return 0.0
+    if not np.isfinite(vol) or vol <= 0:
+        return float(weight)
+    return float(min(cfg.max_weight, cfg.vol_budget / vol))
+
+
 def ai_strategies(cfg: AiConfig, weights: pd.DataFrame, fund_weights: pd.DataFrame | None = None,
-                  div_weights: pd.DataFrame | None = None) -> list[Strategy]:
+                  div_weights: pd.DataFrame | None = None, conf_weights: pd.DataFrame | None = None,
+                  sized_weights: pd.DataFrame | None = None) -> list[Strategy]:
     desc = dict(entry=f"Model probability ≥ {cfg.entry_p:.2f} that the stock beats its sector ETF over the next "
                       f"{cfg.horizon} days, and among the top {cfg.max_positions}",
                 origin="Gradient-boosted trees over every rule's indicator plus fundamentals, tariff/rate shocks and macro; "
@@ -257,6 +299,23 @@ def ai_strategies(cfg: AiConfig, weights: pd.DataFrame, fund_weights: pd.DataFra
                             origin=desc["origin"] + "; adds dividend yield, the change in the regular dividend (raise, cut, "
                                    "suspension) and the filed payout ratio, to compare with the same model without them",
                             sizing="WEIGHTS", fn=lambda _p: div_weights, params={**cfg.params(), "features": AI_DIV_FEATURES}))
+    if conf_weights is not None:
+        out.append(Strategy(AI_CONF_KEY, "AI", "AI decides, confident entries only",
+                            entry=f"Model probability ≥ {cfg.confident_entry_p:.2f} that the stock beats its sector ETF over the "
+                                  f"next {cfg.horizon} days, and among the top {cfg.max_positions}",
+                            exit=f"Probability falls below {cfg.confident_exit_p:.2f}",
+                            origin="The same model and probabilities as AI_GBM with a higher bar to act (abstention): it waits "
+                                   "in cash unless the model is more sure, the way a trader passes on marginal setups",
+                            sizing="WEIGHTS", fn=lambda _p: conf_weights,
+                            params={**cfg.params(), "entry_p": cfg.confident_entry_p, "exit_p": cfg.confident_exit_p}))
+    if sized_weights is not None:
+        out.append(Strategy(AI_SIZED_KEY, "AI", "AI decides, sized by volatility",
+                            entry=desc["entry"], exit=f"Probability falls below {cfg.exit_p:.2f}",
+                            origin="The same entries and exits as AI_GBM; each position is sized by its 21-day volatility "
+                                   f"({cfg.vol_budget:.2f} / annualized volatility, at most {cfg.max_weight:.0%} of capital, "
+                                   "no leverage) so every position carries about the same risk and the book shrinks "
+                                   "when markets turn volatile (volatility targeting)",
+                            sizing="WEIGHTS", fn=lambda _p: sized_weights, params=cfg.params()))
     return out
 
 

@@ -521,6 +521,24 @@ export interface TradingStats {
   sharpeNet: number;
   avgPositions: number;
   turnoverCostPerPeriod: number;
+  /** Abstention: what acting only on the most confident share of forecasts would have earned. */
+  coverage?: CoverageLevel[];
+}
+
+/** One row of a coverage curve: the top `coverage` share of forecasts by confidence. */
+export interface CoverageLevel {
+  coverage: number;
+  n: number;
+  /** p for side 'long', |p − 0.5| for side 'both' */
+  minConfidence: number;
+  accuracy: number;
+  brier: number;
+  meanGross: number;
+  meanNet: number;
+  ciLow: number;
+  ciHigh: number;
+  costPerPosition: number;
+  side: 'both' | 'long';
 }
 
 export interface EvalFold {
@@ -653,6 +671,8 @@ export interface StrategyRun {
     execution: string;
     verdictRule: string;
     ai: Record<string, unknown>;
+    /** Abstention on the AI's own out-of-sample forecasts (long only, costs on the stock alone). */
+    aiCoverage?: CoverageLevel[];
   };
   summary: string;
 }
@@ -715,6 +735,15 @@ export interface AiDecision {
     nTrain: number;
     horizon: number;
     codeVersion: string;
+    /** The decision layer: volatility-scaled size and whether the probability clears the confident bar. */
+    sizing?: {
+      vol21: number | null;
+      sizedWeight: number;
+      confident: boolean;
+      volBudget: number;
+      maxWeight: number;
+      confidentEntryP: number;
+    };
   };
   issuedAt: string;
   explanation: string | null;

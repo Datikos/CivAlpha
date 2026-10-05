@@ -144,6 +144,10 @@ How an event is linked to a company:
   * Includes a long/short simulation entered at the next close, charged 10 bp per side per leg (configurable).
     The verdict says "Profitability claim: NOT supported" unless at least 36 periods have mean net return > 0 and
     t > 2.
+  * Includes an abstention curve: the forecasts ranked by confidence (distance from 50%), and for the top 5%, 10%,
+    20%, 30%, 50% and 100% the accuracy and the mean excess return per position after costs with a date-block
+    bootstrap CI. A trader does not act on every stock every day; this shows whether the model's surest calls are
+    worth more than the rest. The verdict quotes the 10% row.
 * **Versioning:**
   * A forecast series is one (company, model, as-of date).
   * When new evidence arrives (for example `POST /api/events` with an official source), the affected companies
@@ -164,10 +168,17 @@ strategies on the same data, the same out-of-sample window and the same costs. T
 | Speculative | Doubler screen: volatile, small, cheap stock on a breakout or volume spike; hold 63 days, 50% stop |
 | Fundamental / event | Quality & growth screen on as-filed XBRL data; post-earnings-announcement drift (earnings surprise ≥ 1, hold 60 days); value (top 5 earnings yield); gross profitability (top 5 gross profit / assets); dividend yield (top 5); stepping aside from tariff/rate shocks using SEC-filing exposures |
 | AI | Gradient-boosted trees that combine every rule's indicator with the financial-report profile, event shocks and macro (with and without a 10% trailing stop); the same model on the financial-report profile alone (`AI_FUND`); the same model plus dividend signals (`AI_DIV`), compared with it on the same out-of-sample forecasts |
+| AI, decision layer | The same probabilities as `AI_GBM`, acted on differently: `AI_CONF` abstains unless p ≥ 0.60 (exit below 0.50); `AI_SIZED` keeps the standard entries and exits but sizes each position by volatility (0.04 / annualized 21-day volatility, at most 20%, no leverage) |
 
 * **The AI decides.** The model estimates the probability that a stock beats its sector ETF over the next 10 trading days.
   It enters when p ≥ 0.55 and the stock ranks in the top 8, and exits when p < 0.48. It is retrained every 63 trading days,
   walk-forward, only on outcomes known before each refit.
+* **The decision layer.** Traders earn most of their keep between the forecast and the position: whether to act at all,
+  how much to buy, when to leave. The lab tests each piece on the same probabilities. `AI_CONF` raises the bar to act
+  (abstention). `AI_SIZED` keeps the trades and sizes them by volatility (volatility targeting). The run also records
+  the AI's **abstention curve**: its out-of-sample forecasts ranked by probability, and what buying only the top 5% to
+  100% earned per position after costs, with a bootstrap CI. The AI decisions page shows each stock's sized weight and
+  whether it clears the confident bar.
 * **Financial reports.** `backend/civalpha/fundamentals.py` turns the XBRL facts of every 10-Q/10-K into a profile:
   * **Growth:** revenue growth acceleration.
   * **Surprise:** earnings surprise and revenue surprise, standardized against the same quarter a year earlier. This

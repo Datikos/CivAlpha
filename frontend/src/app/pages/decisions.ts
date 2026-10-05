@@ -1,6 +1,6 @@
 import { httpResource } from '@angular/common/http';
-import { Component, computed, signal } from '@angular/core';
-import { RouterLink } from '@angular/router';
+import { Component, computed, inject, signal } from '@angular/core';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 import { DivergingBars, DivergingItem } from '../charts/diverging-bars';
 import { apiUrl, valueOf } from '../core/api';
 import { FORMAT_PIPES, fmtNum, fmtSigned } from '../core/format';
@@ -82,7 +82,7 @@ const RULE_LABEL: Record<string, string> = {
           <div class="stat tone-good">
             <div class="stat-label">Invested <app-help text="Share of capital in positions. Each position is 1/N of capital, so N positions mean N/N invested and the rest in cash." topic="exposure" label="invested share" /></div>
             <div class="stat-value">{{ invested() | pct: 0 }}<span class="unit">of capital</span></div>
-            <div class="stat-sub">{{ positions() }} of {{ maxPositions() }} slots filled · rest in cash</div>
+            <div class="stat-sub">{{ positions() }} of {{ maxPositions() }} slots filled · rest in cash@if (sizedInvested() !== null) { · sized by volatility: {{ sizedInvested() | pct: 0 }} }</div>
             <app-meter [value]="invested()" tone="good" label="Invested share" />
           </div>
           <div class="stat tone-forecast">
@@ -110,6 +110,14 @@ const RULE_LABEL: Record<string, string> = {
               <p class="prob-line">
                 <span class="prob" [class]="'prob tone-' + actionTone[d.action]">p = {{ d.probability | pct: 0 }}</span>
                 <span class="small muted">rank {{ d.rank }} · weight {{ d.weight | pct: 1 }}</span>
+                @if (d.model.sizing; as sz) {
+                  @if (d.weight > 0) {
+                    <span class="small muted" [title]="'Volatility-sized weight: ' + sz.volBudget + ' / annualized 21-day volatility' + (sz.vol21 === null ? ' (unknown, equal slice kept)' : ' of ' + (sz.vol21 * 100).toFixed(0) + '%') + ', at most ' + (sz.maxWeight * 100).toFixed(0) + '%'">· sized {{ sz.sizedWeight | pct: 1 }}</span>
+                  }
+                  @if (sz.confident) {
+                    <span class="chip tone-good" [title]="'The probability clears the ' + (sz.confidentEntryP * 100).toFixed(0) + '% bar of the confident-entries rule'">✓ confident</span>
+                  }
+                }
               </p>
               <div class="meter-zoned" role="img" [attr.aria-label]="'Probability ' + (d.probability * 100).toFixed(0) + '%, exit below ' + (d.exitP * 100).toFixed(0) + '%, enter at ' + (d.entryP * 100).toFixed(0) + '%'">
                 <span class="zone zone-exit" [style.width.%]="d.exitP * 100" title="exit zone"></span>
@@ -187,7 +195,9 @@ const RULE_LABEL: Record<string, string> = {
   `,
 })
 export class DecisionsPage {
-  protected readonly date = signal<string | null>(null);
+  private readonly route = inject(ActivatedRoute);
+  /** Chosen trading day; a `?date=` query parameter deep-links one (null = latest). */
+  protected readonly date = signal<string | null>(this.route.snapshot.queryParamMap.get('date'));
   protected readonly res = httpResource<DecisionsResponse>(() => apiUrl.decisions(this.date()));
   protected readonly actionLabel = ACTION_LABEL;
   protected readonly actionTone = ACTION_TONE;
@@ -206,6 +216,12 @@ export class DecisionsPage {
   });
   protected readonly invested = computed(() => this.decisions().reduce((s, d) => s + d.weight, 0));
   protected readonly positions = computed(() => this.decisions().filter((d) => d.weight > 0).length);
+  /** What the volatility-sized rule would have invested today, or null for decisions stored before sizing existed. */
+  protected readonly sizedInvested = computed(() => {
+    const list = this.decisions();
+    if (!list.length || !list.some((d) => d.model.sizing)) return null;
+    return list.reduce((s, d) => s + (d.model.sizing?.sizedWeight ?? 0), 0);
+  });
   protected readonly counts = computed(() => {
     const c: Record<DecisionAction, number> = { ENTER: 0, EXIT: 0, HOLD: 0, STAY_OUT: 0 };
     for (const d of this.decisions()) c[d.action]++;

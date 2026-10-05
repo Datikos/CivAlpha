@@ -6,6 +6,7 @@ import { ReliabilityChart, ReliabilitySeries } from '../charts/reliability-chart
 import { apiUrl, valueOf } from '../core/api';
 import { FORMAT_PIPES, fmtFixed, fmtNum, fmtPct, fmtSigned, fmtSignedPct } from '../core/format';
 import { AccuracyResponse, ForecastSummary, MODEL_KINDS, ModelKind, ModelMetrics, TradingStats } from '../core/models';
+import { CoverageTable } from '../shared/coverage-table';
 import { Icon } from '../shared/icon';
 import { UI, modelColor } from '../shared/ui';
 import { VIZ, verdictTone } from '../shared/viz';
@@ -47,7 +48,7 @@ function row<T>(
 
 @Component({
   selector: 'app-accuracy',
-  imports: [RouterLink, ReliabilityChart, LineChart, Icon, ...UI, ...VIZ, ...FORMAT_PIPES],
+  imports: [RouterLink, ReliabilityChart, LineChart, Icon, CoverageTable, ...UI, ...VIZ, ...FORMAT_PIPES],
   template: `
     <div class="page-head">
       <div class="page-title">
@@ -270,6 +271,19 @@ function row<T>(
             </p>
           </div>
         </div>
+
+        <h2>Act only when confident <app-help text="A trader does not act on every stock every day. This ranks the out-of-sample forecasts by how far they sit from 50% and shows what trading only the surest slice would have earned per position, after costs." topic="abstention" label="abstention" /></h2>
+        <p class="small muted">
+          Each row keeps only the most confident share of all forecasts: long the stock against its ETF when p is above
+          50%, short when below, entered at the next close and held {{ e.config.horizon }} trading days. Costs are
+          charged on four legs (stock and hedge, in and out). The 10% row is highlighted.
+        </p>
+        @for (k of kinds; track k) {
+          <div class="card">
+            <h3><app-model-tag [kind]="k" /></h3>
+            <app-coverage-table [rows]="e.trading[k]?.coverage ?? []" positionLabel="a stock hedged with its ETF" />
+          </div>
+        }
 
         <h2>Folds <app-help text="The evaluation walks forward through time in blocks (folds). Each fold trains only on samples whose outcome was known before the block began, then scores the block. A model that wins most folds is more convincing than one that wins the average." topic="walk-forward" label="folds" /></h2>
         @if (e.folds.length) {
@@ -498,7 +512,7 @@ export class AccuracyPage {
 
   protected readonly tradingRows = computed<MetricRow[]>(() => {
     const t = this.ev()?.trading ?? {};
-    const g = (key: keyof TradingStats) => (k: ModelKind) => t[k]?.[key];
+    const g = (key: Exclude<keyof TradingStats, 'coverage'>) => (k: ModelKind) => t[k]?.[key];
     return [
       row('periods', 'Periods', 'rebalances', 'walk-forward', g('periods'), (v) => fmtNum(v), null),
       row('gross', 'Mean gross', 'per period, before costs', 'costs', g('meanGross'), (v) => fmtSignedPct(v, 3), true, { signed: 'pct' }),

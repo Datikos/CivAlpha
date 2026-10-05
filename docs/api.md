@@ -211,7 +211,10 @@ Forecast summary object:
     "comparison": {"brierDiff": -0.004, "ciLow": -0.007, "ciHigh": -0.001, "aucDiff": 0.03, "note": "negative brierDiff = augmented better"},
     "calibration": {"BASELINE": [{"binLow": 0.0, "binHigh": 0.1, "meanPredicted": 0.07, "observedRate": 0.1, "count": 12}], "AUGMENTED": []},
     "trading": {"BASELINE": {"periods": 30, "meanGross": 0.002, "meanNet": 0.001, "tStatNet": 0.4, "hitRate": 0.52,
-                             "annualizedNet": 0.012, "sharpeNet": 0.2, "avgPositions": 12.0, "turnoverCostPerPeriod": 0.004},
+                             "annualizedNet": 0.012, "sharpeNet": 0.2, "avgPositions": 12.0, "turnoverCostPerPeriod": 0.004,
+                             "coverage": [{"coverage": 0.1, "n": 300, "minConfidence": 0.08, "accuracy": 0.53, "brier": 0.26,
+                                           "meanGross": 0.004, "meanNet": 0.0, "ciLow": -0.006, "ciHigh": 0.006,
+                                           "costPerPosition": 0.004, "side": "both"}]},
                 "AUGMENTED": {}},
     "folds": [{"fold": 0, "testStart": "2021-01-04", "testEnd": "2021-03-31", "nTrain": 900, "nTest": 300,
                "brier": {"BASELINE": 0.25, "AUGMENTED": 0.24}}],
@@ -221,6 +224,12 @@ Forecast summary object:
 ```
 `issued` covers LIVE forecasts only; `issuedByMode` has the same statistics for `LIVE` and `REPLAY` (replayed = published
 after its data cutoff, reconstructed point-in-time). `evaluation` is null before the first evaluation run.
+
+`trading.<model>.coverage` is the abstention curve: the out-of-sample forecasts ranked by confidence (`side` `both`:
+|p − 0.5|, long when p > 0.5 and short when below). Each row keeps the top `coverage` share (0.05, 0.1, 0.2, 0.3, 0.5, 1.0):
+`minConfidence` is the bar to get in, `accuracy` the share of direction calls that were right, `meanNet` the mean excess
+return over the sector ETF per position after `costPerPosition` (4 legs × costBpsPerSide), with a 95% CI from a bootstrap
+over 21-day blocks of dates. The verdict quotes the 10% row.
 
 ## Strategies
 
@@ -232,6 +241,9 @@ out-of-sample window after costs. Results are sorted by Sharpe.
           "config": {"costBpsPerSide": 10, "costSensitivityBps": [0, 10, 25], "reference": "EW_BUY_HOLD", "nCandidates": 11,
                      "execution": "...", "verdictRule": "...", "ai": {"horizon": 10, "entry_p": 0.55, "exit_p": 0.48, "...": "..."},
                      "aiFolds": ["..."],
+                     "aiCoverage": [{"coverage": 0.1, "n": 3300, "minConfidence": 0.58, "accuracy": 0.52, "brier": 0.25,
+                                     "meanGross": 0.003, "meanNet": 0.001, "ciLow": -0.004, "ciHigh": 0.006,
+                                     "costPerPosition": 0.002, "side": "long"}],
                      "dividendFeatureTest": {"rows": 32675, "dates": 1307, "baseRate": 0.49,
                                              "withoutDividends": {"brier": 0.2579, "logLoss": 0.711, "auc": 0.512},
                                              "withDividends": {"brier": 0.2578, "logLoss": 0.710, "auc": 0.510},
@@ -250,7 +262,7 @@ out-of-sample window after costs. Results are sorted by Sharpe.
      "verdict": "Beats buy-and-hold after costs: NOT supported"}
   ] }
 ```
-Families: `BENCHMARK`, `TREND`, `MEAN_REVERSION`, `FUNDAMENTAL`, `EVENT`, `SPECULATIVE`, `AI`. `DOUBLER_SCREEN` (family `SPECULATIVE`) trades the doubler study's screen: hold 63 days with a 50% stop. Report-based strategies are `QUALITY_GROWTH`, `PEAD_SUE`, `VALUE_EY`, `GROSS_PROFIT` and `AI_FUND` (the AI on the financial-report profile only); decision factors of kind `FUNDAMENTAL` come from that profile. `DIV_YIELD` holds the 5 highest dividend yields; `AI_DIV` is `AI_GBM` plus the dividend signals (yield, change in the regular dividend, filed payout ratio). `config.dividendFeatureTest` compares the out-of-sample forecasts of the two models on the same rows: `brierDiff` = Brier(with) − Brier(without), negative when the dividend signals help, with a 95% CI from a bootstrap over 21-day blocks of dates. `excess*` compare daily net returns with
+Families: `BENCHMARK`, `TREND`, `MEAN_REVERSION`, `FUNDAMENTAL`, `EVENT`, `SPECULATIVE`, `AI`. `DOUBLER_SCREEN` (family `SPECULATIVE`) trades the doubler study's screen: hold 63 days with a 50% stop. Report-based strategies are `QUALITY_GROWTH`, `PEAD_SUE`, `VALUE_EY`, `GROSS_PROFIT` and `AI_FUND` (the AI on the financial-report profile only); decision factors of kind `FUNDAMENTAL` come from that profile. `DIV_YIELD` holds the 5 highest dividend yields; `AI_DIV` is `AI_GBM` plus the dividend signals (yield, change in the regular dividend, filed payout ratio). The decision layer is tested on `AI_GBM`'s own probabilities: `AI_CONF` (abstention) enters at p ≥ `confident_entry_p` (0.60) and exits below `confident_exit_p` (0.50); `AI_SIZED` keeps `AI_GBM`'s entries and exits but sizes each position as `vol_budget` (0.04) / annualized 21-day volatility, capped at `max_weight` (0.20) and at 100% in total. `config.aiCoverage` is the abstention curve of the AI's own out-of-sample forecasts, long only (`side` `long`: ranked by p, `minConfidence` is the lowest p in the slice), costs on 2 legs; same fields as `trading.<model>.coverage` on `/api/accuracy`. `config.dividendFeatureTest` compares the out-of-sample forecasts of the two models on the same rows: `brierDiff` = Brier(with) − Brier(without), negative when the dividend signals help, with a 95% CI from a bootstrap over 21-day blocks of dates. `excess*` compare daily net returns with
 `EW_BUY_HOLD` (annualized, 95% stationary block-bootstrap CI). `deflatedSharpe` is the Deflated Sharpe Ratio of that excess,
 deflated for `nCandidates` strategies. A verdict says SUPPORTED only with at least 3 years out of sample, an excess CI above
 0 and DSR ≥ 0.95. `equity` is sampled weekly. `run` is null and `results` empty before the first backtest.
@@ -268,7 +280,8 @@ trips: `companyId`, `symbol`, `entryDate`, `exitDate` (null = still open), `trad
      "factors": [{"feature": "mom_12_1", "label": "12-1 month momentum", "kind": "TECHNICAL", "value": 0.42, "median": 0.11,
                   "contribution": 0.031, "direction": "UP"}],
      "ruleVotes": {"SMA_50_200": true, "RSI2_SMA200": false, "...": "..."},
-     "model": {"algorithm": "hist_gradient_boosting", "trainedThrough": "2026-09-15", "nTrain": 31250, "horizon": 10, "...": "..."},
+     "model": {"algorithm": "hist_gradient_boosting", "trainedThrough": "2026-09-15", "nTrain": 31250, "horizon": 10, "...": "...",
+               "sizing": {"vol21": 0.31, "sizedWeight": 0.129, "confident": true, "volBudget": 0.04, "maxWeight": 0.2, "confidentEntryP": 0.6}},
      "issuedAt": "2026-09-30T22:05:00Z",
      "explanation": "The model ...", "explanationModel": "anthropic:claude-opus-5-5"}
   ] }

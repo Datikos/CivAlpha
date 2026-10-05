@@ -7,6 +7,7 @@ import { apiUrl, valueOf } from '../core/api';
 import { FORMAT_PIPES, fmtPct, fmtSignedPct } from '../core/format';
 import { StrategiesResponse, StrategyResult } from '../core/models';
 import { createSort } from '../core/sort';
+import { CoverageTable } from '../shared/coverage-table';
 import { Icon } from '../shared/icon';
 import { SortTh } from '../shared/sort-th';
 import { UI } from '../shared/ui';
@@ -50,7 +51,7 @@ interface Col {
 
 @Component({
   selector: 'app-strategies',
-  imports: [RouterLink, FormsModule, LineChart, Icon, SortTh, ...UI, ...VIZ, ...FORMAT_PIPES],
+  imports: [RouterLink, FormsModule, LineChart, Icon, SortTh, CoverageTable, ...UI, ...VIZ, ...FORMAT_PIPES],
   template: `
     <div class="page-head">
       <div class="page-title">
@@ -252,9 +253,63 @@ interface Col {
           />
         </div>
 
+        <div class="card">
+          <h3>Does confidence pay? <app-help text="The AI's own out-of-sample forecasts ranked by probability. Each row buys only the top slice at the next close and holds for the AI's horizon; costs are charged on the stock alone (buy and sell). If the surest 10% do not earn more than everything, waiting for a higher probability cannot help." topic="abstention" label="abstention" /></h3>
+            <p class="small muted">
+              The AI's forecasts, long only: what acting on the most confident share would have earned per position over
+              {{ r.config.ai['horizon'] }} trading days, after costs. The decision layer rows in the table above test the
+              same idea as strategies: <a routerLink="/strategies/AI_CONF">confident entries only</a> raises the bar to act,
+              <a routerLink="/strategies/AI_SIZED">sized by volatility</a> keeps the trades and changes the sizes.
+            </p>
+          <app-coverage-table [rows]="r.config.aiCoverage ?? []" positionLabel="a stock" />
+        </div>
+
         <div class="grid-2">
+          @if (decisionLayer(); as dl) {
+            <div class="card">
+              <h3>The decision layer <app-help text="Three ways to act on the same probabilities. The standard rule enters at p ≥ 0.55 with equal slices; abstention waits for p ≥ 0.60; sizing keeps the standard entries but gives each position 0.04 / its annualized volatility, capped at 20%." topic="decision-layer" label="decision layer" /></h3>
+              <div class="table-wrap">
+                <table class="table compact">
+                  <thead>
+                    <tr><th>Rule</th><th class="num">Sharpe</th><th class="num">Max DD</th><th class="num">Invested</th><th class="num">Trades</th><th class="num">Excess</th></tr>
+                  </thead>
+                  <tbody>
+                    @for (x of dl; track x.key) {
+                      <tr>
+                        <td><a [routerLink]="['/strategies', x.key]">{{ x.label }}</a><div class="small muted">{{ x.note }}</div></td>
+                        <td class="num" [style.font-weight]="x.bestSharpe ? 650 : 400">{{ x.sharpe | fixed: 2 }}@if (x.bestSharpe) { <span class="badge-best" title="Best of the three">✓</span> }</td>
+                        <td class="num" [style.font-weight]="x.bestDd ? 650 : 400">{{ x.maxDd | pct: 1 }}@if (x.bestDd) { <span class="badge-best" title="Best of the three">✓</span> }</td>
+                        <td class="num">{{ x.exposure | pct: 0 }}</td>
+                        <td class="num">{{ x.trades | num }}</td>
+                        <td class="num"><app-delta [value]="x.excess" kind="pct" [digits]="1" /></td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+              <p class="small muted" style="margin-top: 0.5rem">
+                Sizing and abstention cannot create an edge the probabilities lack; they change how much of one is kept
+                and how much pain comes with it. Differences without a "Beats buy &amp; hold" badge are still noise.
+              </p>
+            </div>
+          }
           <div class="card">
-            <h3>Cost sensitivity (CAGR) <app-help text="The same backtest re-run with different trading costs per side. Strategies that trade a lot fade fastest as costs rise; a rule that only works at zero cost is not a rule you can trade." topic="costs" label="cost sensitivity" /></h3>
+            <h3>How to read this</h3>
+            <ul class="small notes">
+              <li>All strategies trade the same {{ results().length }} portfolios on identical data; the AI was trained
+                walk-forward and never saw the period it is scored on.</li>
+              <li>Timing rules hold each stock in its own 1/N slice and sit in cash otherwise, so their "Exposure" is below
+                100%. Lower exposure usually means lower return <em>and</em> lower drawdown.</li>
+              <li>With about {{ years() | fixed: 1 }} years and a small universe, a few lucky trades can dominate. Treat
+                differences without a "Beats buy &amp; hold" badge as noise.</li>
+              <li>This is research, not advice: a backtest is not evidence of live profitability.</li>
+              <li><a routerLink="/guide" fragment="metrics">Every metric on this page, explained in the guide →</a></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Cost sensitivity (CAGR) <app-help text="The same backtest re-run with different trading costs per side. Strategies that trade a lot fade fastest as costs rise; a rule that only works at zero cost is not a rule you can trade." topic="costs" label="cost sensitivity" /></h3>
             <div class="table-wrap">
               <table class="table compact">
                 <thead>
@@ -280,21 +335,6 @@ interface Col {
               </table>
             </div>
             <p class="small muted" style="margin-top: 0.5rem">Colour depth follows the size of the annual return; red is a loss. High-turnover rules lose the most as costs rise.</p>
-          </div>
-
-          <div class="card">
-            <h3>How to read this</h3>
-            <ul class="small notes">
-              <li>All strategies trade the same {{ results().length }} portfolios on identical data; the AI was trained
-                walk-forward and never saw the period it is scored on.</li>
-              <li>Timing rules hold each stock in its own 1/N slice and sit in cash otherwise, so their "Exposure" is below
-                100%. Lower exposure usually means lower return <em>and</em> lower drawdown.</li>
-              <li>With about {{ years() | fixed: 1 }} years and a small universe, a few lucky trades can dominate. Treat
-                differences without a "Beats buy &amp; hold" badge as noise.</li>
-              <li>This is research, not advice: a backtest is not evidence of live profitability.</li>
-              <li><a routerLink="/guide" fragment="metrics">Every metric on this page, explained in the guide →</a></li>
-            </ul>
-          </div>
         </div>
       } @else {
         <div class="empty-box">
@@ -390,6 +430,29 @@ export class StrategiesPage {
       aiDsr: ai?.metrics.deflatedSharpe ?? null,
       aiSupported: ai ? supported(ai.verdict) : false,
     };
+  });
+
+  /** The three AI rules that share one set of probabilities and differ only in how they act on them. */
+  protected readonly decisionLayer = computed(() => {
+    const byKey = new Map(this.results().map((s) => [s.strategyKey, s]));
+    const spec = [
+      { key: AI_KEY, label: 'Standard rule', note: 'enter at p ≥ 0.55, equal slices' },
+      { key: 'AI_CONF', label: 'Confident entries only', note: 'abstain unless p ≥ 0.60' },
+      { key: 'AI_SIZED', label: 'Sized by volatility', note: 'same trades, 0.04 / volatility each' },
+    ];
+    const rows = spec
+      .map((x) => {
+        const r = byKey.get(x.key);
+        const m = r?.metrics;
+        return r && m ? { ...x, sharpe: m.sharpe, maxDd: m.maxDrawdown, exposure: m.exposure, trades: m.trades, excess: m.excessReturn, bestSharpe: false, bestDd: false } : null;
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
+    if (rows.length < 2) return null;
+    const bestS = rows.reduce((a, b) => ((b.sharpe ?? -Infinity) > (a.sharpe ?? -Infinity) ? b : a));
+    const bestD = rows.reduce((a, b) => ((b.maxDd ?? -Infinity) > (a.maxDd ?? -Infinity) ? b : a));
+    bestS.bestSharpe = true;
+    bestD.bestDd = true;
+    return rows;
   });
 
   protected readonly cols: Col[] = [

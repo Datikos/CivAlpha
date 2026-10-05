@@ -6,8 +6,9 @@ starts (sample index + horizon < block start), i.e. overlapping labels are purge
 predicted exactly once, by a model that never saw its period.
 
 Reported: Brier score, log loss, AUC, accuracy, calibration bins, Brier skill vs the training base rate,
-the paired augmented-vs-baseline Brier difference with a date-block bootstrap CI, and a long/short
-simulation after transaction costs on non-overlapping 21-day periods entered at the next close.
+the paired augmented-vs-baseline Brier difference with a date-block bootstrap CI, a long/short
+simulation after transaction costs on non-overlapping 21-day periods entered at the next close, and a
+coverage curve: what acting only on the most confident forecasts would have earned after costs.
 """
 from __future__ import annotations
 
@@ -23,6 +24,7 @@ from .model import LogitModel
 from .returns import HORIZON
 
 KINDS = ("BASELINE", "AUGMENTED")
+COVERAGE_LEVELS = (0.05, 0.10, 0.20, 0.30, 0.50, 1.00)
 
 
 @dataclass
@@ -89,6 +91,11 @@ def run_walk_forward(panel: pd.DataFrame, calendar: pd.DatetimeIndex, cfg: EvalC
     comparison = compare_models(P, cfg)
     comparison.update(fold_consistency(fold_out))
     trading = {k: trading_simulation(P[P.model_kind == k], cfg) for k in KINDS}
+    for k in KINDS:
+        d = P[P.model_kind == k]
+        trading[k]["coverage"] = coverage_curve(d["probability"].to_numpy(float), d["outcome"].to_numpy(float),
+                                                d["exec_excess_return"].to_numpy(float), d["idx"].to_numpy(),
+                                                cost_bps_per_side=cfg.cost_bps_per_side, cost_legs=4)
     config = {"horizon": cfg.horizon, "sampleEvery": cfg.sample_every, "embargo": cfg.embargo, "foldLength": cfg.fold_length,
               "minTrainDays": cfg.min_train_days, "costBpsPerSide": cfg.cost_bps_per_side, "signalBand": cfg.signal_band}
     return {"config": config, "metrics": metrics, "calibration": calib, "comparison": comparison,
@@ -195,6 +202,62 @@ def trading_simulation(df: pd.DataFrame, cfg: EvalConfig) -> dict:
             "turnoverCostPerPeriod": cost}
 
 
+def date_block_bootstrap(values: np.ndarray, date_idx: np.ndarray, block: int = 21, n_boot: int = 500,
+                         seed: int = 11) -> tuple[float, float]:
+    """95% CI of the mean of `values`, resampling blocks of `block` consecutive dates (forecasts on neighbouring
+    days share most of their outcome window, so single rows are not independent)."""
+    if len(values) == 0:
+        return float("nan"), float("nan")
+    dates = np.unique(date_idx)
+    per = pd.Series(values).groupby(date_idx).agg(["sum", "count"]).reindex(dates)
+    s, c = per["sum"].to_numpy(), per["count"].to_numpy()
+    rng = np.random.default_rng(seed)
+    n_blocks = max(1, len(dates) // block)
+    starts = rng.integers(0, max(1, len(dates) - block + 1), size=(n_boot, n_blocks))
+    pick = (starts[:, :, None] + np.arange(block)[None, None, :]).reshape(n_boot, -1) % len(dates)
+    boots = s[pick].sum(axis=1) / c[pick].sum(axis=1)
+    return float(np.percentile(boots, 2.5)), float(np.percentile(boots, 97.5))
+
+
+def coverage_curve(p: np.ndarray, y: np.ndarray, excess: np.ndarray, date_idx: np.ndarray, cost_bps_per_side: float,
+                   cost_legs: int = 4, side: str = "both", levels: tuple = COVERAGE_LEVELS, block: int = 21) -> list[dict]:
+    """Abstention: act only on the most confident forecasts and see what that would have earned.
+
+    Forecasts are ranked by confidence, |p - 0.5| (side="both": long when p > 0.5, short when p < 0.5) or by p
+    (side="long": long only, the most probable outperformers first). Each level keeps the top `coverage` share of
+    all forecasts and reports the confidence needed to get in, the accuracy of the direction call, the Brier score,
+    and the mean excess return over the sector ETF of acting on them, gross and net of `cost_legs` x
+    cost_bps_per_side per position (4 legs for a stock position hedged with its ETF, 2 for the stock alone), with
+    a date-block bootstrap 95% CI of the net figure. Rows without a known return are dropped.
+    """
+    ok = np.isfinite(p) & np.isfinite(y) & np.isfinite(excess)
+    p, y, excess, date_idx = p[ok], y[ok], excess[ok], date_idx[ok]
+    if len(p) == 0:
+        return []
+    if side == "long":
+        conf = p.copy()
+        direction = np.ones_like(p)
+    else:
+        conf = np.abs(p - 0.5)
+        direction = np.where(p >= 0.5, 1.0, -1.0)
+    order = np.argsort(-conf, kind="stable")
+    cost = cost_legs * cost_bps_per_side / 1e4
+    right = ((p > 0.5) == (y > 0.5)).astype(float)
+    sq = (p - y) ** 2
+    gross = direction * excess
+    net = gross - cost
+    out = []
+    for level in levels:
+        n = int(max(1, round(level * len(p))))
+        top = order[:n]
+        lo, hi = date_block_bootstrap(net[top], date_idx[top], block=block)
+        out.append({"coverage": float(level), "n": n, "minConfidence": float(conf[top].min()),
+                    "accuracy": float(right[top].mean()), "brier": float(sq[top].mean()),
+                    "meanGross": float(gross[top].mean()), "meanNet": float(net[top].mean()),
+                    "ciLow": lo, "ciHigh": hi, "costPerPosition": cost, "side": side})
+    return out
+
+
 def verdict(metrics: dict, comparison: dict, trading: dict, cfg: EvalConfig) -> str:
     a, b = metrics["AUGMENTED"], metrics["BASELINE"]
     parts = [f"Walk-forward, {a['n']} out-of-sample predictions per model."]
@@ -218,4 +281,17 @@ def verdict(metrics: dict, comparison: dict, trading: dict, cfg: EvalConfig) -> 
                      f"{cfg.horizon}-day period over {tr['periods']} periods (t = {tr['tStatNet']:.2f}).")
         parts.append("Profitability claim: " + ("the simulation is consistent with positive after-cost returns, but this is a backtest, "
                      "not evidence of live profitability." if supported else "NOT supported by this evidence."))
-    return " ".join(parts)
+    parts.append(coverage_sentence(tr.get("coverage") or [], "augmented forecasts"))
+    return " ".join(parts).strip()
+
+
+def coverage_sentence(curve: list[dict], what: str, level: float = 0.10) -> str:
+    """One sentence on abstention: what acting only on the most confident `level` share would have earned."""
+    row = next((r for r in curve if abs(r["coverage"] - level) < 1e-9), None)
+    if row is None or row["n"] < 30:
+        return ""
+    verdict = ("positive after costs" if row["ciLow"] > 0 else "negative after costs" if row["ciHigh"] < 0
+               else "within noise")
+    return (f"Acting only on the most confident {level:.0%} of {what} ({row['n']:,} calls): "
+            f"{row['accuracy']:.0%} right, mean excess return {row['meanNet']*100:+.2f}% per position after costs "
+            f"(95% CI {row['ciLow']*100:+.2f}% to {row['ciHigh']*100:+.2f}%): {verdict}.")

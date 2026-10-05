@@ -1,3 +1,4 @@
+import pytest
 import numpy as np
 import pandas as pd
 
@@ -70,3 +71,53 @@ def test_fold_consistency_sign_test():
     assert c["foldsAugmentedBetter"] == 5 and c["foldsCompared"] == 6  # the tie is dropped
     assert abs(c["signTestP"] - 2 * (1 + 6) / 64) < 1e-12               # P(X<=1), X~Bin(6, 1/2), two-sided
     assert fold_consistency([])["signTestP"] is None
+
+
+def test_coverage_curve_rewards_confidence_and_charges_costs():
+    from civalpha.evaluation import coverage_curve
+    rng = np.random.default_rng(3)
+    n = 4000
+    signal = rng.normal(0, 1, n)
+    p = 1 / (1 + np.exp(-1.5 * signal))                       # informative probabilities
+    excess = 0.02 * signal + rng.normal(0, 0.05, n)           # the realized excess return follows the signal
+    y = (excess > 0).astype(float)
+    dates = np.repeat(np.arange(n // 10), 10)
+    curve = coverage_curve(p, y, excess, dates, cost_bps_per_side=10, cost_legs=4)
+    assert [r["coverage"] for r in curve] == [0.05, 0.10, 0.20, 0.30, 0.50, 1.0]
+    assert [r["n"] for r in curve] == [200, 400, 800, 1200, 2000, 4000]
+    # the more selective the level, the higher the bar to get in and the better the calls
+    assert all(a["minConfidence"] >= b["minConfidence"] for a, b in zip(curve, curve[1:]))
+    assert curve[0]["accuracy"] > curve[-1]["accuracy"] > 0.6
+    assert curve[0]["meanGross"] > curve[-1]["meanGross"] > 0
+    for r in curve:
+        assert r["meanNet"] == pytest.approx(r["meanGross"] - 0.004)   # 4 legs x 10 bp
+        assert r["ciLow"] <= r["meanNet"] <= r["ciHigh"]
+        assert 0 <= r["brier"] <= 0.25
+    # long-only mode ranks by p itself and only ever buys
+    long = coverage_curve(p, y, excess, dates, cost_bps_per_side=10, cost_legs=2, side="long")
+    assert long[0]["minConfidence"] > 0.9 and long[0]["side"] == "long"
+    assert long[0]["meanNet"] == pytest.approx(long[0]["meanGross"] - 0.002)
+    assert coverage_curve(np.array([]), np.array([]), np.array([]), np.array([]), 10) == []
+
+
+def test_coverage_curve_on_noise_stays_inside_its_interval():
+    from civalpha.evaluation import coverage_curve
+    rng = np.random.default_rng(4)
+    n = 3000
+    p = rng.uniform(0.3, 0.7, n)
+    excess = rng.normal(0, 0.05, n)
+    curve = coverage_curve(p, (excess > 0).astype(float), excess, np.repeat(np.arange(n // 5), 5), cost_bps_per_side=0)
+    # a 95% interval misses zero 5% of the time, so on noise at most one of the six levels may look "profitable"
+    assert sum(not (r["ciLow"] < 0 < r["ciHigh"]) for r in curve) <= 1
+    for r in curve:
+        assert abs(r["accuracy"] - 0.5) < 0.1
+        assert abs(r["meanNet"]) < 0.01
+
+
+def test_walk_forward_reports_a_coverage_curve_per_model():
+    b = make_bundle(n_days=900, n_companies=8, seed=5)
+    res = run_walk_forward(build_panel(b, sample_every=7), b.calendar, EvalConfig(min_train_days=300))
+    for k in ("BASELINE", "AUGMENTED"):
+        curve = res["trading"][k]["coverage"]
+        assert curve[-1]["coverage"] == 1.0 and curve[-1]["n"] <= res["metrics"][k]["n"]
+        assert curve[0]["n"] < curve[-1]["n"]

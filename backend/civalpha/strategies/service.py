@@ -10,11 +10,12 @@ import pandas as pd
 from sklearn.metrics import roc_auc_score
 
 from .. import db, pit
-from ..evaluation import brier, log_loss
+from ..evaluation import brier, coverage_curve, coverage_sentence, log_loss
 from ..features import DataBundle
 from . import backtest, stats
-from .ai import (AI_DIV_FEATURES, AI_FEATURES, AI_KEY, FUND_MODEL_FEATURES, ALGORITHM, CODE_VERSION, AiConfig, ai_strategies, dataset,
-                 decide_positions, explain, new_model, walk_forward_probabilities)
+from .ai import (AI_CONF_KEY, AI_DIV_FEATURES, AI_FEATURES, AI_KEY, AI_SIZED_KEY, FUND_MODEL_FEATURES, ALGORITHM, CODE_VERSION,
+                 AiConfig, ai_strategies, dataset, decide_positions, explain, new_model, size_by_volatility, sized_weight,
+                 technical_features, walk_forward_probabilities)
 from .base import Strategy
 from .panel import MarketPanel
 from .rules import rule_strategies, rule_votes
@@ -49,7 +50,10 @@ def run_lab(bundle: DataBundle, cfg: LabConfig) -> dict:
     wf_div = walk_forward_probabilities(panel, ai_cfg, data, features=AI_DIV_FEATURES)
     div_w, _ = decide_positions(wf_div["prob"], panel.member, ai_cfg, start_idx=oos)
     feature_test = compare_forecasts(panel, data, wf["prob"], wf_div["prob"])
-    strategies = rule_strategies() + ai_strategies(ai_cfg, ai_w, fund_w, div_w)
+    conf_w, _ = decide_positions(wf["prob"], panel.member, ai_cfg.confident(), start_idx=oos)
+    sized_w = size_by_volatility(ai_w, technical_features(panel)["vol_21"], ai_cfg)
+    ai_coverage = ai_coverage_curve(panel, data, wf["prob"], cfg.cost_bps_per_side)
+    strategies = rule_strategies() + ai_strategies(ai_cfg, ai_w, fund_w, div_w, conf_w, sized_w)
     start = oos + 1  # first decision is at close(oos), first trade at close(oos + 1)
     if start >= len(panel.calendar) - 1:
         raise ValueError("not enough out-of-sample history to backtest strategies")
@@ -89,16 +93,29 @@ def run_lab(bundle: DataBundle, cfg: LabConfig) -> dict:
     results.sort(key=lambda x: -(x["metrics"]["sharpe"] if np.isfinite(x["metrics"]["sharpe"]) else -1e9))
     config = {"costBpsPerSide": cfg.cost_bps_per_side, "costSensitivityBps": list(COST_SENSITIVITY_BPS),
               "reference": REFERENCE, "nCandidates": len(candidates), "ai": ai_cfg.params(), "aiFolds": wf["folds"],
-              "dividendFeatureTest": feature_test,
+              "dividendFeatureTest": feature_test, "aiCoverage": ai_coverage,
               "execution": "Decided at the close, traded at the next close; long-only; idle cash earns realized FEDFUNDS",
               "verdictRule": f"SUPPORTED only if >= {stats.MIN_YEARS:g} years out of sample, the 95% CI of the excess return over "
                              f"{REFERENCE} is above 0, and the Deflated Sharpe Ratio (deflated for {len(candidates)} strategies) "
                              f">= {stats.DSR_LEVEL}"}
     return {"oosStart": panel.calendar[start].date(), "dataCutoff": panel.calendar[-1].date(), "config": config,
-            "results": results, "summary": _summary(results, cfg, len(candidates), feature_test)}
+            "results": results, "summary": _summary(results, cfg, len(candidates), feature_test, ai_coverage)}
+
+
+def ai_coverage_curve(panel: MarketPanel, data: pd.DataFrame, prob: pd.DataFrame, cost_bps_per_side: float) -> list[dict]:
+    """Abstention on the AI's own out-of-sample forecasts: long only, ranked by probability, on every (day, company)
+    row the model scored and whose outcome is known; costs are 2 legs (buy and sell the stock)."""
+    rows = data[data["label"].notna()]
+    ci = panel.px.columns.get_indexer(rows["company_id"].to_numpy())
+    ri = rows["idx"].to_numpy()
+    p = prob.to_numpy(float)[ri, ci]
+    return coverage_curve(p, rows["label"].to_numpy(float), rows["fwd_excess"].to_numpy(float), ri,
+                          cost_bps_per_side=cost_bps_per_side, cost_legs=2, side="long")
 
 
 def _trade_labels(s: Strategy, cfg: AiConfig) -> tuple[str, str]:
+    if s.key == AI_CONF_KEY:
+        return f"p ≥ {cfg.confident_entry_p:.2f}, top {cfg.max_positions}", f"p < {cfg.confident_exit_p:.2f}"
     if s.family == "AI":
         return f"p ≥ {cfg.entry_p:.2f}, top {cfg.max_positions}", f"p < {cfg.exit_p:.2f}"
     if s.sizing == "EQUAL":
@@ -142,7 +159,8 @@ def compare_forecasts(panel: MarketPanel, data: pd.DataFrame, without: pd.DataFr
                     f"95% CI from a bootstrap over blocks of {block} consecutive dates."}
 
 
-def _summary(results: list[dict], cfg: LabConfig, n: int, feature_test: dict | None = None) -> str:
+def _summary(results: list[dict], cfg: LabConfig, n: int, feature_test: dict | None = None,
+             ai_coverage: list[dict] | None = None) -> str:
     m0 = results[0]["metrics"]
     ok = [r["name"] for r in results if r["verdict"].endswith("SUPPORTED by this backtest")]
     best = max((r for r in results if r["family"] != "BENCHMARK"), key=lambda r: r["metrics"]["sharpe"] if np.isfinite(r["metrics"]["sharpe"]) else -1e9)
@@ -165,7 +183,17 @@ def _summary(results: list[dict], cfg: LabConfig, n: int, feature_test: dict | N
         parts.append(f"Dividend signals in the AI: out-of-sample Brier {a['brier']:.4f} without, {b['brier']:.4f} with "
                      f"(difference 95% CI {lo:+.4f} to {hi:+.4f}), AUC {a['auc']:.3f} vs {b['auc']:.3f} on the same "
                      f"{feature_test['rows']:,} forecasts: {verdict}.")
-    return " ".join(parts)
+    by_key = {r["key"]: r["metrics"] for r in results}
+    base, conf, sized = by_key.get(AI_KEY), by_key.get(AI_CONF_KEY), by_key.get(AI_SIZED_KEY)
+    if base and conf and sized:
+        parts.append(f"The AI's decision layer: acting only on confident forecasts (p ≥ {cfg.ai().confident_entry_p:.2f}) gives "
+                     f"Sharpe {conf['sharpe']:.2f} at {conf['exposure']:.0%} invested against {base['sharpe']:.2f} at "
+                     f"{base['exposure']:.0%} for the standard rule; sizing each position by its volatility gives Sharpe "
+                     f"{sized['sharpe']:.2f} with a max drawdown of {sized['maxDrawdown']*100:.1f}% against "
+                     f"{base['maxDrawdown']*100:.1f}%.")
+    if ai_coverage:
+        parts.append(coverage_sentence(ai_coverage, "the AI's own forecasts"))
+    return " ".join(p for p in parts if p)
 
 
 def backtest_strategies(engine, cfg: LabConfig | None = None) -> dict:
@@ -214,6 +242,9 @@ def decisions_at(bundle: DataBundle, idx: int, cfg: LabConfig, held: set[int],
     medians = train[AI_FEATURES].median().to_numpy(float)
     trained_through = panel.calendar[int(train["idx"].max())].date()
     rank = pd.Series(p, index=rows["company_id"].to_numpy()).rank(ascending=False, method="first")
+    vols = rows["vol_21"].to_numpy(float)
+    raw_sized = {int(c): sized_weight(float(weights.at[d, int(c)]), float(v), ai_cfg) for c, v in zip(rows["company_id"], vols)}
+    scale = 1.0 / max(1.0, sum(raw_sized.values()))      # no leverage: scale every position down if the book exceeds 1
     out = []
     for i, cid in enumerate(rows["company_id"].to_numpy()):
         cid = int(cid)
@@ -223,6 +254,10 @@ def decisions_at(bundle: DataBundle, idx: int, cfg: LabConfig, held: set[int],
             "weight": float(weights.at[d, cid]), "entryP": ai_cfg.entry_p, "exitP": ai_cfg.exit_p,
             "maxPositions": ai_cfg.max_positions, "factors": explain(model, X[i], medians), "ruleVotes": votes.get(cid, {}),
             "model": {"algorithm": ALGORITHM, "codeVersion": CODE_VERSION, "trainedThrough": str(trained_through),
-                      "nTrain": int(len(train)), "horizon": ai_cfg.horizon, "params": ai_cfg.params()},
+                      "nTrain": int(len(train)), "horizon": ai_cfg.horizon, "params": ai_cfg.params(),
+                      "sizing": {"vol21": float(vols[i]), "sizedWeight": raw_sized[cid] * scale,
+                                 "confident": bool(p[i] >= ai_cfg.confident_entry_p),
+                                 "volBudget": ai_cfg.vol_budget, "maxWeight": ai_cfg.max_weight,
+                                 "confidentEntryP": ai_cfg.confident_entry_p}},
         }))
     return out

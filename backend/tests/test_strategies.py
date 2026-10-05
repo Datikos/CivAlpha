@@ -207,3 +207,42 @@ def test_live_decisions_have_actions_reasons_and_rule_votes():
     one = next(d for d in out if d["companyId"] == 1)
     assert one["action"] in {"HOLD", "EXIT"}                 # it was held before, so it cannot be a fresh ENTER
     assert len(one["factors"]) == 5 and "SMA_50_200" in one["ruleVotes"]
+
+
+def test_volatility_sizing_gives_calm_names_more_and_never_leverages():
+    from civalpha.strategies.ai import AiConfig, size_by_volatility, sized_weight
+    cal = pd.bdate_range("2024-01-01", periods=3)
+    w = pd.DataFrame([[0.25, 0.25, 0.0, 0.25], [0.25, 0.25, 0.25, 0.25], [0.0, 0.0, 0.0, 0.0]], index=cal, columns=[1, 2, 3, 4])
+    vol = pd.DataFrame([[0.20, 0.40, 0.10, np.nan], [0.05, 0.05, 0.05, 0.05], [0.2, 0.2, 0.2, 0.2]], index=cal, columns=[1, 2, 3, 4])
+    cfg = AiConfig(max_positions=4, vol_budget=0.04, max_weight=0.20)
+    s = size_by_volatility(w, vol, cfg)
+    assert s.iloc[0].tolist() == pytest.approx([0.20, 0.10, 0.0, 0.25])   # calm name capped at 20%, volatile one 10%, not held = 0, no vol = equal slice
+    assert (s.iloc[1] == 0.20).all()                                       # 0.04 / 0.05 = 80% each, capped at 20%; total 80%, no scaling needed
+    assert s.iloc[2].sum() == 0.0
+    assert sized_weight(0.0, 0.1, cfg) == 0.0 and sized_weight(0.125, np.nan, cfg) == 0.125
+    assert sized_weight(0.125, 0.8, cfg) == pytest.approx(0.05)
+
+
+def test_confident_variant_trades_less_and_lab_reports_the_decision_layer():
+    lab = run_lab(make_bundle(n_days=1450, n_companies=5, seed=9), LabConfig(max_positions=2))
+    by = {r["key"]: r for r in lab["results"]}
+    assert {"AI_CONF", "AI_SIZED"} <= set(by)
+    assert by["AI_CONF"]["metrics"]["exposure"] <= by["AI_GBM"]["metrics"]["exposure"]
+    assert by["AI_CONF"]["metrics"]["trades"] <= by["AI_GBM"]["metrics"]["trades"]
+    assert by["AI_CONF"]["params"]["entry_p"] == 0.60 and by["AI_CONF"]["description"]["entry"].startswith("Model probability ≥ 0.60")
+    assert by["AI_SIZED"]["metrics"]["exposure"] <= 1.0
+    curve = lab["config"]["aiCoverage"]
+    assert [r["coverage"] for r in curve][-1] == 1.0 and all(r["side"] == "long" for r in curve)
+    assert "decision layer" in lab["summary"]
+
+
+def test_live_decisions_carry_a_volatility_sized_weight():
+    b = make_bundle(n_days=520, n_companies=4, seed=6)
+    out = decisions_at(b, len(b.calendar) - 1, LabConfig(max_positions=2), held=set())
+    sizing = [d["model"]["sizing"] for d in out]
+    assert all(set(s) >= {"vol21", "sizedWeight", "confident", "volBudget", "maxWeight", "confidentEntryP"} for s in sizing)
+    assert sum(s["sizedWeight"] for s in sizing) <= 1.0 + 1e-9
+    for d in out:
+        s = d["model"]["sizing"]
+        assert (s["sizedWeight"] > 0) == (d["weight"] > 0)
+        assert s["confident"] == (d["probability"] >= 0.60)

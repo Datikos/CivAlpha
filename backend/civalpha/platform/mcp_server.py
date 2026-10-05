@@ -349,11 +349,15 @@ def build() -> MCPServer:
     @_domain
     def get_strategies() -> dict:
         """Strategy lab: every classic rule (trend, mean reversion, fundamental, dividend, event) and the AI strategies
-        backtested on one out-of-sample window after costs, ranked by Sharpe, each with a multiple-testing-aware verdict."""
+        backtested on one out-of-sample window after costs, ranked by Sharpe, each with a multiple-testing-aware verdict.
+        AI_CONF (abstention) and AI_SIZED (volatility sizing) act on the same probabilities as AI_GBM; run.aiCoverage is
+        the abstention curve: what acting only on the AI's most confident 5%..100% of forecasts earned per position after costs."""
         r = read.strategies()
         keys = ("start", "end", "years", "cagr", "sharpe", "maxDrawdown", "exposure", "trades", "excessReturn", "excessCiLow",
                 "excessCiHigh", "deflatedSharpe")
-        return {"run": _pick(r.get("run") or {}, "runAt", "oosStart", "dataCutoff", "summary"),
+        run = r.get("run") or {}
+        return {"run": {**_pick(run, "runAt", "oosStart", "dataCutoff", "summary"),
+                        "aiCoverage": (run.get("config") or {}).get("aiCoverage")},
                 "results": [{**_pick(s, "strategyKey", "family", "name", "verdict"), "rule": s.get("description"),
                              "metrics": _pick(s.get("metrics") or {}, *keys)} for s in r.get("results", [])]}
 
@@ -373,11 +377,13 @@ def build() -> MCPServer:
     @_domain
     def get_decisions(as_of_date: str | None = None) -> dict:
         """The AI strategy's decisions for a trading day (default: latest): ENTER/EXIT/HOLD/STAY_OUT per stock with the model
-        probability, rank, top factors, which classic rules agree, and the plain-language explanation if any."""
+        probability, rank, top factors, which classic rules agree, and the plain-language explanation if any. `sizing` is the
+        decision layer: the volatility-scaled weight (AI_SIZED rule) and whether p clears the confident bar (AI_CONF rule)."""
         d = _date(as_of_date, "as_of_date")
         r = read.decisions(d.isoformat() if d else None)
         return {"asOfDate": r.get("asOfDate"), "availableDates": r.get("dates", [])[:10],
                 "decisions": [{**_pick(x, "symbol", "name", "action", "probability", "rank", "weight", "entryP", "exitP", "explanation"),
+                               "sizing": (x.get("model") or {}).get("sizing"),
                                "topFactors": [_pick(f, "label", "value", "contribution") for f in (x.get("factors") or [])[:3]],
                                "rulesHolding": sorted(k for k, v in (x.get("ruleVotes") or {}).items() if v)}
                               for x in r.get("decisions", [])]}
