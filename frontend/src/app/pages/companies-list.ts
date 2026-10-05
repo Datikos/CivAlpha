@@ -1,5 +1,5 @@
 import { httpResource } from '@angular/common/http';
-import { Component, computed, signal } from '@angular/core';
+import { Component, computed, effect, input, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { apiUrl, valueOf } from '../core/api';
@@ -41,7 +41,7 @@ interface Row {
     <div class="filters">
       <label class="field">
         Filter
-        <input type="search" placeholder="Symbol, name or sector" [ngModel]="q()" (ngModelChange)="q.set($event)" />
+        <input type="search" placeholder="Symbol, name, sector, industry or tag" [ngModel]="q()" (ngModelChange)="q.set($event)" />
       </label>
       <label class="field">
         Sector
@@ -52,6 +52,28 @@ interface Row {
           }
         </select>
       </label>
+      @if (industries().length) {
+        <label class="field">
+          Industry
+          <select [ngModel]="industry()" (ngModelChange)="industry.set($event)">
+            <option value="">All industries</option>
+            @for (s of industries(); track s) {
+              <option [value]="s">{{ s | human }}</option>
+            }
+          </select>
+        </label>
+      }
+      @if (tags().length) {
+        <label class="field">
+          <span class="nowrap">Tag <app-help text="Your own categories for a stock (a theme, a watchlist), set on the Universe page. Tags only group and filter; the models never see them." topic="tags" label="tags" /></span>
+          <select [ngModel]="tag()" (ngModelChange)="tag.set($event)">
+            <option value="">All tags</option>
+            @for (t of tags(); track t.tag) {
+              <option [value]="t.tag">{{ t.tag }} ({{ t.count }})</option>
+            }
+          </select>
+        </label>
+      }
       <label class="field">
         Lean
         <select [ngModel]="lean()" (ngModelChange)="lean.set($event)">
@@ -71,7 +93,7 @@ interface Row {
           <option value="NONE">No dividend</option>
         </select>
       </label>
-      @if (q() || sector() || lean() || div()) {
+      @if (anyFilter()) {
         <button type="button" class="btn btn-sm" (click)="clearFilters()">Clear filters</button>
       }
       <span class="small muted">{{ rows().length }} of {{ all().length }} companies</span>
@@ -82,7 +104,7 @@ interface Row {
     @if (res.hasValue()) {
       @if (!rows().length) {
         <div class="empty-box">
-          @if (q() || div() || sector() || lean()) {
+          @if (anyFilter()) {
             No companies match the filters.
           } @else {
             No companies yet. Add one on the <a routerLink="/universe">Universe</a> page.
@@ -114,8 +136,20 @@ interface Row {
                   <td class="nowrap">
                     <a [routerLink]="['/companies', r.c.symbol]"><strong>{{ r.c.symbol }}</strong></a>
                   </td>
-                  <td>{{ r.c.name }}</td>
-                  <td>{{ r.c.sector }}<div class="small muted">vs {{ r.c.benchmarkSymbol }}</div></td>
+                  <td>
+                    {{ r.c.name }}
+                    @if (r.c.tags?.length) {
+                      <div class="tags" style="margin-top: 0.15rem">
+                        @for (t of r.c.tags; track t) {
+                          <button type="button" class="chip tag" (click)="tag.set(tag() === t ? '' : t)" [attr.aria-pressed]="tag() === t" [title]="tag() === t ? 'Show all tags' : 'Only ' + t">{{ t }}</button>
+                        }
+                      </div>
+                    }
+                  </td>
+                  <td>
+                    {{ r.c.sector }}
+                    <div class="small muted">{{ r.c.industry ? (r.c.industry | human) + ' · ' : '' }}vs {{ r.c.benchmarkSymbol }}</div>
+                  </td>
                   <td class="num">
                     {{ r.c.latestClose | usd }}
                     <div class="small muted">{{ r.c.latestCloseDate ?? '' }}</div>
@@ -188,9 +222,14 @@ interface Row {
   `,
 })
 export class CompaniesPage {
+  /** `/companies?tag=AI` (from a tag chip elsewhere) opens the list filtered to that tag. */
+  readonly tagParam = input<string | undefined>(undefined, { alias: 'tag' });
+
   protected readonly MAX = MAX_COMPARE;
   protected readonly q = signal('');
   protected readonly sector = signal('');
+  protected readonly industry = signal('');
+  protected readonly tag = signal('');
   protected readonly lean = signal<'' | 'above' | 'below' | 'flat' | 'none'>('');
   protected readonly div = signal<'' | DividendStatus | 'NOT_REGULAR'>('');
   protected readonly picked = signal<string[]>([]);
@@ -202,6 +241,23 @@ export class CompaniesPage {
 
   protected readonly all = computed(() => valueOf(this.res) ?? []);
   protected readonly sectors = computed(() => [...new Set(this.all().map((c) => c.sector).filter(Boolean))].sort());
+  protected readonly industries = computed(() =>
+    [...new Set(this.all().map((c) => c.industry).filter((x): x is string => !!x))].sort(),
+  );
+  /** Every tag in use with its company count, most used first. */
+  protected readonly tags = computed(() => {
+    const counts = new Map<string, number>();
+    for (const c of this.all()) for (const t of c.tags ?? []) counts.set(t, (counts.get(t) ?? 0) + 1);
+    return [...counts].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+  });
+  protected readonly anyFilter = computed(() => !!(this.q() || this.sector() || this.industry() || this.tag() || this.lean() || this.div()));
+
+  constructor() {
+    effect(() => {
+      const t = this.tagParam()?.trim();
+      if (t) this.tag.set(t);
+    });
+  }
 
   private readonly enriched = computed<Row[]>(() => {
     const cur = valueOf(this.current) ?? [];
@@ -225,11 +281,18 @@ export class CompaniesPage {
     const q = this.q().trim().toLowerCase();
     const div = this.div();
     const sector = this.sector();
+    const industry = this.industry();
+    const tag = this.tag().toLowerCase();
     const lean = this.lean();
     const filtered = this.enriched().filter((r) => {
       const c = r.c;
-      if (q && !(c.symbol.toLowerCase().includes(q) || c.name.toLowerCase().includes(q) || (c.sector ?? '').toLowerCase().includes(q))) return false;
+      if (q) {
+        const hay = [c.symbol, c.name, c.sector ?? '', c.industry ?? '', ...(c.tags ?? [])].join(' ').toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
       if (sector && c.sector !== sector) return false;
+      if (industry && c.industry !== industry) return false;
+      if (tag && !(c.tags ?? []).some((t) => t.toLowerCase() === tag)) return false;
       const s = c.dividend?.status;
       if (div && !(div === 'NOT_REGULAR' ? s === 'IRREGULAR' || s === 'SUSPENDED' : s === div)) return false;
       if (lean) {
@@ -260,6 +323,8 @@ export class CompaniesPage {
   protected clearFilters(): void {
     this.q.set('');
     this.sector.set('');
+    this.industry.set('');
+    this.tag.set('');
     this.lean.set('');
     this.div.set('');
   }

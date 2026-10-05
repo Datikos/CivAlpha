@@ -858,6 +858,28 @@ pre.log {
 .chip + span:not(.chip) {
   margin-left: 0.3rem;
 }
+/* user-defined company tags: a quiet chip that filters the Companies page when clicked */
+.chip.tag {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--accent);
+  font-weight: 550;
+  text-decoration: none;
+  line-height: 1.5;
+}
+a.chip.tag:hover,
+button.chip.tag:hover {
+  text-decoration: underline;
+}
+button.chip.tag {
+  cursor: pointer;
+  font-family: inherit;
+}
+.tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
 .path {
   display: flex;
   flex-wrap: wrap;

@@ -97,6 +97,7 @@ export const PAGES: PageCard[] = [
     question: 'What do we know about this stock, from its own filings?',
     read: [
       'The list shows every tracked stock with its benchmark ETF, last close, dividend status and both latest forecasts.',
+      'Filter by sector, industry, your own tags, lean or dividend status, or type into the search box. Click a tag chip under a company name to keep only that tag.',
       'A company page has four tabs: Overview (price against the benchmark, dividends, key filed facts), Filings & financials (every 10-K, 10-Q and 8-K with XBRL values), Policy exposure (where the filings say the company is exposed to tariffs or rates), and Forecasts (its own history).',
       'Grey FILED and REPORTED badges mark facts taken straight from a filing; amber ESTIMATED marks a value the platform inferred.',
     ],
@@ -193,6 +194,7 @@ export const PAGES: PageCard[] = [
     question: 'Which stocks are tracked?',
     read: [
       'Add a ticker; "Look up on SEC" fills in the name and CIK. Pick a sector and the sector ETF it will be measured against (XLK for technology, XLV for health care, and so on).',
+      'Tags are your own categories, comma-separated: a theme (AI, China exposed), a watchlist (core, watch only) or anything worth filtering by. Edit them in the table; they group the Companies page and never reach the models.',
       'Removing a stock ends its membership on a date; history is kept so past backtests do not change. Deleting is only possible before any data is attached.',
     ],
     caution: 'Backdating "member since" puts a stock into backtests for periods when you had not chosen it yet, which flatters the results.',
@@ -384,6 +386,7 @@ export const GLOSSARY: Term[] = [
   { id: 'live-replay', term: 'LIVE / REPLAY', def: 'LIVE forecasts were published before their outcome window opened. REPLAY forecasts were computed later from data available at the cutoff; they are honest reconstructions but not live calls, and are scored separately.' },
   { id: 'reported-estimated', term: 'REPORTED / FILED vs ESTIMATED', def: 'Grey badges mark values taken directly from an SEC filing or recorded prices. Amber ESTIMATED badges mark values the platform inferred (a sector map, a keyword rule or a language model), always with lower confidence.' },
   { id: 'official-news', term: 'OFFICIAL / NEWS ONLY', def: 'An event is OFFICIAL when a primary document (a Federal Register notice, an FOMC statement) is stored. NEWS ONLY events come from press reports and are kept out of the models until a document is linked.' },
+  { id: 'tags', term: 'Tags', def: 'Your own categories for a stock, set on the Universe page: a theme (AI, China exposed), a watchlist (core, watch only) or anything else worth filtering by. A tag is one tag universe-wide whatever its case. Tags only group and filter the Companies and Universe pages (and list_companies in the MCP tools); the models never see them.' },
   { id: 'benchmark', term: 'Sector benchmark ETF', def: 'The ETF a stock is measured against: XLK technology, XLV health care, XLY consumer discretionary, XLP staples, XLC communication, XLI industrials, XLB materials.' },
   { id: 'exposure-doc', term: 'Policy exposure', def: 'A documented link between a company and a policy target (a country, a product, interest rates) with a channel and a share, taken from a filing passage or XBRL fact.' },
   { id: 'walk-forward', term: 'Walk-forward evaluation', def: 'The history is cut into blocks. For each block the model is trained only on samples whose outcome was known before the block starts, then scored on the block. No block is ever used to tune the model that scores it.' },

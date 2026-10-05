@@ -36,12 +36,14 @@ def test_tools_resources_and_prompts_are_listed(mcp):
     tools = {t["name"]: t for t in rpc(mcp, "tools/list")["tools"]}
     for name in ("get_status", "get_company", "get_exposures", "get_forecast", "get_accuracy", "get_strategies", "get_decisions",
                  "investment_candidates", "run_pipeline", "run_time_machine", "update_prices", "get_doubler_study", "run_doubler_study",
-                 "add_company"):
+                 "add_company", "set_company_tags"):
         assert name in tools, name
     # read, safe actions and adding a company only: removals, edits and new events stay in the UI / REST API
     assert not {"add_event", "delete_company", "remove_company", "edit_company"} & set(tools)
     assert tools["add_company"]["annotations"]["readOnlyHint"] is False
     assert tools["add_company"]["inputSchema"]["required"] == ["symbol"]
+    assert tools["set_company_tags"]["annotations"]["readOnlyHint"] is False
+    assert tools["set_company_tags"]["inputSchema"]["required"] == ["symbol", "tags"]
     assert tools["get_company"]["annotations"]["readOnlyHint"] is True
     assert tools["run_pipeline"]["annotations"]["readOnlyHint"] is False
     assert not any(t["annotations"]["destructiveHint"] for t in tools.values())
@@ -121,9 +123,11 @@ def test_add_company_adds_to_the_universe_and_queues_its_jobs(mcp, monkeypatch):
     from civalpha.platform import settings
 
     err, out = call(mcp, "add_company", {"symbol": "nvda", "name": "NVIDIA Corporation", "cik": "1045810", "sector": "Technology",
-                                         "industry": "SEMICONDUCTORS", "member_since": "2024-01-02", "sync_prices": False})
+                                         "industry": "SEMICONDUCTORS", "member_since": "2024-01-02", "sync_prices": False,
+                                         "tags": ["AI", "ai", "Chips"]})
     assert err is None, err
     assert out["symbol"] == "NVDA" and out["cik"] == "1045810" and out["benchmarkSymbol"] == "XLK"      # ETF from the sector
+    assert out["tags"] == ["AI", "Chips"]                                                               # cleaned, duplicates dropped
     assert out["filledFromSec"] == {"benchmarkSymbol": "XLK"} and out["notes"] == []
     assert [j["jobType"] for j in out["jobs"]] == ["SEC_INGEST"] and out["jobs"][0]["status"] == "QUEUED"
     assert any("prices" in step for step in out["nextSteps"])
@@ -131,6 +135,20 @@ def test_add_company_adds_to_the_universe_and_queues_its_jobs(mcp, monkeypatch):
     assert err is None and "NVDA" in {c["symbol"] for c in companies["result"]}
     row = next(c for c in mcp.get("/api/admin/universe").json()["companies"] if c["symbol"] == "NVDA")
     assert row["active"] and row["cik"] == "0001045810" and row["memberSince"] == "2024-01-02"
+    assert row["tags"] == ["AI", "Chips"]
+    nvda = next(c for c in companies["result"] if c["symbol"] == "NVDA")
+    assert nvda["tags"] == ["AI", "Chips"] and nvda["industry"] == "SEMICONDUCTORS"
+
+    err, out = call(mcp, "set_company_tags", {"symbol": "NVDA", "tags": ["watch only", "AI"]})
+    assert err is None and out == {"symbol": "NVDA", "tags": ["watch only", "AI"]}
+    err, company = call(mcp, "get_company", {"symbol": "NVDA"})
+    assert err is None and company["tags"] == ["AI", "watch only"]
+    err, _ = call(mcp, "set_company_tags", {"symbol": "NVDA", "tags": ["bad<tag>"]})
+    assert "letters, digits" in err
+    err, _ = call(mcp, "set_company_tags", {"symbol": "NOPE", "tags": []})
+    assert "unknown symbol" in err
+    err, out = call(mcp, "set_company_tags", {"symbol": "NVDA", "tags": []})
+    assert err is None and out["tags"] == []
 
     err, _ = call(mcp, "add_company", {"symbol": "NVDA", "name": "x", "cik": "1045810", "sector": "Technology"})
     assert "already" in err                                                             # domain error, not a crash

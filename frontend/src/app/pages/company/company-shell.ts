@@ -1,5 +1,6 @@
 import { Component, computed, effect, inject, input } from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { FORMAT_PIPES } from '../../core/format';
 import { Icon } from '../../shared/icon';
 import { UI } from '../../shared/ui';
 import { VIZ } from '../../shared/viz';
@@ -7,7 +8,7 @@ import { CompanyContext } from './company-context';
 
 @Component({
   selector: 'app-company-shell',
-  imports: [RouterOutlet, RouterLink, RouterLinkActive, Icon, ...UI, ...VIZ],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, Icon, ...UI, ...VIZ, ...FORMAT_PIPES],
   template: `
     <div class="crumbs"><a routerLink="/companies">Companies</a> / {{ symbol() }}</div>
     <div class="page-head">
@@ -19,9 +20,16 @@ import { CompanyContext } from './company-context';
               {{ c.name }} <span class="muted">({{ c.symbol }})</span>
             </h1>
             <p class="muted">
-              {{ c.sector }} · benchmark <strong>{{ c.benchmarkSymbol }}</strong>
+              {{ c.sector }}
+              @if (c.industry) {
+                · {{ c.industry | human }}
+              }
+              · benchmark <strong>{{ c.benchmarkSymbol }}</strong>
               @if (c.exchange) {
                 · {{ c.exchange }}
+              }
+              @for (t of c.tags ?? []; track t) {
+                <a class="chip tag" [routerLink]="['/companies']" [queryParams]="{ tag: t }" [title]="'Companies tagged ' + t">{{ t }}</a>
               }
             </p>
           } @else {

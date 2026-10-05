@@ -32,6 +32,8 @@ from .rows import camel
 from .sec.profile import CompanyProfiler
 from .settings import settings
 from .sql import db
+from .tickers import TickerResolver
+from .universe import UniverseService
 
 READ = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
 ACTION = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=True)
@@ -159,8 +161,9 @@ def build() -> MCPServer:
     @tool_read
     @_domain
     def list_companies() -> list[dict]:
-        """All tracked companies with sector, benchmark ETF, latest close, dividend summary and latest forecasts."""
-        return [{**_pick(c, "symbol", "name", "sector", "benchmarkSymbol", "cik", "latestClose", "latestCloseDate", "dividend"),
+        """All tracked companies with sector, industry, user-defined tags, benchmark ETF, latest close, dividend summary and
+        latest forecasts. Tags are free-form categories set on the Universe page or with set_company_tags."""
+        return [{**_pick(c, "symbol", "name", "sector", "industry", "tags", "benchmarkSymbol", "cik", "latestClose", "latestCloseDate", "dividend"),
                  "latestForecasts": {k: _pick(v, "probability", "asOfDate") for k, v in (c.get("latestForecasts") or {}).items()}}
                 for c in read.companies()]
 
@@ -177,7 +180,7 @@ def build() -> MCPServer:
         for c in read.companies():
             f = c.get("latestForecasts") or {}
             d = decisions.get(c["symbol"]) or {}
-            cands.append({"symbol": c["symbol"], "name": c.get("name"), "sector": c.get("sector"),
+            cands.append({"symbol": c["symbol"], "name": c.get("name"), "sector": c.get("sector"), "tags": c.get("tags") or [],
                           "pBeatSectorAugmented": (f.get("AUGMENTED") or {}).get("probability"),
                           "pBeatSectorBaseline": (f.get("BASELINE") or {}).get("probability"),
                           "aiAction": d.get("action"), "aiProbability": d.get("probability"), "aiRank": d.get("rank"),
@@ -201,7 +204,7 @@ def build() -> MCPServer:
         perf = {n: {"stock": _ret(bars, d), "benchmark": _ret(bars, d, "benchmarkClose")} for n, d in (("1m", 21), ("3m", 63), ("12m", 252))}
         latest = next((x.get("latestForecasts") for x in read.companies() if x["symbol"] == c["symbol"]), {})
         dec = next((d for d in read.decisions(None).get("decisions", []) if d.get("symbol") == c["symbol"]), None)
-        return {**_pick(c, "symbol", "name", "sector", "industry", "benchmarkSymbol", "tickerHistory", "cikHistory"),
+        return {**_pick(c, "symbol", "name", "sector", "industry", "tags", "benchmarkSymbol", "tickerHistory", "cikHistory"),
                 "keyFacts": [_pick(f, "label", "value", "unit", "periodEnd", "fiscalPeriod", "formType", "filedDate") for f in c.get("keyFacts", [])],
                 "lastClose": bars[-1] if bars else None, "returns": perf, "latestForecasts": latest,
                 "aiDecision": None if dec is None else _pick(dec, "asOfDate", "action", "probability", "rank", "explanation")}
@@ -481,14 +484,15 @@ def build() -> MCPServer:
     @_domain
     def add_company(ctx: Context, symbol: str, name: str | None = None, cik: str | None = None, sector: str | None = None,
                     industry: str | None = None, benchmark_symbol: str | None = None, member_since: str | None = None,
-                    ingest_sec: bool = True, sync_prices: bool = True) -> dict:
+                    ingest_sec: bool = True, sync_prices: bool = True, tags: list[str] | None = None) -> dict:
         """Add a US-listed company to the research universe (same as the Universe page's "Add company"). Only `symbol` is
         required: a missing name, CIK, sector, industry or benchmark ETF is filled in from SEC EDGAR (the sector is suggested
         from the SIC code; the answer says what was filled and whether the suggestion needs review). `sector` is one of
         Technology, Health Care, Financials, Consumer Discretionary, Consumer Staples, Communication Services, Industrials,
         Energy, Materials, Utilities, Real Estate; `benchmark_symbol` defaults to that sector's ETF. `member_since`
-        (YYYY-MM-DD) defaults to today. By default an SEC ingest and a price sync are queued so filings and prices arrive;
-        follow them with get_job. The company has no forecasts until the pipeline has run."""
+        (YYYY-MM-DD) defaults to today. `tags` are optional user-defined categories (e.g. ["AI", "China exposed"]) that
+        group stocks on the Companies page; they do not affect the models. By default an SEC ingest and a price sync are
+        queued so filings and prices arrive; follow them with get_job. The company has no forecasts until the pipeline has run."""
         require_admin(ctx)
         sym = (symbol or "").upper().strip()
         if not sym:
@@ -519,11 +523,24 @@ def build() -> MCPServer:
         if not benchmark_symbol:
             filled["benchmarkSymbol"] = bench
         body = universe_api.AddIn(symbol=sym, name=name, cik=cik, sector=sector, industry=industry, benchmarkSymbol=bench,
-                                  memberSince=_date(member_since, "member_since"), ingestSec=ingest_sec, syncPrices=sync_prices)
+                                  memberSince=_date(member_since, "member_since"), ingestSec=ingest_sec, syncPrices=sync_prices,
+                                  tags=tags)
         out = universe_api.add(body)
         return {"id": out["id"], "symbol": out["symbol"], "name": name, "cik": cik, "sector": sector, "industry": industry,
-                "benchmarkSymbol": bench, "filledFromSec": filled, "notes": notes,
+                "benchmarkSymbol": bench, "tags": UniverseService().tags_of(out["id"]), "filledFromSec": filled, "notes": notes,
                 "jobs": [_job(j, 5) for j in out["jobs"]], "nextSteps": out["nextSteps"]}
+
+    @tool_action
+    @_domain
+    def set_company_tags(ctx: Context, symbol: str, tags: list[str]) -> dict:
+        """Replace a company's user-defined tags (free-form categories such as "AI", "China exposed" or "watch only";
+        at most 20, each up to 40 characters of letters, digits, spaces and _ . & / + -). Pass an empty list to clear
+        them. Tags group stocks on the Companies page and in list_companies; they never change a forecast. `symbol`
+        may be a former ticker."""
+        require_admin(ctx)
+        cid = read.resolve(symbol)
+        u = UniverseService()
+        return {"symbol": TickerResolver().current_symbol(cid), "tags": u.set_tags(cid, tags)}
 
     @tool_action
     @_domain

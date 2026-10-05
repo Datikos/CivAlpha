@@ -31,6 +31,9 @@ export interface CompanySummary {
   symbol: string;
   name: string;
   sector: string;
+  industry?: string | null;
+  /** User-defined categories set on the Universe page (a theme, a watchlist); alphabetical, case-insensitive. */
+  tags?: string[];
   benchmarkSymbol: string;
   cik: string | null;
   latestClose: number | null;
@@ -130,6 +133,8 @@ export interface CompanyDetail {
   symbol: string;
   name: string;
   sector: string;
+  industry?: string | null;
+  tags?: string[];
   benchmarkSymbol: string;
   exchange: string | null;
   cik?: string | null;
@@ -946,6 +951,12 @@ export interface UniverseCompany {
   filingCount: number;
   forecastCount: number;
   deletable: boolean;
+  tags: string[];
+}
+
+export interface TagCount {
+  tag: string;
+  count: number;
 }
 
 export interface UniverseResponse {
@@ -955,6 +966,8 @@ export interface UniverseResponse {
   sectors: string[];
   industries: string[];
   productIndustries: string[];
+  /** Every tag in use with how many companies carry it, most used first. */
+  tags: TagCount[];
 }
 
 /** @deprecated the Universe page uses CompanyProfile (GET /universe/enrich). */
@@ -1002,6 +1015,7 @@ export interface AddCompanyRequest {
   memberSince: string | null;
   ingestSec: boolean;
   syncPrices?: boolean;
+  tags?: string[];
 }
 
 export interface AddCompanyResponse {

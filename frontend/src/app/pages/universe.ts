@@ -19,6 +19,16 @@ interface Draft {
   industry: string;
   benchmarkSymbol: string;
   memberSince: string;
+  /** Comma-separated user-defined tags, cleaned by the backend. */
+  tags: string;
+}
+
+/** "AI, China exposed" → ["AI", "China exposed"]; blanks dropped. */
+function splitTags(s: string): string[] {
+  return s
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean);
 }
 
 interface Notice {
@@ -210,6 +220,10 @@ const TICKER = /^[A-Za-z0-9.\-]{1,10}$/;
               Member since
               <input name="since" type="date" [(ngModel)]="draft.memberSince" />
             </label>
+            <label class="field wide">
+              <span class="nowrap">Tags (optional) <app-help text="Your own categories, comma-separated: a theme (AI, China exposed), a watchlist (core, watch only) or anything worth filtering by on the Companies page. Tags never reach the models." topic="tags" label="tags" /></span>
+              <input name="tags" [(ngModel)]="draft.tags" list="u-tags" placeholder="e.g. AI, China exposed" />
+            </label>
             <div class="wide options">
               <label class="small">
                 <input
@@ -272,7 +286,21 @@ const TICKER = /^[A-Za-z0-9.\-]{1,10}$/;
           <option [value]="s"></option>
         }
       </datalist>
+      <datalist id="u-tags">
+        @for (t of data()?.tags ?? []; track t.tag) {
+          <option [value]="t.tag">{{ t.count }} {{ t.count === 1 ? 'company' : 'companies' }}</option>
+        }
+      </datalist>
     </section>
+
+    @if (data()?.tags?.length) {
+      <p class="small muted tag-summary" style="margin: 1rem 0 0">
+        <app-icon name="tag" [size]="14" /> Tags in use:
+        @for (t of data()!.tags; track t.tag) {
+          <a class="chip tag" [routerLink]="['/companies']" [queryParams]="{ tag: t.tag }" [title]="'Companies tagged ' + t.tag">{{ t.tag }} · {{ t.count }}</a>
+        }
+      </p>
+    }
 
     @if (res.error()) {
       <div class="alert alert-error">{{ err(res.error()) }}</div>
@@ -285,6 +313,7 @@ const TICKER = /^[A-Za-z0-9.\-]{1,10}$/;
             <th>Ticker</th>
             <th>Company</th>
             <th>Sector / industry</th>
+            <th>Tags <app-help text="Your own categories for the stock, comma-separated when editing. They group and filter the Companies page and never reach the models." topic="tags" label="tags" /></th>
             <th>Benchmark</th>
             <th>Status</th>
             <th class="num">Prices</th>
@@ -329,6 +358,25 @@ const TICKER = /^[A-Za-z0-9.\-]{1,10}$/;
                   @if (c.industry) {
                     <div class="small muted">{{ c.industry }}</div>
                   }
+                }
+              </td>
+              <td>
+                @if (editing() === c.id) {
+                  <input
+                    [(ngModel)]="edit.tags"
+                    name="e-tags"
+                    list="u-tags"
+                    placeholder="comma-separated"
+                    style="width: 12rem"
+                  />
+                } @else if (c.tags?.length) {
+                  <span class="tags">
+                    @for (t of c.tags; track t) {
+                      <a class="chip tag" [routerLink]="['/companies']" [queryParams]="{ tag: t }" [title]="'Companies tagged ' + t">{{ t }}</a>
+                    }
+                  </span>
+                } @else {
+                  <span class="muted">—</span>
                 }
               </td>
               <td>
@@ -422,7 +470,7 @@ const TICKER = /^[A-Za-z0-9.\-]{1,10}$/;
             </tr>
           } @empty {
             <tr>
-              <td colspan="9" class="muted">
+              <td colspan="10" class="muted">
                 No stocks yet. Type a ticker above to add the first one.
               </td>
             </tr>
@@ -573,6 +621,12 @@ const TICKER = /^[A-Za-z0-9.\-]{1,10}$/;
     td.nowrap .small {
       white-space: nowrap;
     }
+    .tag-summary {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.3rem;
+    }
   `,
 })
 export class UniversePage {
@@ -619,7 +673,7 @@ export class UniversePage {
   protected readonly hasMoreSectors = computed(
     () => Object.keys(this.profile()?.sectorBenchmarks ?? {}).length > this.sectorChoices().length,
   );
-  protected edit = { name: '', sector: '', industry: '', benchmarkSymbol: '' };
+  protected edit = { name: '', sector: '', industry: '', benchmarkSymbol: '', tags: '' };
 
   constructor() {
     effect(() => {
@@ -656,6 +710,7 @@ export class UniversePage {
           industry: p.industry ?? '',
           benchmarkSymbol: p.benchmarkSymbol ?? '',
           memberSince: '',
+          tags: '',
         };
       },
       error: (e) => {
@@ -691,6 +746,7 @@ export class UniversePage {
         memberSince: d.memberSince || null,
         ingestSec: this.ingestSec(),
         syncPrices: this.syncPrices(),
+        tags: splitTags(d.tags),
       }),
       (r) => {
         const resp = r as {
@@ -718,12 +774,14 @@ export class UniversePage {
       sector: c.sector,
       industry: c.industry ?? '',
       benchmarkSymbol: c.benchmarkSymbol,
+      tags: (c.tags ?? []).join(', '),
     };
     this.editing.set(c.id);
   }
 
   protected saveEdit(c: UniverseCompany): void {
-    this.mutate('Edit', this.api.editCompany(c.id, { ...this.edit }), () => {
+    const { tags, ...fields } = this.edit;
+    this.mutate('Edit', this.api.editCompany(c.id, { ...fields, tags: splitTags(tags) }), () => {
       this.editing.set(null);
       return { text: `${c.symbol} updated.` };
     });
@@ -779,6 +837,7 @@ export class UniversePage {
       industry: '',
       benchmarkSymbol: '',
       memberSince: '',
+      tags: '',
     };
   }
 

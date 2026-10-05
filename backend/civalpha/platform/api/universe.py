@@ -40,16 +40,19 @@ def list_universe():
                (SELECT count(*) FROM filing f WHERE f.company_id = c.id) AS filing_count,
                (SELECT count(*) FROM forecast f WHERE f.company_id = c.id) AS forecast_count
         FROM company c ORDER BY active DESC, symbol"""))
+    tags = u.tags_by_company()
     for c in companies:
         if c["active"]:
             c["removedOn"] = None
         c["deletable"] = c["priceCount"] + c["filingCount"] + c["forecastCount"] == 0
+        c["tags"] = tags.get(c["id"], [])
     industries = set(db().scalars("SELECT DISTINCT industry FROM company WHERE industry IS NOT NULL"))
     industries |= {"SEMICONDUCTORS", "SEMICONDUCTOR_EQUIPMENT", "CONSUMER_ELECTRONICS", "NETWORKING_HARDWARE", "AUTOS"}
     industries = sorted(industries)
     return {"universe": u.universe_name(), "companies": companies, "benchmarks": u.benchmark_symbols(),
             "sectors": sorted(db().scalars("SELECT DISTINCT sector FROM company")), "industries": industries,
-            "productIndustries": [i for i in industries if product_for_industry(i) is not None]}
+            "productIndustries": [i for i in industries if product_for_industry(i) is not None],
+            "tags": camel_all(u.all_tags())}
 
 
 @router.get("/lookup")
@@ -87,12 +90,14 @@ class AddIn(BaseModel):
     memberSince: date | None = None
     ingestSec: bool | None = None
     syncPrices: bool | None = None
+    tags: list[str] | None = None        # user-defined categories, e.g. ["AI", "China exposed"]
 
 
 @router.post("/companies")
 def add(body: AddIn):
     u = UniverseService()
-    cid = u.add(body.symbol, body.name, body.cik, body.sector, body.industry, body.benchmarkSymbol, body.memberSince)
+    cid = u.add(body.symbol, body.name, body.cik, body.sector, body.industry, body.benchmarkSymbol, body.memberSince,
+                tags=body.tags)
     sym = body.symbol.upper().strip()
     bench = body.benchmarkSymbol.upper().strip()
     jobs: list[dict] = []
@@ -115,12 +120,27 @@ class EditIn(BaseModel):
     sector: str | None = None
     industry: str | None = None
     benchmarkSymbol: str | None = None
+    tags: list[str] | None = None        # omitted: unchanged; []: cleared
 
 
 @router.put("/companies/{company_id}")
 def edit(company_id: int, body: EditIn):
-    UniverseService().edit(company_id, body.name, body.sector, body.industry, body.benchmarkSymbol)
-    return {"id": company_id, "updated": True}
+    u = UniverseService()
+    u.edit(company_id, body.name, body.sector, body.industry, body.benchmarkSymbol)
+    out = {"id": company_id, "updated": True}
+    if body.tags is not None:
+        out["tags"] = u.set_tags(company_id, body.tags)
+    return out
+
+
+class TagsIn(BaseModel):
+    tags: list[str] | None = None
+
+
+@router.put("/companies/{company_id}/tags")
+def set_tags(company_id: int, body: TagsIn):
+    """Replaces a company's user-defined tags (an empty list clears them)."""
+    return {"id": company_id, "tags": UniverseService().set_tags(company_id, body.tags or [])}
 
 
 class EffectiveIn(BaseModel):

@@ -63,3 +63,24 @@ def test_admin_token_is_enforced_when_configured(api, monkeypatch):
     assert api.post("/api/events", json={}).status_code == 401
     assert api.get("/api/meta").status_code == 200
     assert api.get("/api/meta").json()["adminTokenRequired"] is True
+
+
+def test_company_tags_round_trip_through_the_api(api):
+    row = next(c for c in api.get("/api/admin/universe").json()["companies"] if c["symbol"] == "META")
+    r = api.put(f"/api/admin/universe/companies/{row['id']}", json={"tags": ["AI", " ai", "China exposed"]})
+    assert r.status_code == 200 and r.json()["tags"] == ["AI", "China exposed"]
+    universe = api.get("/api/admin/universe").json()
+    assert next(c for c in universe["companies"] if c["id"] == row["id"])["tags"] == ["AI", "China exposed"]
+    assert {"tag": "AI", "count": 1} in universe["tags"]
+    public = next(c for c in api.get("/api/companies").json() if c["symbol"] == "META")
+    assert public["tags"] == ["AI", "China exposed"] and public["industry"] == "INTERNET"
+    assert api.get("/api/companies/FB").json()["tags"] == ["AI", "China exposed"]
+    # a name-only edit leaves the tags alone; the tags endpoint replaces them; invalid tags are a 400
+    assert api.put(f"/api/admin/universe/companies/{row['id']}", json={"name": "Meta Platforms, Inc."}).status_code == 200
+    assert api.get("/api/companies/META").json()["tags"] == ["AI", "China exposed"]
+    r = api.put(f"/api/admin/universe/companies/{row['id']}/tags", json={"tags": ["watch only"]})
+    assert r.status_code == 200 and r.json()["tags"] == ["watch only"]
+    r = api.put(f"/api/admin/universe/companies/{row['id']}/tags", json={"tags": ["no<html>"]})
+    assert r.status_code == 400 and "letters, digits" in r.json()["error"]
+    assert api.put("/api/admin/universe/companies/999999/tags", json={"tags": []}).status_code == 404
+    assert api.put(f"/api/admin/universe/companies/{row['id']}/tags", json={"tags": []}).json()["tags"] == []

@@ -15,6 +15,7 @@ from ..settings import settings
 from ..sql import db
 from ..storage import DocumentStore
 from ..tickers import TickerResolver
+from ..universe import UniverseService
 
 router = APIRouter(prefix="/api")
 
@@ -93,7 +94,7 @@ def meta():
 def companies():
     out = camel_all(db().all("""
         SELECT c.id, (SELECT symbol FROM ticker_history t WHERE t.company_id = c.id ORDER BY valid_from DESC LIMIT 1) AS symbol,
-               c.name, c.sector, c.benchmark_symbol,
+               c.name, c.sector, c.industry, c.benchmark_symbol,
                (SELECT cik FROM cik_mapping m WHERE m.company_id = c.id AND m.valid_to IS NULL LIMIT 1) AS cik,
                p.close AS latest_close, p.trade_date AS latest_close_date
         FROM company c
@@ -109,7 +110,9 @@ def companies():
                          WHERE company_id IS NOT NULL AND action_type IN ('CASH_DIVIDEND', 'SPLIT')"""):
         actions.setdefault(a["company_id"], []).append((a["ex_date"], a["action_type"], a["value"]))
     closes = _recent_closes()
+    tags = UniverseService().tags_by_company()
     for c in out:
+        c["tags"] = tags.get(c["id"], [])
         c["latestForecasts"] = latest.get(c["id"], {})
         c["dividend"] = _dividend_summary(actions.get(c["id"], []), c["latestCloseDate"], c["latestClose"])
         own = closes.get(("c", c["id"]), [])
@@ -183,6 +186,7 @@ def company(symbol: str):
     c = camel(db().one("SELECT c.id, c.name, c.sector, c.industry, c.benchmark_symbol, c.exchange FROM company c WHERE c.id = :id",
                        id=cid))
     c["symbol"] = TickerResolver().current_symbol(cid)
+    c["tags"] = UniverseService().tags_of(cid)
     c["tickerHistory"] = camel_all(db().all("SELECT symbol, valid_from, valid_to, source FROM ticker_history WHERE company_id = :id ORDER BY valid_from",
                                             id=cid))
     c["cikHistory"] = camel_all(db().all("SELECT cik, valid_from, valid_to, source FROM cik_mapping WHERE company_id = :id ORDER BY valid_from",

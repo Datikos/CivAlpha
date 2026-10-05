@@ -3,7 +3,7 @@ from datetime import date
 
 import pytest
 
-from civalpha.platform.errors import BadRequest
+from civalpha.platform.errors import BadRequest, NotFound
 from civalpha.platform.tickers import Span, TickerResolver, pad_cik, resolve
 
 
@@ -84,3 +84,31 @@ def test_universe_can_be_managed_and_seeding_never_undoes_it(universe, tdb):
     tdb.execute("DELETE FROM price_bar WHERE company_id = :c", c=cid)
     universe.delete(cid)
     assert tdb.scalar("SELECT count(*) FROM company WHERE id = :id", id=cid) == 0
+
+
+def test_tags_are_cleaned_replaced_and_listed(universe, tdb):
+    from civalpha.platform.universe import MAX_TAGS, normalize_tags
+
+    # cleaning: trimmed, inner whitespace collapsed, blanks dropped, case-insensitive duplicates keep the first spelling
+    assert normalize_tags([" AI ", "ai", "China  exposed", "", None, "AI"]) == ["AI", "China exposed"]
+    assert normalize_tags("core, watch only,core") == ["core", "watch only"]        # a comma-separated string works too
+    assert normalize_tags(None) == []
+    with pytest.raises(BadRequest, match="letters, digits"):
+        normalize_tags(["bad<tag>"])
+    with pytest.raises(BadRequest, match="longer than"):
+        normalize_tags(["x" * 41])
+    with pytest.raises(BadRequest, match="at most"):
+        normalize_tags([f"t{i}" for i in range(MAX_TAGS + 1)])
+
+    meta = TickerResolver(tdb).company_by_cik("0001326801")
+    assert universe.set_tags(meta, ["Mega cap", "ai", " AI "]) == ["Mega cap", "ai"]
+    assert universe.tags_of(meta) == ["ai", "Mega cap"]                               # listed alphabetically, case-insensitive
+    cid = universe.add("ZZZT", "Tagged Co", "1234567", "Technology", None, "XLK", None, tags=["AI", "watch only"])
+    assert universe.tags_of(cid) == ["ai", "watch only"]                              # "AI" takes the spelling already in use
+    assert universe.tags_by_company() == {meta: ["ai", "Mega cap"], cid: ["ai", "watch only"]}
+    assert [(t["tag"], t["count"]) for t in universe.all_tags()] == [("ai", 2), ("Mega cap", 1), ("watch only", 1)]
+    assert universe.set_tags(meta, []) == [] and universe.tags_of(meta) == []        # an empty list clears
+    with pytest.raises(NotFound):
+        universe.set_tags(999999, ["x"])
+    universe.delete(cid)                                                              # tags go with the company
+    assert tdb.scalar("SELECT count(*) FROM company_tag WHERE company_id = :c", c=cid) == 0

@@ -33,7 +33,8 @@ Requires Docker with Compose v2. The stack uses about 0.8 GB of RAM while idle a
    open http://localhost:8088
    ```
 3. On the **Universe** page, add the stocks to track. **Look up on SEC** fills in the CIK and name; then pick a
-   sector, an industry and the sector benchmark ETF (for example `XLK` for technology).
+   sector, an industry and the sector benchmark ETF (for example `XLK` for technology). Optional **tags** are your own
+   categories (a theme such as `AI`, a watchlist such as `core`) for filtering the **Companies** page; the models never see them.
 4. On **Data & pipeline**, click **Run pipeline**. That one job:
    * downloads prices, dividends and splits for every stock and benchmark ETF;
    * ingests SEC filings (XBRL facts, passages, exposures);
@@ -302,8 +303,10 @@ jobs and ask where the evidence points. The server is `backend/civalpha/platform
 * **`add_company(symbol, ...)`:** adds a stock to the research universe like the Universe page does. Only the ticker is
   required; name, CIK, sector, industry and benchmark ETF are filled in from SEC EDGAR when omitted (the answer says
   what was filled and when the sector suggestion needs review). It queues an SEC ingest and a price sync unless told
-  not to. Same admin-token rule as the job tools. Removing or editing companies and adding events stay in the UI
-  and the REST API.
+  not to, and takes optional `tags`. Same admin-token rule as the job tools.
+* **`set_company_tags(symbol, tags)`:** replaces a stock's user-defined tags (a theme, a watchlist), so an assistant
+  can categorize the universe; `list_companies` and `get_company` return them. Removing or editing companies otherwise
+  and adding events stay in the UI and the REST API.
 * Resources `civalpha://about` and `civalpha://status`; prompt `investment_review(symbol)` walks through the evidence
   for one stock.
 

@@ -373,15 +373,20 @@ response is `401`. `GET /api/meta` reports `adminTokenRequired`.
 * `GET /api/admin/universe` → `{"universe":"nasdaq-core","companies":[{"id":1,"symbol":"AAPL","formerSymbols":null,"cik":"0000320193",
   "name":"Apple Inc.","sector":"Technology","industry":"CONSUMER_ELECTRONICS","benchmarkSymbol":"XLK","active":true,
   "memberSince":"2019-01-02","removedOn":null,"priceCount":1950,"lastPriceDate":"2026-10-02","filingCount":70,"forecastCount":12,
-  "deletable":false}],"benchmarks":["XLK"],"sectors":["Technology"],"industries":["SEMICONDUCTORS"],"productIndustries":["SEMICONDUCTORS"]}`
+  "deletable":false,"tags":["AI","core"]}],"benchmarks":["XLK"],"sectors":["Technology"],"industries":["SEMICONDUCTORS"],"productIndustries":["SEMICONDUCTORS"],
+  "tags":[{"tag":"AI","count":3},{"tag":"core","count":1}]}` — `tags` are user-defined categories (a theme, a watchlist); the top-level list counts the companies carrying each
 * `GET /api/admin/universe/lookup?symbol=BDSX` → `{"symbol","cik","name","source"}` from SEC company_tickers.json (404 if unknown)
 * `GET /api/admin/universe/enrich?symbol=NVDA` → `{"symbol","cik","name","source","exchange","sic","sicDescription","formerNames",
   "sector","benchmarkSymbol","industry","sectorConfidence":"high"|"review"|null,"sectorNote","existing":{"companyId","symbol","active"}|null,
   "sectorAlternatives":[{"sector","benchmarkSymbol"},…],"sectorBenchmarks":{"Technology":"XLK",…},"warnings":[...],"priceProviderEnabled"}` — everything EDGAR knows about a ticker plus a sector / benchmark ETF suggested from its SIC
   code, to prefill the add form. Never fails for an unknown ticker or an unreachable source: missing fields are null and explained in `warnings`.
-* `POST /api/admin/universe/companies` body `{"symbol","name","cik","sector","industry","benchmarkSymbol","memberSince","ingestSec","syncPrices"}`
+* `POST /api/admin/universe/companies` body `{"symbol","name","cik","sector","industry","benchmarkSymbol","memberSince","ingestSec","syncPrices","tags"}`
   → `{"id","symbol","jobs":[job,…],"nextSteps":[…]}`; `ingestSec` queues a SEC_INGEST job, `syncPrices` a PRICE_SYNC job (when a price provider is configured)
-* `PUT /api/admin/universe/companies/{id}` body `{"name","sector","industry","benchmarkSymbol"}` (omitted fields unchanged)
+* `PUT /api/admin/universe/companies/{id}` body `{"name","sector","industry","benchmarkSymbol","tags"}` (omitted fields unchanged; `tags` replaces the whole list)
+* `PUT /api/admin/universe/companies/{id}/tags` body `{"tags":["AI","China exposed"]}` → `{"id","tags"}` — replaces the company's tags (`[]` clears).
+  Tags are trimmed, at most 20 per company and 40 characters each (letters, digits, spaces and `_ . & / + -`); a tag already in use on
+  another company keeps that spelling whatever case is sent, so a tag is one tag universe-wide. `GET /api/companies` and
+  `GET /api/companies/{symbol}` return each company's `tags` (and `industry`).
 * `POST /api/admin/universe/companies/{id}/remove` / `/restore` body `{"effectiveDate"}` (optional, default today)
 * `POST /api/admin/universe/companies/{id}/ticker` body `{"symbol","effectiveDate"}`
 * `DELETE /api/admin/universe/companies/{id}` — only while no data is attached (400 otherwise)
@@ -405,7 +410,7 @@ Tools call the same code as the REST endpoints and return condensed JSON (also a
 | Tool | REST equivalent | Returns / notes |
 |---|---|---|
 | `get_status` | `GET /api/meta` + companies + strategy run | target, disclaimers, sources, data cutoff, symbols, strategy-lab summary |
-| `list_companies` | `GET /api/companies` | |
+| `list_companies` | `GET /api/companies` | with sector, industry and user-defined `tags` |
 | `get_company(symbol)` | `GET /api/companies/{symbol}` (+ prices, decisions) | key facts, 1/3/12-month returns vs sector ETF, latest forecasts, AI decision; former tickers resolve |
 | `get_financials(symbol, as_of_date?, quarters?)` | `GET /api/companies/{symbol}/financials` | last `quarters` points per series (default 8) |
 | `get_prices(symbol, from_date?)` | `GET /api/companies/{symbol}/prices` | summary: first/last/high/low, returns, corporate actions |
@@ -422,7 +427,8 @@ Tools call the same code as the REST endpoints and return condensed JSON (also a
 | `investment_candidates` | — | see below |
 | `list_jobs(limit?)` / `get_job(job_id, wait_seconds?)` | `GET /api/admin/jobs` | admin |
 | `run_pipeline`, `update_prices`, `ingest_sec_filings(symbol)`, `evaluate_models`, `issue_forecasts(as_of_date?)`, `run_strategy_backtest`, `make_ai_decisions(as_of_date?)`, `run_time_machine(as_of_date)`, `run_doubler_study`, `resolve_outcomes` | `POST /api/admin/**` | admin; each takes `wait_seconds?` (max 600) and returns the job with its log tail |
-| `add_company(symbol, name?, cik?, sector?, industry?, benchmark_symbol?, member_since?, ingest_sec?, sync_prices?)` | `POST /api/admin/universe/companies` (+ `GET .../enrich`) | admin; missing name / CIK / sector / industry / benchmark come from EDGAR (`filledFromSec`, `notes` on a sector that needs review); `ingest_sec` and `sync_prices` default to true and return the queued jobs; `nextSteps` lists what still has to be done by hand |
+| `add_company(symbol, name?, cik?, sector?, industry?, benchmark_symbol?, member_since?, ingest_sec?, sync_prices?, tags?)` | `POST /api/admin/universe/companies` (+ `GET .../enrich`) | admin; missing name / CIK / sector / industry / benchmark come from EDGAR (`filledFromSec`, `notes` on a sector that needs review); `ingest_sec` and `sync_prices` default to true and return the queued jobs; `nextSteps` lists what still has to be done by hand |
+| `set_company_tags(symbol, tags)` | `PUT /api/admin/universe/companies/{id}/tags` | admin; replaces the company's user-defined tags (`[]` clears); former tickers resolve |
 
 `investment_candidates` returns:
 ```json

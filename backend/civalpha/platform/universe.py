@@ -35,6 +35,38 @@ def _blank_to_none(v: str | None) -> str | None:
     return None if v is None or not str(v).strip() else str(v).strip()
 
 
+MAX_TAGS = 20
+MAX_TAG_LENGTH = 40
+_TAG = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _.&/+\-]*")
+
+
+def normalize_tags(tags) -> list[str]:
+    """Cleans a list of user-defined tags: trimmed, inner whitespace collapsed, case-insensitive duplicates dropped
+    (the first spelling wins), blanks ignored. Raises BadRequest for a tag that is too long, uses other characters
+    than letters, digits, space, _ . & / + -, or when there are more than MAX_TAGS."""
+    if tags is None:
+        return []
+    if isinstance(tags, str):
+        tags = tags.split(",")
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in tags:
+        t = " ".join(str(raw or "").split())
+        if not t:
+            continue
+        if len(t) > MAX_TAG_LENGTH:
+            raise BadRequest(f"tag {t[:MAX_TAG_LENGTH]!r}… is longer than {MAX_TAG_LENGTH} characters")
+        if not _TAG.fullmatch(t):
+            raise BadRequest(f"tag {t!r} may only use letters, digits, spaces and _ . & / + -")
+        if t.lower() in seen:
+            continue
+        seen.add(t.lower())
+        out.append(t)
+    if len(out) > MAX_TAGS:
+        raise BadRequest(f"at most {MAX_TAGS} tags per company")
+    return out
+
+
 class UniverseService:
     def __init__(self, database: Db | None = None):
         self.db = database or db()
@@ -50,9 +82,11 @@ class UniverseService:
 
     # ------------------------------------------------------------------ management
     def add(self, symbol, name, cik, sector, industry, benchmark_symbol, member_since: date | None,
-            former_tickers: list[TickerSpan] | None = None) -> int:
-        """Adds a company; `former_tickers` records earlier symbols (e.g. FB before META) as closed spans."""
+            former_tickers: list[TickerSpan] | None = None, tags: list[str] | None = None) -> int:
+        """Adds a company; `former_tickers` records earlier symbols (e.g. FB before META) as closed spans, `tags` are
+        the user-defined categories it starts with (see `normalize_tags`)."""
         sym = _required(symbol, "symbol").upper().strip()
+        clean_tags = normalize_tags(tags)
         if not re.fullmatch(r"[A-Z0-9.\-]{1,10}", sym):
             raise BadRequest("symbol must be 1-10 letters, digits, '.' or '-'")
         c = pad_cik(_required(cik, "cik"))
@@ -73,8 +107,11 @@ class UniverseService:
             spans = list(former_tickers or [])
             # the current symbol starts where the last former one ended (or at the epoch without history)
             spans.append(TickerSpan(sym, max((t.valid_to for t in spans if t.valid_to), default=EPOCH), None))
-            return self._create(_required(name, "name").strip(), c, _required(sector, "sector").strip(), _blank_to_none(industry),
-                                bench, spans, since, "manual")
+            cid = self._create(_required(name, "name").strip(), c, _required(sector, "sector").strip(), _blank_to_none(industry),
+                               bench, spans, since, "manual")
+            if clean_tags:
+                self.set_tags(cid, clean_tags)
+            return cid
 
     def _create(self, name, cik, sector, industry, benchmark, spans, member_since, source) -> int:
         universe = self.universe_name()
@@ -96,6 +133,35 @@ class UniverseService:
                    benchmark_symbol = coalesce(:b, benchmark_symbol) WHERE id = :id""",
             n=_blank_to_none(name), s=_blank_to_none(sector), i=_blank_to_none(industry),
             b=None if not benchmark_symbol or not benchmark_symbol.strip() else benchmark_symbol.upper().strip(), id=company_id)
+
+    # ------------------------------------------------------------------ tags
+    def set_tags(self, company_id: int, tags) -> list[str]:
+        """Replaces a company's tags with the cleaned list and returns it (an empty list clears them). A tag that
+        another company already carries in a different case takes that spelling, so a tag is one tag universe-wide."""
+        self._require(company_id)
+        clean = normalize_tags(tags)
+        with self.db.transaction():
+            self.db.execute("DELETE FROM company_tag WHERE company_id = :c", c=company_id)
+            known = {t.lower(): t for t in self.db.scalars("SELECT DISTINCT tag FROM company_tag")}
+            clean = [known.get(t.lower(), t) for t in clean]
+            for t in clean:
+                self.db.execute("INSERT INTO company_tag (company_id, tag) VALUES (:c, :t)", c=company_id, t=t)
+        return clean
+
+    def tags_of(self, company_id: int) -> list[str]:
+        return list(self.db.scalars("SELECT tag FROM company_tag WHERE company_id = :c ORDER BY lower(tag)", c=company_id))
+
+    def tags_by_company(self) -> dict[int, list[str]]:
+        """Every company's tags, keyed by company id (companies without tags are absent)."""
+        out: dict[int, list[str]] = {}
+        for r in self.db.all("SELECT company_id, tag FROM company_tag ORDER BY company_id, lower(tag)"):
+            out.setdefault(r["company_id"], []).append(r["tag"])
+        return out
+
+    def all_tags(self) -> list[dict]:
+        """Distinct tags across the universe with how many companies carry each, most used first."""
+        return self.db.all("""SELECT tag, count(*) AS count FROM company_tag
+                              GROUP BY tag ORDER BY count DESC, lower(tag)""")
 
     def remove(self, company_id: int, effective: date | None) -> None:
         """Ends membership on `effective` (exclusive): the stock is no longer a member from that date on."""
@@ -151,7 +217,7 @@ class UniverseService:
             shown = "{" + ", ".join(f"{k}={v}" for k, v in used.items()) + "}"
             raise BadRequest(f"company {company_id} has data attached {shown}; remove it from the universe instead (its history is kept)")
         with self.db.transaction():
-            for t in ("universe_membership", "ticker_history", "cik_mapping"):
+            for t in ("company_tag", "universe_membership", "ticker_history", "cik_mapping"):
                 self.db.execute(f"DELETE FROM {t} WHERE company_id = :c", c=company_id)
             self.db.execute("DELETE FROM company WHERE id = :c", c=company_id)
 

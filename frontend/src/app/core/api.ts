@@ -121,9 +121,14 @@ export class ApiService {
 
   editCompany(
     id: number,
-    body: { name?: string; sector?: string; industry?: string; benchmarkSymbol?: string },
+    body: { name?: string; sector?: string; industry?: string; benchmarkSymbol?: string; tags?: string[] },
   ): Observable<unknown> {
     return this.http.put(`${BASE}/admin/universe/companies/${id}`, body);
+  }
+
+  /** Replaces a company's user-defined tags; an empty list clears them. */
+  setCompanyTags(id: number, tags: string[]): Observable<{ id: number; tags: string[] }> {
+    return this.http.put<{ id: number; tags: string[] }>(`${BASE}/admin/universe/companies/${id}/tags`, { tags });
   }
 
   removeCompany(id: number, effectiveDate?: string | null): Observable<unknown> {
