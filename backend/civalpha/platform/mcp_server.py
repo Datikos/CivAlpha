@@ -388,6 +388,34 @@ def build() -> MCPServer:
                                "rulesHolding": sorted(k for k, v in (x.get("ruleVotes") or {}).items() if v)}
                               for x in r.get("decisions", [])]}
 
+    # ------------------------------------------------------------------ setup playbook
+    @tool_read
+    @_domain
+    def get_setup_playbook(horizon: int = 21, fresh_only: bool = True) -> dict:
+        """The setup playbook: catalysts and technical situations a trader waits for (earnings surprise becoming public,
+        dividend raise or cut, 52-week breakout or low, golden/death cross, oversold pullback, crash, volume surge,
+        tariff or rate shock), each scored on the excess return over the sector ETF that followed within `horizon`
+        trading days (5, 21 or 63): how often it fired, hit rate vs the base rate, mean excess with a bootstrap interval,
+        payoff asymmetry, and a verdict corrected for the number of setups tested. `today` lists which setups fired in
+        the last sessions on which tracked stocks: the daily scan. Quote the verdict grades, never a base rate alone."""
+        r = read.setup_study()
+        run = r.get("run")
+        if not run:
+            return {"run": None, "note": "No setup playbook yet: run_setup_study makes one (it also runs with every pipeline run)."}
+        res = run["result"]
+        h = str(horizon)
+        if h not in res["base"]:
+            raise ToolError(f"horizon must be one of {', '.join(res['base'])}")
+        rows = [{**_pick(s, "key", "family", "name", "trigger", "triggers"),
+                 **_pick(s["horizons"][h], "n", "hitRate", "lift", "meanExcess", "medianExcess", "payoff", "ciLow", "ciHigh", "z", "grade", "verdict")}
+                for s in res["setups"]]
+        rows.sort(key=lambda x: -(x.get("z") or -99))
+        today = [t for t in res["today"]["setups"] if t["stocks"]] if fresh_only else res["today"]["setups"]
+        return {"runId": run["id"], "runAt": run["runAt"], "dataCutoff": res["dataCutoff"], "headline": res["headline"],
+                "horizon": horizon, "base": res["base"][h], "tests": res["config"]["tests"], "bonferroniZ": res["config"]["bonferroniZ"],
+                "setups": rows, "today": {"asOfDate": res["today"]["asOfDate"], "freshDays": res["today"]["freshDays"], "setups": today},
+                "disclaimers": res["disclaimers"]}
+
     # ------------------------------------------------------------------ doubler study
     @tool_read
     @_domain
@@ -550,13 +578,14 @@ def build() -> MCPServer:
     @tool_action
     @_domain
     def expand_universe(ctx: Context, min_public_float_usd: float = 2e9, exchanges: list[str] | None = None, limit: int = 50,
-                        tag: str | None = None, symbols: list[str] | None = None, ingest_sec: bool = True,
+                        tag: str | None = None, symbols: list[str] | None = None, ingest_sec: bool = False,
                         sync_prices: bool = True, wait_seconds: int = 0) -> dict:
         """Add many companies at once (the Universe page's "Expand"): the discover_companies result for these filters, or
         only the listed `symbols` among them, each with a sector suggested from its SIC code; an ambiguous code adds the
         company under the likeliest sector plus the tag "sector review". `tag` labels the whole batch (e.g. "nasdaq-large").
-        One job does the adding and, when `ingest_sec`, the first SEC ingest (about 10 s per company); `sync_prices` queues
-        a price sync, which a provider quota may spread over several runs. Follow the job with get_job."""
+        One job does the adding; `sync_prices` queues a price sync, which a provider quota may spread over several runs.
+        Filings arrive with the next pipeline run (hours for a large batch); `ingest_sec` ingests them inline instead, which
+        blocks the worker queue for as long. Follow the job with get_job."""
         require_admin(ctx)
         d = universe_api.discover(",".join(exchanges or universe_api.DEFAULT_EXCHANGES), min_public_float_usd, limit)
         cands = d["candidates"]
@@ -610,6 +639,13 @@ def build() -> MCPServer:
         """Record the AI strategy's decisions for the latest trading day (or a given date)."""
         d = _date(as_of_date, "as_of_date")
         return _action(ctx, lambda: admin.strategy_decide(admin.DateIn(asOfDate=d)), wait_seconds)
+
+    @tool_action
+    @_domain
+    def run_setup_study(ctx: Context, wait_seconds: int = 0) -> dict:
+        """Run the setup playbook study on the stored prices, filings, dividends and events and store it. Read it with
+        get_setup_playbook."""
+        return _action(ctx, admin.setup_study, wait_seconds)
 
     @tool_action
     @_domain

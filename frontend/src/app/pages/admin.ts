@@ -308,6 +308,14 @@ const JOBS_SHOWN = 10;
             >
               Doubler study
             </button>
+            <button
+              type="button"
+              class="btn"
+              [disabled]="busy()"
+              (click)="run('Setup playbook', api.setupStudy())"
+            >
+              Setup playbook
+            </button>
           </div>
         </div>
       </div>

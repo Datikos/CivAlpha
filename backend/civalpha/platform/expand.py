@@ -4,7 +4,9 @@ Each candidate is profiled from EDGAR (sector, benchmark ETF and industry sugges
 member from today with the chosen tag. An ambiguous SIC code still adds the company, under the most likely sector, with
 the extra tag SECTOR_REVIEW_TAG so the Universe page can be used to confirm it; a company whose SIC code maps to no
 sector is skipped and listed in the log. Prices arrive through one PRICE_SYNC job (the provider's quota decides how many
-symbols each run can fetch; the rest follow on later runs) and filings through an optional inline ingest.
+symbols each run can fetch; the rest follow on later runs). Filings arrive with the next pipeline run, which ingests
+every member; an inline ingest is optional because a first ingest takes from seconds to minutes per company (a mega-cap
+has a decade of 10-Ks and 10-Qs to parse) and blocks the worker queue meanwhile.
 """
 from __future__ import annotations
 
@@ -75,13 +77,15 @@ class UniverseExpansion:
             job = self.jobs.submit("PRICE_SYNC", {"reason": f"universe expanded by {len(out.added)} companies"})
             out.price_job = int(job["id"])
             log(f"queued price sync (job #{out.price_job}); a provider quota may spread the download over several runs")
-        if out.added and params.get("ingestSec", True) and ingest is not None:
-            log(f"ingesting SEC filings for {len(out.added)} companies (about 10 s each)")
+        if out.added and params.get("ingestSec", False) and ingest is not None:
+            log(f"ingesting SEC filings for {len(out.added)} companies (seconds to minutes each; the price sync waits meanwhile)")
             for a in out.added:
                 try:
                     ingest(a["companyId"], log)
                 except Exception as e:  # noqa: BLE001
                     log(f"{a['symbol']}: SEC ingest failed ({e}); the next pipeline run retries it")
+        elif out.added:
+            log("SEC filings for the new companies arrive with the next pipeline run (Data & pipeline -> Run pipeline)")
         return out
 
     def _add_one(self, c: dict, tags: list[str], since: date | None, out: Expansion, log: Log) -> None:

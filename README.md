@@ -159,6 +159,28 @@ How an event is linked to a company:
   * `issue_mode` is `LIVE` or `REPLAY`. `REPLAY` means the forecast was published after its data cutoff, and the
     UI labels it.
 
+## Setup playbook: what a trader waits for, with base rates
+
+A discretionary trader does not forecast every stock every day; they wait for a situation. The **Playbook** page
+(`/playbook`, also the last step of every pipeline run) scores the situations the platform can recognise at the close
+from data known then, each on the excess return over the sector ETF that followed within 5, 21 and 63 trading days:
+
+| Family | Setups |
+|---|---|
+| Earnings | an earnings beat or miss becoming public (standardized surprise ≥ 1 or ≤ −1 on the acceptance day); a revenue beat |
+| Dividend | a regular dividend raised or cut against a year earlier (on the ex-date) |
+| Trend | first close at a new 52-week high; golden cross; death cross |
+| Reversal | first close at a new 52-week low; RSI(2) oversold above the 200-day average; a −20% month |
+| Volume | volume at 2× its 20-day average on a ±3% day |
+| Event | an official tariff or rate shock first hitting an exposed or leveraged company (the model's shock features) |
+
+Every setup fires once per episode and is reported with how often it fired, the hit rate against the base rate of all
+stock-days, the mean and median excess with a block-bootstrap interval, the payoff asymmetry (average win over average
+loss), and a verdict: SUPPORTED only when the mean excess clears the Bonferroni-corrected bar for the 45 setup-horizon
+pairs tested, SUGGESTIVE when only the plain 95% interval is above zero. The page also lists which setups fired in the
+last five sessions on which stocks: the daily scan. Code: `backend/civalpha/strategies/setups.py`;
+`backend/tests/test_setups.py` checks look-ahead per setup, edge triggering and that noise supports nothing.
+
 ## Strategy lab: AI entry/exit vs classic theories
 
 **Data & pipeline → Run strategy backtest** (also the last step of every pipeline run) backtests these long-only

@@ -100,6 +100,13 @@ export const NAV_GROUPS: NavGroup[] = [
         keywords: 'replay point in time',
       },
       {
+        path: '/playbook',
+        label: 'Setup playbook',
+        icon: 'zap',
+        exact: false,
+        keywords: 'setups catalysts base rates earnings breakout golden cross playbook',
+      },
+      {
         path: '/doublers',
         label: 'Doubler study',
         icon: 'arrow',

@@ -112,6 +112,11 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/timemachine').then((m) => m.TimeMachinePage),
   },
   {
+    path: 'playbook',
+    title: 'Setup playbook · CivAlpha',
+    loadComponent: () => import('./pages/playbook').then((m) => m.PlaybookPage),
+  },
+  {
     path: 'doublers',
     title: 'Doubler study · CivAlpha',
     loadComponent: () => import('./pages/doublers').then((m) => m.DoublersPage),

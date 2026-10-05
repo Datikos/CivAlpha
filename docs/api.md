@@ -293,6 +293,28 @@ append-only (UPDATE/DELETE are rejected by the database).
 
 ## Doubler study
 
+`GET /api/setups` — the latest setup playbook (`run`, null before the first one) and the list of earlier `runs`
+(`id`, `runAt`, `dataCutoff`, `headline`). `GET /api/setups/{id}` — one run (404 if unknown). `run.result`:
+```json
+{ "version": "setups-0.1.0", "dataCutoff": "2026-10-02", "start": "2019-01-02", "years": 7.7, "universeSize": 40, "stockDays": 70000,
+  "config": {"horizons": [5, 21, 63], "freshDays": 5, "minTriggers": 30, "tests": 45, "bonferroniZ": 3.26, "...": "..."},
+  "families": ["EARNINGS", "DIVIDEND", "TREND", "REVERSAL", "VOLUME", "EVENT"],
+  "base": {"21": {"n": 68000, "hitRate": 0.49, "meanExcess": 0.001, "medianExcess": -0.002, "p10": -0.09, "p90": 0.10, "avgWin": 0.05, "avgLoss": -0.05, "payoff": 1.0}},
+  "setups": [{"key": "EARNINGS_BEAT", "family": "EARNINGS", "name": "Earnings beat becomes public", "trigger": "...", "origin": "...", "triggers": 210,
+              "horizons": {"21": {"n": 205, "hitRate": 0.55, "lift": 1.12, "meanExcess": 0.012, "medianExcess": 0.008, "p10": -0.08, "p90": 0.11,
+                                  "avgWin": 0.06, "avgLoss": -0.05, "payoff": 1.2, "ciLow": -0.002, "ciHigh": 0.026, "stdErr": 0.007, "z": 1.7,
+                                  "hitCiLow": 0.48, "hitCiHigh": 0.62, "grade": "NOISE", "verdict": "..."}}}],
+  "today": {"asOfDate": "2026-10-02", "freshDays": 5, "stockCount": 6,
+            "setups": [{"key": "BREAKOUT_52W", "name": "New 52-week high", "family": "TREND",
+                        "stocks": [{"companyId": 3, "symbol": "NVDA", "name": "NVIDIA Corporation", "date": "2026-10-01", "daysAgo": 1}]}]},
+  "disclaimers": ["..."], "headline": "15 setups tested at 5, 21, 63 trading days on 40 stocks ..." }
+```
+A setup fires on the first day its condition holds (edge-triggered). Outcomes are the stock's excess return over its sector
+ETF from the next close over `horizon` days. `grade` is `SUPPORTED` (z = mean / bootstrap standard error above the
+Bonferroni-corrected bar for `tests` setup-horizon pairs), `SUGGESTIVE` (95% block-bootstrap interval above zero only),
+`NEGATIVE` (interval below zero), `NOISE`, or `NOT_TESTABLE` (fewer than `minTriggers` triggers). `payoff` is the average
+win divided by the average loss. `today.setups` lists the tracked stocks each setup fired on in the last `freshDays` sessions.
+
 `GET /api/doublers` — the latest study (`run`, null before the first one) and the list of earlier `runs`
 (`id`, `runAt`, `dataCutoff`, `headline`). `GET /api/doublers/{id}` — one run (404 if unknown).
 
@@ -376,6 +398,7 @@ response is `401`. `GET /api/meta` reports `adminTokenRequired`.
 * `POST /api/admin/timemachine` body `{"asOfDate": "2025-06-30"}` → job — forecast as of that past close with only the
   data known then, then score it against what followed (400 for today or a future date)
 * `POST /api/admin/strategies/backtest` → job — backtest every strategy and store a new run (also part of every pipeline run)
+* `POST /api/admin/setups/study` → job — run the setup playbook and store it (also part of every pipeline run)
 * `POST /api/admin/doublers/study` → job — run the doubler study and store it (also part of every pipeline run)
 * `POST /api/admin/strategies/decide` body `{"asOfDate": "2026-09-30"}` (optional) → job — store the AI's decisions for
   that trading day and explain ENTER/EXIT actions when a language model is configured
@@ -413,8 +436,9 @@ response is `401`. `GET /api/meta` reports `adminTokenRequired`.
 * `POST /api/admin/universe/expand` body `{"candidates":[{"symbol","cik","name"}],"tag","tags","memberSince","ingestSec","syncPrices"}`
   → `{"job","count","notes"}` — one `UNIVERSE_EXPAND` job adds every candidate with a sector, industry and benchmark ETF suggested
   from its SIC code (an ambiguous code adds the company under the likeliest sector plus the tag `sector review`; an unmapped code
-  skips it and says so in the log), tagged with `tag`/`tags`, then queues one `PRICE_SYNC` (`syncPrices`, default true) and
-  ingests each company's filings inline (`ingestSec`, default true). At most 1000 candidates; 400 while another expansion is
+  skips it and says so in the log), tagged with `tag`/`tags`, then queues one `PRICE_SYNC` (`syncPrices`, default true).
+  `ingestSec` (default false) ingests each company's filings inline instead of leaving them to the next pipeline run; a first
+  ingest takes seconds to minutes per company and blocks the worker queue meanwhile. At most 1000 candidates; 400 while another expansion is
   queued or running.
 * `POST /api/admin/prices/sync` → job — download prices from the configured provider (`GET /api/meta` → `priceProvider`)
 
@@ -449,10 +473,11 @@ Tools call the same code as the REST endpoints and return condensed JSON (also a
 | `get_strategies` / `get_strategy(key, trades?)` | `GET /api/strategies`, `GET /api/strategies/{key}` | no equity curves |
 | `get_decisions(as_of_date?)` | `GET /api/decisions` | top 3 factors and the rules holding each stock |
 | `list_time_machine_runs` / `get_time_machine_run(run_id, horizon?)` | `GET /api/timemachine`, `GET /api/timemachine/{id}` | per-stock prediction vs actual for one horizon |
+| `get_setup_playbook(horizon?, fresh_only?)` | `GET /api/setups` | every setup's hit rate, lift, mean excess with interval, payoff and corrected verdict at one horizon, plus the stocks each setup fired on in the last sessions |
 | `get_doubler_study(horizon?, episodes?)` | `GET /api/doublers` | base rate, screen vs control with intervals, latest episodes, profile medians, stocks flagged today |
 | `investment_candidates` | — | see below |
 | `list_jobs(limit?)` / `get_job(job_id, wait_seconds?)` | `GET /api/admin/jobs` | admin |
-| `run_pipeline`, `update_prices`, `ingest_sec_filings(symbol)`, `evaluate_models`, `issue_forecasts(as_of_date?)`, `run_strategy_backtest`, `make_ai_decisions(as_of_date?)`, `run_time_machine(as_of_date)`, `run_doubler_study`, `resolve_outcomes` | `POST /api/admin/**` | admin; each takes `wait_seconds?` (max 600) and returns the job with its log tail |
+| `run_pipeline`, `update_prices`, `ingest_sec_filings(symbol)`, `evaluate_models`, `issue_forecasts(as_of_date?)`, `run_strategy_backtest`, `make_ai_decisions(as_of_date?)`, `run_time_machine(as_of_date)`, `run_setup_study`, `run_doubler_study`, `resolve_outcomes` | `POST /api/admin/**` | admin; each takes `wait_seconds?` (max 600) and returns the job with its log tail |
 | `add_company(symbol, name?, cik?, sector?, industry?, benchmark_symbol?, member_since?, ingest_sec?, sync_prices?, tags?)` | `POST /api/admin/universe/companies` (+ `GET .../enrich`) | admin; missing name / CIK / sector / industry / benchmark come from EDGAR (`filledFromSec`, `notes` on a sector that needs review); `ingest_sec` and `sync_prices` default to true and return the queued jobs; `nextSteps` lists what still has to be done by hand |
 | `discover_companies(min_public_float_usd?, exchanges?, limit?)` | `GET /api/admin/universe/discover` | candidates for a universe expansion with the quota and pipeline-time notes |
 | `expand_universe(min_public_float_usd?, exchanges?, limit?, tag?, symbols?, ingest_sec?, sync_prices?, wait_seconds?)` | `GET .../discover` + `POST /api/admin/universe/expand` | admin; adds the discovered candidates (or only `symbols` among them) in one job |

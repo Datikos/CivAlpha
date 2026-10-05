@@ -126,7 +126,7 @@ function money(v: number): string {
               </table>
             </div>
             <div class="confirm">
-              <label class="small"><input type="checkbox" [checked]="ingestSec()" (change)="ingestSec.set(!ingestSec())" /> ingest SEC filings now (about 10 s each)</label>
+              <label class="small"><input type="checkbox" [checked]="ingestSec()" (change)="ingestSec.set(!ingestSec())" /> ingest SEC filings now (seconds to minutes each; otherwise the next pipeline run does it)</label>
               <label class="small"><input type="checkbox" [checked]="syncPrices()" (change)="syncPrices.set(!syncPrices())" /> download prices</label>
               <button type="button" class="btn btn-primary" (click)="expand()" [disabled]="busy()">
                 <app-icon name="globe" [size]="16" /> Add {{ r.candidates.length }} {{ r.candidates.length === 1 ? 'company' : 'companies' }}
@@ -178,7 +178,7 @@ export class UniverseExpand {
   protected readonly minFloat = signal(2e9);
   protected readonly limit = signal(100);
   protected readonly tag = signal('');
-  protected readonly ingestSec = signal(true);
+  protected readonly ingestSec = signal(false);
   protected readonly syncPrices = signal(true);
   protected readonly busy = signal(false);
   protected readonly error = signal<string | null>(null);

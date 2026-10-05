@@ -100,7 +100,8 @@ def plan_notes(n_new: int) -> list[str]:
         out.append("No price provider is configured: the new companies need a prices CSV import before they get forecasts.")
     if n_new > 0:
         out.append("Every pipeline run grows with the universe (roughly 5-10 seconds per stock for the walk-forward evaluation "
-                   "and the strategy lab); the first SEC ingest takes about 10 seconds per company.")
+                   "and the strategy lab). The first SEC ingest of a company takes from seconds to several minutes depending on "
+                   "its filing history: the next pipeline run after a large batch takes hours.")
     return out
 
 
@@ -132,7 +133,7 @@ class ExpandIn(BaseModel):
     tag: str | None = None                   # one tag for the whole batch, e.g. "nasdaq-large"
     tags: list[str] | None = None
     memberSince: date | None = None
-    ingestSec: bool | None = True
+    ingestSec: bool | None = False      # inline ingest blocks the worker for hours on a large batch; the pipeline does it anyway
     syncPrices: bool | None = True
 
 
@@ -149,7 +150,7 @@ def expand(body: ExpandIn):
         raise BadRequest("an expansion is already queued or running; wait for it to finish")
     tags = list(body.tags or []) + ([body.tag] if body.tag else [])
     params = {"candidates": cands, "tags": tags, "memberSince": body.memberSince.isoformat() if body.memberSince else None,
-              "ingestSec": body.ingestSec is not False, "syncPrices": body.syncPrices is not False}
+              "ingestSec": bool(body.ingestSec), "syncPrices": body.syncPrices is not False}
     return {"job": camel(jobs.submit("UNIVERSE_EXPAND", params)), "count": len(cands), "notes": plan_notes(len(cands))}
 
 

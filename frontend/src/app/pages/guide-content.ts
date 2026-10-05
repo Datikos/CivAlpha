@@ -175,6 +175,21 @@ export const PAGES: PageCard[] = [
     caution: 'One date is one draw. It is an illustration; the Accuracy and Strategy lab pages hold the multi-year evidence.',
   },
   {
+    id: 'page-playbook',
+    path: '/playbook',
+    title: 'Setup playbook',
+    icon: 'zap',
+    area: 'strategy',
+    question: 'Which situations have been worth acting on, and which stocks are in one now?',
+    read: [
+      'Each row is a setup a trader waits for: an earnings beat becoming public, a dividend raise, a new 52-week high, a golden cross, an oversold pullback, a crash, a volume surge, a tariff or rate shock. It fires on the first day the condition holds.',
+      'The columns say what followed, as the excess return over the sector ETF from the next close: how often it fired, the hit rate against the base rate of all stock-days, the mean excess with its interval, and the payoff (average win over average loss).',
+      'The grade is the honest part. SUPPORTED needs the mean excess to clear a bar corrected for the 45 setup-horizon pairs tested; SUGGESTIVE means only the plain 95% interval is above zero; NEGATIVE means the stock trailed its ETF after firing.',
+      '"Firing now" lists the stocks each setup fired on in the last five sessions. It is a scan, not a signal: read the row\'s grade before caring.',
+    ],
+    caution: 'Forty-five pairs tested on one history means two will clear a plain 95% interval by luck. Only the corrected grade separates a real base rate from a lucky one.',
+  },
+  {
     id: 'page-doublers',
     path: '/doublers',
     title: 'Doubler study',
@@ -212,7 +227,7 @@ export const PAGES: PageCard[] = [
     question: 'How do I refresh everything?',
     read: [
       'The status tiles show the data cutoff and whether the price provider and SEC access are configured; green means ready.',
-      '"Run pipeline" does everything in order: prices, filings, macro and events, evaluation, forecasts, outcome resolution, the strategy lab, AI decisions and the doubler study. It only fetches what is new.',
+      '"Run pipeline" does everything in order: prices, filings, macro and events, evaluation, forecasts, outcome resolution, the strategy lab, AI decisions, the doubler study and the setup playbook. It only fetches what is new.',
       'Advanced lists each step separately. The jobs table shows progress and logs; it refreshes itself while something runs.',
     ],
   },
@@ -389,6 +404,14 @@ export const METRICS: MetricDoc[] = [
     where: 'Strategy lab, AI decisions (sized weight on each card).',
   },
   {
+    id: 'payoff',
+    name: 'Payoff ratio',
+    short: 'the average win divided by the average loss',
+    what: 'Over the outcomes of a setup, the mean excess return of the winning cases divided by the absolute mean of the losing ones.',
+    good: 'A 45% hit rate with a payoff of 2 is a profitable setup; a 60% hit rate with a payoff of 0.5 is not. Traders earn on this shape, not on the hit rate alone.',
+    where: 'Setup playbook.',
+  },
+  {
     id: 'coverage',
     name: 'Band coverage',
     short: 'how often reality fell inside the forecast band',
@@ -423,6 +446,7 @@ export const GLOSSARY: Term[] = [
   { id: 'version', term: 'Forecast version', def: 'A forecast is never edited. New evidence for the same company, model and as-of date produces version n+1 that supersedes version n. Both stay visible, and the forecast page shows what changed between them, factor by factor.' },
   { id: 'event-impact', term: 'Event impact', def: 'On an event page: the forecasts that were re-issued because the event arrived (each next to the version it replaced), and for every exposed company the last forecast before the event date against the first one after it.' },
   { id: 'accuracy-over-time', term: 'Accuracy over time', def: 'Resolved live forecasts grouped by the month their window closed: mean Brier score and hit rate per month, so you can see whether the models are improving or decaying rather than only their average.' },
+  { id: 'setup', term: 'Setup', def: 'A situation a trader waits for, recognisable at the close from data known then: a catalyst (an earnings surprise, a dividend change, a policy shock) or a technical state (a breakout, a cross, an oversold reading). The playbook scores each one on what followed.' },
   { id: 'stock-days', term: 'Stock-days', def: 'One stock on one trading day. The doubler study counts them: 30 stocks over 250 days are 7,500 stock-days.' },
   { id: 'episode', term: 'Episode', def: 'In the doubler study, one move of +100%: the first day the screen flagged it, the entry, and the day the close first reached twice the entry.' },
   { id: 'decision-layer', term: 'Decision layer', def: 'Everything between a probability and a position: whether to act at all (abstention, the AI_CONF rule), how much to buy (position sizing, the AI_SIZED rule) and when to leave (the exit threshold and the trailing stop). Traders earn most of their keep here; the Strategy lab tests each piece on the same probabilities.' },

@@ -854,6 +854,83 @@ export interface TimeMachineRun extends TimeMachineRunSummary {
   };
 }
 
+// ---------- Setup playbook ----------
+
+export type SetupGrade = 'SUPPORTED' | 'SUGGESTIVE' | 'NEGATIVE' | 'NOISE' | 'NOT_TESTABLE';
+export type SetupFamily = 'EARNINGS' | 'DIVIDEND' | 'TREND' | 'REVERSAL' | 'VOLUME' | 'EVENT';
+
+/** Outcome statistics of a setup at one horizon (excess return over the sector ETF from the next close). */
+export interface SetupStats {
+  n: number;
+  hitRate: number | null;
+  meanExcess: number | null;
+  medianExcess: number | null;
+  p10: number | null;
+  p90: number | null;
+  avgWin: number | null;
+  avgLoss: number | null;
+  /** average win / |average loss| */
+  payoff: number | null;
+  ciLow: number | null;
+  ciHigh: number | null;
+  stdErr: number | null;
+  /** mean excess / bootstrap standard error */
+  z: number | null;
+  hitCiLow: number | null;
+  hitCiHigh: number | null;
+  lift: number | null;
+  verdict: string;
+  grade: SetupGrade;
+}
+
+export interface SetupRow {
+  key: string;
+  family: SetupFamily;
+  name: string;
+  trigger: string;
+  origin: string;
+  /** how many times it fired over the whole history (member stock-days) */
+  triggers: number;
+  horizons: Record<string, SetupStats>;
+}
+
+export interface SetupTodayStock {
+  companyId: number;
+  symbol: string;
+  name: string;
+  date: string;
+  daysAgo: number;
+}
+
+export interface SetupStudyResult {
+  version: string;
+  dataCutoff: string;
+  start: string;
+  years: number;
+  universeSize: number;
+  stockDays: number;
+  config: Record<string, unknown> & { horizons: number[]; tests: number; bonferroniZ: number; minTriggers: number; freshDays: number };
+  families: SetupFamily[];
+  base: Record<string, Pick<SetupStats, 'n' | 'hitRate' | 'meanExcess' | 'medianExcess' | 'p10' | 'p90' | 'avgWin' | 'avgLoss' | 'payoff'>>;
+  setups: SetupRow[];
+  today: { asOfDate: string; freshDays: number; setups: { key: string; name: string; family: SetupFamily; stocks: SetupTodayStock[] }[]; stockCount: number };
+  disclaimers: string[];
+  headline: string;
+}
+
+export interface SetupStudyRun {
+  id: number;
+  runAt: string;
+  dataCutoff: string;
+  headline: string;
+  result: SetupStudyResult;
+}
+
+export interface SetupStudyResponse {
+  run: SetupStudyRun | null;
+  runs: { id: number; runAt: string; dataCutoff: string; headline: string }[];
+}
+
 // ---------- Doubler study ----------
 
 /** Hit / loss rates and the return distribution over a set of stock-days. */

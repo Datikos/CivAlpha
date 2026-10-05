@@ -10,6 +10,7 @@ import {
   CompanySummary,
   DecisionsResponse,
   DoublerStudyResponse,
+  SetupStudyResponse,
   ForecastSummary,
   StrategiesResponse,
 } from '../core/models';
@@ -495,6 +496,7 @@ export class GuidePage {
   private readonly strategies = httpResource<StrategiesResponse>(() => apiUrl.strategies());
   private readonly decisions = httpResource<DecisionsResponse>(() => apiUrl.decisions());
   private readonly doublers = httpResource<DoublerStudyResponse>(() => apiUrl.doublers());
+  private readonly setups = httpResource<SetupStudyResponse>(() => apiUrl.setups());
 
   protected readonly steps = computed<Step[]>(() => {
     const m = this.meta.meta();
@@ -565,6 +567,14 @@ export class GuidePage {
         done: known(this.decisions, () => (valueOf(this.decisions)?.decisions?.length ?? 0) > 0),
         link: '/decisions',
         linkLabel: 'AI decisions',
+      },
+      {
+        id: 'playbook',
+        title: 'Setup playbook run',
+        detail: 'Every setup\'s base rate and grade, and which stocks are in one now.',
+        done: known(this.setups, () => !!valueOf(this.setups)?.run),
+        link: '/playbook',
+        linkLabel: 'Setup playbook',
       },
       {
         id: 'doublers',

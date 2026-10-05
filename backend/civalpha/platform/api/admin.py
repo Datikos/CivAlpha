@@ -61,6 +61,11 @@ def doubler_study():
     return _submit("DOUBLER_STUDY")
 
 
+@router.post("/setups/study")
+def setup_study():
+    return _submit("SETUP_STUDY")
+
+
 @router.post("/timemachine")
 def time_machine(body: DateIn | None = None):
     if body is None or body.asOfDate is None:
