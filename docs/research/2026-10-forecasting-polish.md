@@ -229,8 +229,9 @@ the baseline; profitability is still not supported; no live forecast has resolve
 
 * **Live test.** Score batch 1 after 2026-11-03 and no later than 2026-11-14 with `python -m civalpha.livetest`; expected
   NO SKILL for both models. The code's point check on the accuracy page is a display, the document is the rule.
-* **The book's horizon.** The recorded book trades a 10-day label the platform's target does not name. Either the target
-  statement gets a second horizon or the book moves to 21 days; both change the recorded book and were out of scope here.
+* **The book's horizon.** Decided the same evening: ADR-0001 moves the book to the 21-day target. Lab run 19 at 21 days
+  gives AI_SIZED Sharpe 0.72 (was 0.98 at 10 days) and EW_SIZED 0.71; the event-feature comparison reverses (0.89 with
+  against 0.79 without). The numbers of sections 5 to 7 above are the 10-day ones and stay as the record of that day.
 * **Sizing guard.** An unexplained raw-close move beyond 50% (CTVA on 2026-10-01) still enters the sizing as volatility.
   `python -m civalpha.integrity` detects it; nothing acts on it. Acting would change the book.
 * **Ablation page.** Done 2026-10-06, after this report: the Feature fragility page (`/ablation`) draws the study as

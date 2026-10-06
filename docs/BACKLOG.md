@@ -7,7 +7,7 @@ ticked in its ADR; a new item goes into an ADR first, then here. Sizes: S up to 
 
 | # | Task | Ref | Needs | Size |
 |---|---|---|---|---|
-| 1 | Run the feature ablation at the 21-day horizon and compare with run 1 | ADR-0001 Phase 2 #2 | worker idle for 20 min | S |
+| 1 | Run the feature ablation at the 21-day horizon and compare with run 1 (job 167 queued 2026-10-06) | ADR-0001 Phase 2 #2 | job 167 | S |
 | 2 | ADR-0002: calibration (isotonic on past folds) in the lab and the daily decision; what the 0.55 / 0.60 thresholds then mean | ADR-0001 Phase 3 #1 | — | M |
 | 3 | Score live-test batch 1 after 2026-11-03, no later than 2026-11-14 (`python -m civalpha.livetest`) | docs/research/live-test-2026-10.md §5 | outcomes resolved | S |
 

@@ -108,7 +108,15 @@ Phase 1, code (2026-10-06):
 
 Phase 2, data (2026-10-06):
 - [x] Rebuild api/worker, run the strategy lab (new 21-day AI trials registered), run `evaluate_models`.
-- [ ] Run the feature ablation at 21 days (18 minutes) and compare with run 1.
+      *Found while implementing (lab run 19, job 165; evaluation 15, job 166; registry 59 trials, 10 new at 21d):*
+      the AI rows move a lot between labels while the walk-forward does not. AI_SIZED Sharpe 0.98 (10d) -> 0.72 (21d),
+      max drawdown -26.6% -> -27.9%; AI_GBM 0.91 -> 0.79; AI_GBM_TSTOP10 0.91 -> 0.22; AI_CONF 0.47 -> 0.70. With the
+      policy-event features added back the standard rule is now 0.89 against 0.79 without them, the reverse of the
+      10-day result that dropped them on 2026-10-06 morning: that decision was lab noise, as ground rule 1 says.
+      EW_SIZED 0.71 against AI_SIZED 0.72: the sizing explains the book. Walk-forward AI_BOOK_21 unchanged (Brier
+      skill -0.025, AUC 0.513). The AI's own top-10% coverage at 21 days: 55% right, +1.73% per position after costs
+      (CI +0.25% to +2.92%), the first coverage row with a CI above zero; one window, 4,204 calls, not pre-registered.
+- [ ] Run the feature ablation at 21 days (18 minutes) and compare with run 1. *Queued as job 167 on 2026-10-06.*
 - [ ] Frontend guide text that still says 10 days (`guide-content.ts`): after the ablation page in progress lands.
 
 Phase 3, later:
