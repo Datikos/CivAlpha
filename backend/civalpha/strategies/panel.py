@@ -88,6 +88,11 @@ class MarketPanel:
             self._features = f
         return self._features
 
+    def use_features(self, rows: pd.DataFrame) -> None:
+        """Adopt feature rows already built with features.build_rows (for example the walk-forward panel, sampled every
+        7 days), so the lab's dataset can be assembled on exactly those (idx, company_id) rows without rebuilding them."""
+        self._features = rows.reset_index(drop=True)
+
     def feature_matrix(self, name: str) -> pd.DataFrame:
         """One feature as a (date x company) matrix, NaN where not computed."""
         f = self.features()

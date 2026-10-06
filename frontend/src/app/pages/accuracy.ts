@@ -80,6 +80,35 @@ function row<T>(
           {{ e.config.minTrainDays }} days · costs {{ e.config.costBpsPerSide }} bps per side
         </p>
 
+        @if (bookModels().length) {
+          <div class="card">
+            <h3>The recorded book's model on the same folds <app-help text="The gradient-boosted model behind the AI decisions page, scored in the same walk-forward as the two live models: same test blocks, same purge. Once on the platform's 21-day forecast target and once on the label the book actually trades (10 trading days from the next close). The feature-set identifier names the exact input list." topic="models" label="book model" /></h3>
+            <div class="table-wrap">
+              <table class="table compact">
+                <thead>
+                  <tr>
+                    <th>Model</th><th>Feature set</th><th>Label</th><th class="num">n</th>
+                    <th class="num">Brier skill</th><th class="num">AUC</th><th class="num">Top-10% net excess</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (m of bookModels(); track m.kind) {
+                    <tr>
+                      <td class="mono">{{ m.kind }}</td>
+                      <td><span class="mono">{{ m.featureSet }}</span><div class="small muted">{{ m.nFeatures }} inputs · {{ m.algorithm }}</div></td>
+                      <td>{{ m.horizon }} days from {{ m.entry }}</td>
+                      <td class="num">{{ m.n }}</td>
+                      <td class="num"><app-delta [value]="m.brierSkill" kind="fixed" [digits]="3" /></td>
+                      <td class="num">{{ m.auc | fixed: 3 }}</td>
+                      <td class="num">@if (m.top10 === null) { — } @else { <app-delta [value]="m.top10" kind="pct" [digits]="2" /> }</td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          </div>
+        }
+
         @if (headline(); as h) {
           <div class="stats wide">
             <div class="stat" [class]="'stat ' + (h.brierTone)">
@@ -116,7 +145,7 @@ function row<T>(
                   <tr>
                     <th>Metric</th>
                     @for (k of kinds; track k) {
-                      <th class="num"><app-model-tag [kind]="k" /></th>
+                      <th class="num"><app-model-tag [kind]="k" /><div class="small muted mono">{{ featureSetOf(k) }}</div></th>
                     }
                   </tr>
                 </thead>
@@ -456,6 +485,35 @@ function row<T>(
 })
 export class AccuracyPage {
   protected readonly kinds = MODEL_KINDS;
+
+  protected featureSetOf(k: string): string {
+    return this.ev()?.config.models?.[k]?.featureSet ?? '';
+  }
+
+  /** Models evaluated besides the two live ones (the recorded book's model), with the numbers the table shows. */
+  protected readonly bookModels = computed(() => {
+    const e = this.ev();
+    if (!e) return [];
+    return Object.keys(e.metrics)
+      .filter((k) => !(MODEL_KINDS as readonly string[]).includes(k))
+      .map((k) => {
+        const m = e.metrics[k]!;
+        const spec = e.config.models?.[k];
+        const top = (e.trading[k]?.coverage ?? []).find((c) => Math.abs(c.coverage - 0.1) < 1e-9);
+        return {
+          kind: k,
+          featureSet: spec?.featureSet ?? '',
+          nFeatures: spec?.nFeatures ?? 0,
+          algorithm: spec?.algorithm ?? '',
+          horizon: spec?.horizon ?? e.config.horizon,
+          entry: spec?.entry ?? '',
+          n: m.n,
+          brierSkill: m.brierSkill,
+          auc: m.auc,
+          top10: top ? top.meanNet : null,
+        };
+      });
+  });
   protected readonly Math = Math;
   protected readonly verdictToneOf = verdictTone;
   protected readonly res = httpResource<AccuracyResponse>(() => apiUrl.accuracy());

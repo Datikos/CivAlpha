@@ -553,6 +553,18 @@ export interface EvalFold {
   brier: Partial<Record<ModelKind, number>>;
 }
 
+/** How one evaluated model was built: the feature-set identifier every number is traced to, the algorithm and the label. */
+export interface ModelSpecInfo {
+  kind: string;
+  featureSet: string;
+  algorithm: string;
+  horizon: number;
+  entry: string;
+  nFeatures: number;
+  features: string[];
+  label: string;
+}
+
 export interface Evaluation {
   id: number;
   runAt: string;
@@ -564,8 +576,10 @@ export interface Evaluation {
     foldLength: number;
     minTrainDays: number;
     costBpsPerSide: number;
+    /** Per evaluated model (the two live models and, since 2026-10-06, the recorded book's model), keyed by model kind. */
+    models?: Record<string, ModelSpecInfo>;
   };
-  metrics: Partial<Record<ModelKind, ModelMetrics>>;
+  metrics: Partial<Record<ModelKind, ModelMetrics>> & Record<string, ModelMetrics | undefined>;
   comparison: {
     brierDiff: number;
     ciLow: number;
@@ -577,8 +591,8 @@ export interface Evaluation {
     signTestP?: number | null;
     note: string | null;
   } | null;
-  calibration: Partial<Record<ModelKind, CalibrationBin[]>>;
-  trading: Partial<Record<ModelKind, Partial<TradingStats>>>;
+  calibration: Partial<Record<ModelKind, CalibrationBin[]>> & Record<string, CalibrationBin[] | undefined>;
+  trading: Partial<Record<ModelKind, Partial<TradingStats>>> & Record<string, Partial<TradingStats> | undefined>;
   folds: EvalFold[];
   verdict: string | null;
 }

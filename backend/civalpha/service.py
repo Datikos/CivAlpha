@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 from . import db, pit
-from .evaluation import EvalConfig, run_walk_forward
+from .evaluation import EvalConfig, default_specs, run_walk_forward
 from .features import FEATURE_KIND, FEATURE_LABELS, FEATURES, MIN_HISTORY, DataBundle, build_panel, build_rows
 from .model import ALGORITHM, CODE_VERSION, LogitModel
 from .returns import HORIZON, excess_label
@@ -20,11 +20,18 @@ TARGET = ("P(total return of {sym} over the next {h} trading days > total return
 
 
 # --------------------------------------------------------------------------- evaluation
-def evaluate(engine, cfg: EvalConfig | None = None) -> dict:
+def evaluate(engine, cfg: EvalConfig | None = None, with_book: bool = True) -> dict:
+    """Walk-forward of the two live models and, with_book, of the recorded book's model (strategies.ai.AI_FEATURES) on the
+    same folds: once on the 21-day forecast target and once on the book's own 10-day next-close label."""
     cfg = cfg or EvalConfig()
     bundle = db.load_bundle(engine)
     panel = build_panel(bundle, sample_every=cfg.sample_every)
-    result = run_walk_forward(panel, bundle.calendar, cfg)
+    specs = default_specs()
+    if with_book:
+        from .strategies.ai import attach_book_features, book_model_specs
+        panel = attach_book_features(bundle, panel)
+        specs = specs + book_model_specs()
+    result = run_walk_forward(panel, bundle.calendar, cfg, specs)
     eid = db.insert_evaluation(engine, result, bundle.calendar[-1].date())
     return {"evaluationId": eid, "verdict": result["verdict"], "metrics": db._clean(result["metrics"])}
 

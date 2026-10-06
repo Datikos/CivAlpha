@@ -75,6 +75,7 @@ TECH_LABELS = {
     "donchian_pos": "Position in 55-day high/low channel", "mom_12_1": "12-1 month momentum",
     "rev_5d": "5-day return (reversal)", "vol_21": "21-day volatility", "dd_52w": "Drawdown from 52-week high",
 }
+AI_FEATURE_SET = f"GBM_AI_{len(AI_FEATURES)}"          # identifier of the recorded book's inputs in every evaluation output
 AI_KEY = "AI_GBM"
 AI_FUND_KEY = "AI_FUND"
 AI_DIV_KEY = "AI_DIV"
@@ -228,6 +229,35 @@ def _eval_cfg(cfg: AiConfig) -> EvalConfig:
     # sample i's label is known at close(i + horizon + 1) because entry is at the next close
     return EvalConfig(horizon=cfg.horizon + 1, embargo=cfg.horizon + 1, fold_length=cfg.fold_length,
                       min_train_days=cfg.min_train_days, sample_every=1)
+
+
+# --------------------------------------------------------------------------- the book in the forecast walk-forward
+def attach_book_features(bundle, panel: pd.DataFrame, cfg: AiConfig | None = None) -> pd.DataFrame:
+    """Add the recorded book's inputs and its own label to a walk-forward panel from features.build_panel.
+
+    The panel already has the BASELINE features; this adds the rest of AI_FEATURES (technical indicators, report profile,
+    insider and earnings-calendar columns) on the same (idx, company_id) rows, plus `label_<h>` / `excess_<h>`: the book's
+    label, the excess return over the sector ETF from the next close to h trading days later (h = cfg.horizon)."""
+    cfg = cfg or AiConfig()
+    mp = MarketPanel.from_bundle(bundle)
+    label_cols = [c for c in ("label", "stock_return", "benchmark_return", "excess_return", "exec_excess_return") if c in panel.columns]
+    mp.use_features(panel.drop(columns=label_cols))
+    data = dataset(mp, cfg)
+    extra = [f for f in AI_FEATURES if f not in panel.columns]
+    d = data[["idx", "company_id", *extra, "label", "fwd_excess"]].rename(columns={"label": f"label_{cfg.horizon}", "fwd_excess": f"excess_{cfg.horizon}"})
+    return panel.merge(d, on=["idx", "company_id"], how="left")
+
+
+def book_model_specs(cfg: AiConfig | None = None) -> list:
+    """The recorded book's model (AI_FEATURES, gradient boosting) as two walk-forward entries: scored on the platform's
+    21-day forecast target, and on its own label (cfg.horizon days from the next close) as attach_book_features adds it."""
+    from ..evaluation import ModelSpec
+    from ..returns import HORIZON
+    cfg = cfg or AiConfig()
+    h = cfg.horizon
+    return [ModelSpec("AI_BOOK_21", AI_FEATURE_SET, tuple(AI_FEATURES), "gbm", HORIZON, "close(t)"),
+            ModelSpec(f"AI_BOOK_{h}", AI_FEATURE_SET, tuple(AI_FEATURES), "gbm", h, "next close",
+                      label_col=f"label_{h}", excess_col=f"excess_{h}", exec_col=f"excess_{h}")]
 
 
 # --------------------------------------------------------------------------- walk-forward

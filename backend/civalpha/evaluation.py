@@ -46,8 +46,33 @@ from .features import FEATURES
 from .model import LogitModel
 from .returns import HORIZON
 
-KINDS = ("BASELINE", "AUGMENTED")
+KINDS = ("BASELINE", "AUGMENTED")     # the two live forecast models; always evaluated and compared with each other
 COVERAGE_LEVELS = (0.05, 0.10, 0.20, 0.30, 0.50, 1.00)
+FEATURE_SET_IDS = {"BASELINE": f"LOGIT_BASELINE_{len(FEATURES['BASELINE'])}", "AUGMENTED": f"LOGIT_AUGMENTED_{len(FEATURES['AUGMENTED'])}"}
+
+
+@dataclass(frozen=True)
+class ModelSpec:
+    """One model in the walk-forward: which inputs, which algorithm, which label. `feature_set` is the identifier every
+    output carries (LOGIT_BASELINE_10, GBM_AI_39, ...), so a number can always be traced to the exact input list."""
+    kind: str
+    feature_set: str
+    features: tuple
+    algorithm: str                      # "logit" (model.LogitModel) or "gbm" (strategies.ai.AiModel)
+    horizon: int                        # trading days in the label window
+    entry: str                          # "close(t)": the forecast target; "next close": the book's label, t+1 -> t+1+horizon
+    label_col: str = "label"
+    excess_col: str = "excess_return"
+    exec_col: str = "exec_excess_return"
+
+    def info(self) -> dict:
+        return {"kind": self.kind, "featureSet": self.feature_set, "algorithm": self.algorithm, "horizon": self.horizon,
+                "entry": self.entry, "nFeatures": len(self.features), "features": list(self.features),
+                "label": f"{self.horizon}-day excess return vs sector ETF, entered at {self.entry}"}
+
+
+def default_specs() -> list[ModelSpec]:
+    return [ModelSpec(k, FEATURE_SET_IDS[k], tuple(FEATURES[k]), "logit", HORIZON, "close(t)") for k in KINDS]
 
 
 @dataclass
@@ -76,54 +101,75 @@ def walk_forward_folds(idxs: np.ndarray, n_calendar: int, cfg: EvalConfig) -> li
     return folds
 
 
-def train_mask(panel: pd.DataFrame, fold: dict, cfg: EvalConfig) -> pd.Series:
-    # label of sample i is known at close(i + horizon); require it strictly before the test block starts
-    return (panel["idx"] + cfg.horizon < fold["test_start_idx"]) & panel["label"].notna()
+def train_mask(panel: pd.DataFrame, fold: dict, cfg: EvalConfig, label_col: str = "label") -> pd.Series:
+    # label of sample i is known at close(i + horizon); require it strictly before the test block starts. cfg.horizon is
+    # the longest label in the run (21), so a shorter label (the book's 10-day one) is purged more than strictly needed.
+    return (panel["idx"] + cfg.horizon < fold["test_start_idx"]) & panel[label_col].notna()
 
 
-def run_walk_forward(panel: pd.DataFrame, calendar: pd.DatetimeIndex, cfg: EvalConfig) -> dict:
-    panel = panel[panel["label"].notna()].copy()
-    panel["label"] = panel["label"].astype(bool)
+def _fit_predict(spec: ModelSpec, train: pd.DataFrame, test: pd.DataFrame, cfg: EvalConfig) -> np.ndarray:
+    feats = list(spec.features)
+    if spec.algorithm == "logit":
+        m = LogitModel(feats, n_boot=cfg.n_boot).fit(train, train[spec.label_col].astype(bool), groups=train["idx"])
+        return m.predict(test)
+    if spec.algorithm == "gbm":
+        from .strategies.ai import AiConfig, new_model   # local import: strategies.ai imports this module
+        m = new_model(AiConfig(horizon=spec.horizon)).fit(train[feats].to_numpy(float), train[spec.label_col].astype(int).to_numpy())
+        return m.predict_proba(test[feats].to_numpy(float))[:, 1]
+    raise ValueError(f"unknown algorithm {spec.algorithm}")
+
+
+def run_walk_forward(panel: pd.DataFrame, calendar: pd.DatetimeIndex, cfg: EvalConfig, specs: list[ModelSpec] | None = None) -> dict:
+    """Walk-forward over `specs` (default: the two live models). Every spec is scored on the same test blocks; a spec with
+    its own label columns (the book's 10-day label) is scored on the rows where that label is known."""
+    specs = specs or default_specs()
+    by_kind = {sp.kind: sp for sp in specs}
     folds = walk_forward_folds(panel["idx"].to_numpy(), len(calendar), cfg)
     preds, fold_out = [], []
     for fold in folds:
-        test = panel[(panel["idx"] >= fold["test_start_idx"]) & (panel["idx"] <= fold["test_end_idx"])]
-        train = panel[train_mask(panel, fold, cfg)]
-        if test.empty or len(train) < 200 or train["label"].nunique() < 2:
-            continue
         fo = {"fold": fold["fold"], "testStart": str(calendar[fold["test_start_idx"]].date()),
-              "testEnd": str(calendar[min(fold["test_end_idx"], len(calendar) - 1)].date()),
-              "trainEnd": str(calendar[int(train["idx"].max())].date()),
-              "nTrain": int(len(train)), "nTest": int(len(test)), "brier": {}}
-        for kind in KINDS:
-            m = LogitModel(FEATURES[kind], n_boot=cfg.n_boot).fit(train, train["label"], groups=train["idx"])
-            p = m.predict(test)
-            fo["brier"][kind] = float(np.mean((p - test["label"].astype(float)) ** 2))
+              "testEnd": str(calendar[min(fold["test_end_idx"], len(calendar) - 1)].date()), "brier": {}}
+        for sp in specs:
+            sub = panel[panel[sp.label_col].notna()]
+            test = sub[(sub["idx"] >= fold["test_start_idx"]) & (sub["idx"] <= fold["test_end_idx"])]
+            train = sub[train_mask(sub, fold, cfg, sp.label_col)]
+            if test.empty or len(train) < 200 or train[sp.label_col].nunique() < 2:
+                continue
+            p = _fit_predict(sp, train, test, cfg)
+            y = test[sp.label_col].astype(bool)
+            fo["brier"][sp.kind] = float(np.mean((p - y.astype(float)) ** 2))
+            fo.setdefault("trainEnd", str(calendar[int(train["idx"].max())].date()))
+            fo.setdefault("nTrain", int(len(train)))
+            fo.setdefault("nTest", int(len(test)))
             preds.append(pd.DataFrame({"company_id": test["company_id"].values, "as_of_date": test["as_of_date"].values,
-                                       "idx": test["idx"].values, "model_kind": kind, "fold": fold["fold"],
-                                       "probability": p, "outcome": test["label"].values,
-                                       "excess_return": test["excess_return"].values,
-                                       "exec_excess_return": test["exec_excess_return"].values,
-                                       "train_base_rate": float(train["label"].mean())}))
-        fold_out.append(fo)
+                                       "idx": test["idx"].values, "model_kind": sp.kind, "fold": fold["fold"],
+                                       "probability": p, "outcome": y.values,
+                                       "excess_return": test[sp.excess_col].values,
+                                       "exec_excess_return": test[sp.exec_col].values,
+                                       "train_base_rate": float(train[sp.label_col].astype(float).mean())}))
+        if fo["brier"]:
+            fold_out.append(fo)
     if not preds:
         raise ValueError("not enough history for a walk-forward evaluation")
     P = pd.concat(preds, ignore_index=True)
-    metrics = {k: classification_metrics(P[P.model_kind == k]) for k in KINDS}
-    calib = {k: calibration_bins(P[P.model_kind == k]) for k in KINDS}
-    comparison = compare_models(P, cfg)
+    kinds = [sp.kind for sp in specs if (P.model_kind == sp.kind).any()]
+    metrics = {k: classification_metrics(P[P.model_kind == k]) for k in kinds}
+    calib = {k: calibration_bins(P[P.model_kind == k]) for k in kinds}
+    comparison = compare_models(P, cfg) if all(k in kinds for k in KINDS) else {"n": 0}
     comparison.update(fold_consistency(fold_out))
-    trading = {k: trading_simulation(P[P.model_kind == k], cfg) for k in KINDS}
-    for k in KINDS:
+    trading = {k: trading_simulation(P[P.model_kind == k], cfg, horizon=by_kind[k].horizon) for k in kinds}
+    for k in kinds:
         d = P[P.model_kind == k]
         trading[k]["coverage"] = coverage_curve(d["probability"].to_numpy(float), d["outcome"].to_numpy(float),
                                                 d["exec_excess_return"].to_numpy(float), d["idx"].to_numpy(),
                                                 cost_bps_per_side=cfg.cost_bps_per_side, cost_legs=4)
+    models = {k: by_kind[k].info() for k in kinds}
     config = {"horizon": cfg.horizon, "sampleEvery": cfg.sample_every, "embargo": cfg.embargo, "foldLength": cfg.fold_length,
-              "minTrainDays": cfg.min_train_days, "costBpsPerSide": cfg.cost_bps_per_side, "signalBand": cfg.signal_band}
+              "minTrainDays": cfg.min_train_days, "costBpsPerSide": cfg.cost_bps_per_side, "signalBand": cfg.signal_band,
+              "models": models}
     return {"config": config, "metrics": metrics, "calibration": calib, "comparison": comparison,
-            "trading": trading, "folds": fold_out, "predictions": P,
-            "verdict": verdict(metrics, comparison, trading, cfg)}
+            "trading": trading, "folds": fold_out, "predictions": P, "models": models,
+            "verdict": verdict(metrics, comparison, trading, cfg, models)}
 
 
 # --------------------------------------------------------------------------- metrics
@@ -194,14 +240,15 @@ def fold_consistency(folds: list[dict]) -> dict:
     return {"foldsAugmentedBetter": wins, "foldsCompared": n, "signTestP": p}
 
 
-def trading_simulation(df: pd.DataFrame, cfg: EvalConfig) -> dict:
+def trading_simulation(df: pd.DataFrame, cfg: EvalConfig, horizon: int | None = None) -> dict:
     """Long/short each stock against its sector benchmark on non-overlapping periods.
 
     Position +1 if p >= 0.5 + band, -1 if p <= 0.5 - band. Entry at the close after the as-of date,
     holding `horizon` trading days. Cost per position per period = 2 legs (stock + benchmark hedge)
     x 2 sides (entry + exit) x cost_bps_per_side.
     """
-    step = max(1, round(cfg.horizon / cfg.sample_every))
+    horizon = horizon or cfg.horizon
+    step = max(1, math.ceil(horizon / cfg.sample_every))   # rebalance dates far enough apart that holding periods do not overlap
     dates = np.sort(df["idx"].unique())
     rebal = set(dates[::step])
     d = df[df["idx"].isin(rebal) & df["exec_excess_return"].notna()].copy()
@@ -214,7 +261,7 @@ def trading_simulation(df: pd.DataFrame, cfg: EvalConfig) -> dict:
     d["net"] = d["gross"] - cost
     per = d.groupby("idx").agg(gross=("gross", "mean"), net=("net", "mean"), n=("pos", "size"))
     n = len(per)
-    periods_per_year = 252 / cfg.horizon
+    periods_per_year = 252 / horizon
     sd = per["net"].std(ddof=1) if n > 1 else float("nan")
     t = per["net"].mean() / (sd / math.sqrt(n)) if n > 1 and sd > 0 else float("nan")
     return {"periods": int(n), "meanGross": float(per["gross"].mean()), "meanNet": float(per["net"].mean()),
@@ -281,11 +328,22 @@ def coverage_curve(p: np.ndarray, y: np.ndarray, excess: np.ndarray, date_idx: n
     return out
 
 
-def verdict(metrics: dict, comparison: dict, trading: dict, cfg: EvalConfig) -> str:
+def verdict(metrics: dict, comparison: dict, trading: dict, cfg: EvalConfig, models: dict | None = None) -> str:
+    models = models or {}
+    fs = {k: (models.get(k) or {}).get("featureSet", FEATURE_SET_IDS.get(k, k)) for k in metrics}
+    if not all(k in metrics for k in KINDS):
+        return " ".join(f"{k} ({fs[k]}): Brier skill {m['brierSkill']:+.3f}, AUC {m['auc']:.3f} on {m['n']} predictions."
+                        for k, m in metrics.items())
     a, b = metrics["AUGMENTED"], metrics["BASELINE"]
     parts = [f"Walk-forward, {a['n']} out-of-sample predictions per model."]
-    parts.append(f"Brier skill vs base rate: baseline {b['brierSkill']:+.3f}, augmented {a['brierSkill']:+.3f}; "
-                 f"AUC baseline {b['auc']:.3f}, augmented {a['auc']:.3f}.")
+    parts.append(f"Brier skill vs base rate: baseline ({fs['BASELINE']}) {b['brierSkill']:+.3f}, augmented ({fs['AUGMENTED']}) "
+                 f"{a['brierSkill']:+.3f}; AUC baseline {b['auc']:.3f}, augmented {a['auc']:.3f}.")
+    for k, m in metrics.items():
+        if k in KINDS:
+            continue
+        info = models.get(k) or {}
+        parts.append(f"{k} ({fs[k]}, the recorded book's inputs, {info.get('horizon', '?')}-day label entered at {info.get('entry', '?')}): "
+                     f"Brier skill {m['brierSkill']:+.3f}, AUC {m['auc']:.3f} on {m['n']} predictions.")
     if comparison["ciHigh"] < 0:
         parts.append("The augmented model's Brier score is lower than the baseline's and the 95% CI excludes zero.")
     elif comparison["ciLow"] > 0:
