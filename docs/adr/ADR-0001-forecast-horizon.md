@@ -116,7 +116,12 @@ Phase 2, data (2026-10-06):
       EW_SIZED 0.71 against AI_SIZED 0.72: the sizing explains the book. Walk-forward AI_BOOK_21 unchanged (Brier
       skill -0.025, AUC 0.513). The AI's own top-10% coverage at 21 days: 55% right, +1.73% per position after costs
       (CI +0.25% to +2.92%), the first coverage row with a CI above zero; one window, 4,204 calls, not pre-registered.
-- [ ] Run the feature ablation at 21 days (18 minutes) and compare with run 1. *Queued as job 167 on 2026-10-06.*
+- [x] Run the feature ablation at 21 days and compare with run 1 (job 167, 13 minutes, ablation run 2; registry 71 trials).
+      *Found while implementing:* the walk-forward rows are identical to run 1's 21-day rows (the label did not change
+      for them): Brier skill -0.027 to -0.019, AUC 0.505 to 0.523, no CI above zero. The lab column reshuffled: AI_SIZED
+      0.66 to 0.84 across variants (production set 0.72) against 0.49 to 0.98 at 10 days, and the variant order changed
+      (at 10 days dropping the report profile halved the Sharpe; at 21 days dropping earnings or insider inputs raises
+      it). Same probabilities' quality, different winners: the lab Sharpe ranks noise.
 - [ ] Frontend guide text that still says 10 days (`guide-content.ts`): after the ablation page in progress lands.
 
 Phase 3, later:
