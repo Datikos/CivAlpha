@@ -250,8 +250,8 @@ strategies on the same data, the same out-of-sample window and the same costs. T
 
 | Family | Strategies |
 |---|---|
-| Benchmark | Equal-weight buy & hold (the reference every verdict compares against); sector ETF basket |
-| Trend / momentum | 50/200-day golden cross (with and without a 10% trailing stop); 12-1 month momentum, top 5 monthly; Donchian 55/20 breakout |
+| Benchmark | Equal-weight buy & hold (the reference every verdict compares against); sector ETF basket; the whole universe under the recorded book's volatility sizing (`EW_SIZED`: 0.04 / 21-day volatility, 20% cap, no leverage, so inverse-volatility weighting, fully invested), to show what sizing earns without any forecast |
+| Trend / momentum | 50/200-day golden cross (with and without a 10% trailing stop); 12-1 month momentum, top 5 monthly, equal-weight and under the book's volatility sizing (`MOM_12_1_SIZED`); Donchian 55/20 breakout |
 | Mean reversion | RSI(2) pullback above the 200-day average; Bollinger band (20, 2σ) bounce; weekly 5-day reversal, bottom 5 |
 | Speculative | Doubler screen: volatile, small, cheap stock on a breakout or volume spike; hold 63 days, 50% stop |
 | Fundamental / event | Quality & growth screen on as-filed XBRL data; post-earnings-announcement drift (earnings surprise ≥ 1, hold 60 days); value (top 5 earnings yield); gross profitability (top 5 gross profit / assets); dividend yield (top 5); stepping aside from tariff/rate shocks using SEC-filing exposures |

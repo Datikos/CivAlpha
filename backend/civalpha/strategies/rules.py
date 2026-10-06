@@ -25,6 +25,34 @@ def _sector_etfs(p: MarketPanel) -> pd.DataFrame:
     return counts.div(tot, axis=0).fillna(0.0)
 
 
+# --------------------------------------------------------------------------- sizing-only references
+VOL_BUDGET = 0.04      # the recorded book's sizing (AiConfig.vol_budget / max_weight); test_strategies checks they agree
+MAX_WEIGHT = 0.20
+
+
+def vol_21(px: pd.DataFrame) -> pd.DataFrame:
+    """Annualized 21-day volatility of the total-return index, as strategies.ai.technical_features computes it."""
+    return np.log(px).diff().rolling(21, min_periods=15).std() * np.sqrt(252)
+
+
+def vol_sized(selected: pd.DataFrame, p: MarketPanel, budget: float = VOL_BUDGET, cap: float = MAX_WEIGHT) -> pd.DataFrame:
+    """AI_SIZED's sizing applied to any selection: each selected member gets budget / vol_21, capped at `cap`; when the
+    total would exceed 1 every position is scaled down (no leverage). A name without a volatility estimate gets 0."""
+    on = selected.fillna(False).astype(bool) & p.member.reindex(index=selected.index, columns=selected.columns, fill_value=False)
+    v = vol_21(p.px).reindex(index=on.index, columns=on.columns)
+    w = (budget / v.where(v > 0)).clip(upper=cap).where(on, 0.0).fillna(0.0)
+    tot = w.sum(axis=1)
+    return w.div(tot.where(tot > 1.0, 1.0), axis=0)
+
+
+def _ew_sized(p: MarketPanel) -> pd.DataFrame:
+    return vol_sized(_all_members(p), p)
+
+
+def _momentum_12_1_sized(p: MarketPanel, top: int = 5) -> pd.DataFrame:
+    return vol_sized(_momentum_12_1(p, top), p)
+
+
 # --------------------------------------------------------------------------- trend / momentum
 def _sma_cross(p: MarketPanel, fast: int = 50, slow: int = 200) -> pd.DataFrame:
     return sma(p.px, fast) > sma(p.px, slow)
@@ -141,6 +169,12 @@ def rule_strategies() -> list[Strategy]:
         Strategy("SECTOR_ETFS", "BENCHMARK", "Sector ETF basket",
                  "Own the sector benchmark ETFs, weighted by how many universe members each covers", "Never",
                  "Passive alternative: the sector benchmarks themselves", "WEIGHTS", _sector_etfs, assets="ETFS"),
+        Strategy("EW_SIZED", "BENCHMARK", "Whole universe, sized by volatility",
+                 f"Own every universe member at {VOL_BUDGET:.2f} / annualized 21-day volatility, at most {MAX_WEIGHT:.0%} each, "
+                 "scaled down to 100% when the total exceeds it (no leverage)", "Never (resized daily)",
+                 "The recorded book's sizing rule with no forecast at all: what volatility targeting earns on its own. With "
+                 "hundreds of members the budget always exceeds 100%, so this is inverse-volatility weighting, fully invested",
+                 "WEIGHTS", _ew_sized, {"volBudget": VOL_BUDGET, "maxWeight": MAX_WEIGHT}),
         Strategy("SMA_50_200", "TREND", "Golden cross (50/200-day average)",
                  "50-day average closes above the 200-day average", "50-day average falls below the 200-day average",
                  "Classic trend following (golden cross / death cross)", "SLEEVE", _sma_cross, {"fast": 50, "slow": 200}),
@@ -152,6 +186,12 @@ def rule_strategies() -> list[Strategy]:
                  "Monthly: buy the 5 stocks with the best return from 12 months to 1 month ago",
                  "Sold at the next monthly rebalance if no longer in the top 5",
                  "Jegadeesh & Titman (1993) cross-sectional momentum", "EQUAL", _momentum_12_1, {"top": 5, "rebalance": "monthly"}),
+        Strategy("MOM_12_1_SIZED", "TREND", "12-1 month momentum (top 5), sized by volatility",
+                 f"Monthly: buy the 5 stocks with the best return from 12 months to 1 month ago, each at {VOL_BUDGET:.2f} / "
+                 f"annualized 21-day volatility, at most {MAX_WEIGHT:.0%}, no leverage",
+                 "Sold at the next monthly rebalance if no longer in the top 5",
+                 "A classic selection rule under the recorded book's sizing, to separate what sizing adds from what the AI's "
+                 "forecast adds", "WEIGHTS", _momentum_12_1_sized, {"top": 5, "rebalance": "monthly", "volBudget": VOL_BUDGET, "maxWeight": MAX_WEIGHT}),
         Strategy("DONCHIAN_55_20", "TREND", "Donchian breakout (55/20, turtle)",
                  "Close above the highest close of the previous 55 days", "Close below the lowest close of the previous 20 days",
                  "Turtle trading system (Dennis & Eckhardt), close-only version", "SLEEVE", _donchian, {"entry": 55, "exit": 20}),

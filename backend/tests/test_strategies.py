@@ -314,3 +314,27 @@ def test_live_decisions_are_the_volatility_sized_book_without_event_features():
         assert book["replacedBy"] is None and book["replaces"] is None
         if d["action"] == "EXIT":
             assert d["probability"] < d["exitP"]                         # no replacement rule: exits only below the threshold
+
+
+def test_sizing_only_rows_use_the_books_budget_and_never_leverage():
+    from civalpha.strategies.ai import AiConfig
+    from civalpha.strategies.rules import MAX_WEIGHT, VOL_BUDGET, vol_sized
+    from civalpha.strategies.panel import MarketPanel
+
+    assert (VOL_BUDGET, MAX_WEIGHT) == (AiConfig().vol_budget, AiConfig().max_weight)
+    b = make_bundle(n_days=300, n_companies=6, seed=8)
+    p = MarketPanel.from_bundle(b)
+    ew = next(x for x in rule_strategies() if x.key == "EW_SIZED").weights(p)
+    mom = next(x for x in rule_strategies() if x.key == "MOM_12_1_SIZED").weights(p)
+    for w in (ew, mom):
+        assert (w.sum(axis=1) <= 1.0 + 1e-9).all() and (w >= 0).all().all()
+    # a selected name's size is budget / vol capped at MAX_WEIGHT, before the no-leverage scaling
+    sel = pd.DataFrame(False, index=p.calendar, columns=p.px.columns)
+    sel.iloc[-1, 0] = True
+    w = vol_sized(sel, p)
+    v = float((np.log(p.px).diff().rolling(21, min_periods=15).std() * np.sqrt(252)).iloc[-1, 0])
+    assert np.isclose(w.iloc[-1, 0], min(MAX_WEIGHT, VOL_BUDGET / v)) and w.iloc[-1, 1:].sum() == 0
+    # EW_SIZED invests the sum of the capped sizes, scaled down to 100% when that sum exceeds it (6 calm names here: below)
+    vols = (np.log(p.px).diff().rolling(21, min_periods=15).std() * np.sqrt(252)).iloc[-1]
+    raw = float((VOL_BUDGET / vols).clip(upper=MAX_WEIGHT).sum())
+    assert np.isclose(ew.iloc[-1].sum(), min(1.0, raw))

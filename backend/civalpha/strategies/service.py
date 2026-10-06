@@ -221,6 +221,16 @@ def _summary(results: list[dict], cfg: LabConfig, n: int, feature_test: dict | N
         parts.append(f"Separating the two: ranking with volatility sizing and no tilt gives Sharpe {rank_vol['sharpe']:.2f} against "
                      f"{sized['sharpe']:.2f} for volatility sizing alone, the recorded book ({BOOK_KEY}) (the replacement rule's "
                      f"cost), and {tilted['sharpe']:.2f} with the conviction tilt (the tilt's effect).")
+    ew_sized, mom_sized = by_key.get("EW_SIZED"), by_key.get("MOM_12_1_SIZED")
+    if sized and ew_sized:
+        gap = sized["sharpe"] - ew_sized["sharpe"]
+        same = abs(gap) < 0.10 and abs(sized["maxDrawdown"] - ew_sized["maxDrawdown"]) < 0.05
+        parts.append(f"Sizing without a forecast: the whole universe under the book's volatility sizing (EW_SIZED) gives Sharpe "
+                     f"{ew_sized['sharpe']:.2f} with a max drawdown of {ew_sized['maxDrawdown']*100:.1f}%"
+                     + (f", and 12-1 momentum sized the same way (MOM_12_1_SIZED) {mom_sized['sharpe']:.2f} with {mom_sized['maxDrawdown']*100:.1f}%" if mom_sized else "")
+                     + f", against {sized['sharpe']:.2f} and {sized['maxDrawdown']*100:.1f}% for the recorded book ({BOOK_KEY}): "
+                     + ("the AI's contribution beyond sizing is nil on this window." if same else
+                        f"the gap of {gap:+.2f} Sharpe is what the AI's forecast adds beyond sizing on this window, before any correction for the trials made."))
     ev = by_key.get(AI_WITH_EVENTS_KEY)
     if base and ev:
         parts.append(f"With the policy-event features added back the standard rule gives Sharpe {ev['sharpe']:.2f} against "
