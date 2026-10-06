@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from xml.etree import ElementTree as ET
 
-from .jobs import Log
+from .jobs import Log, Progress
 from .sec.client import SecClient, archive_url
 from .sec.parsers import end_of_day_new_york, parse_submissions
 from .sql import Db, db
@@ -219,7 +219,10 @@ class InsiderIngestionService:
                 by_cik[pad_cik(cik)] = int(c["id"])
         n_sets = n_filings = n_rows = 0
         latest_set_end: date | None = None
-        for name in quarters_back(today, self.lookback_years):
+        quarters = quarters_back(today, self.lookback_years)
+        p = Progress(log, len(quarters) + len(by_cik), "insiders: data sets")
+        for name in quarters:
+            p.step(f"insiders: data set {name}")
             if self.db.scalar("SELECT exists(SELECT 1 FROM source_document WHERE source_type = 'SEC_INSIDER_DATASET' AND title = :t)", t=name):
                 latest_set_end = _quarter_end(name)
                 continue
@@ -240,13 +243,15 @@ class InsiderIngestionService:
             latest_set_end = _quarter_end(name)
             log(f"insiders: data set {name}: {len(rows)} transactions for tracked companies, {inserted} new")
         # the gap after the latest data set: each company's recent Form 4 filings from its submissions index
-        for cik, cid in by_cik.items():
+        for i, (cik, cid) in enumerate(by_cik.items(), 1):
+            p.step(f"insiders: recent Form 4 filings ({i}/{len(by_cik)})")
             try:
                 f, r = self._recent_form4(sec, cik, cid, latest_set_end)
                 n_filings += f
                 n_rows += r
             except Exception as e:  # noqa: BLE001 - one company must not stop the rest
                 log(f"insiders: {self.tickers.current_symbol(cid)}: Form 4 fetch failed ({e})")
+        p.finish()
         log(f"insiders: {n_sets} data sets loaded, {n_filings} recent Form 4 filings read, {n_rows} transactions stored")
         return Result(n_sets, n_filings, n_rows)
 

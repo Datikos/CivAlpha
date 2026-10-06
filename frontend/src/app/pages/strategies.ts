@@ -259,7 +259,9 @@ interface Col {
               The AI's forecasts, long only: what acting on the most confident share would have earned per position over
               {{ r.config.ai['horizon'] }} trading days, after costs. The decision layer rows in the table above test the
               same idea as strategies: <a routerLink="/strategies/AI_CONF">confident entries only</a> raises the bar to act,
-              <a routerLink="/strategies/AI_SIZED">sized by volatility</a> keeps the trades and changes the sizes.
+              <a routerLink="/strategies/AI_SIZED">sized by volatility</a>, the book recorded on the AI decisions page, keeps
+              the trades and changes the sizes, and the <a routerLink="/strategies/AI_RANK_VOL">ranking</a> rows price what
+              letting a stronger candidate replace the weakest holding would cost.
             </p>
           <app-coverage-table [rows]="r.config.aiCoverage ?? []" positionLabel="a stock" />
         </div>
@@ -267,7 +269,7 @@ interface Col {
         <div class="grid-2">
           @if (decisionLayer(); as dl) {
             <div class="card">
-              <h3>The decision layer <app-help text="Three ways to act on the same probabilities. The standard rule enters at p ≥ 0.55 with equal slices; abstention waits for p ≥ 0.60; sizing keeps the standard entries but gives each position 0.04 / its annualized volatility, capped at 20%." topic="decision-layer" label="decision layer" /></h3>
+              <h3>The decision layer <app-help text="Ways to act on the same probabilities. The standard rule enters at p ≥ 0.55 with equal slices; abstention waits for p ≥ 0.60; sizing keeps the standard entries but gives each position 0.04 / its annualized volatility, capped at 20%; the ranking rule replaces the weakest holding when an outsider beats it by 0.08, shown with volatility sizing alone and with a conviction tilt of (p − 0.5) / 0.05. The last row is the standard rule on a model that also sees the policy-event features, which the book dropped after this row underperformed; sized by volatility is the recorded book." topic="decision-layer" label="decision layer" /></h3>
               <div class="table-wrap">
                 <table class="table compact">
                   <thead>
@@ -277,8 +279,8 @@ interface Col {
                     @for (x of dl; track x.key) {
                       <tr>
                         <td><a [routerLink]="['/strategies', x.key]">{{ x.label }}</a><div class="small muted">{{ x.note }}</div></td>
-                        <td class="num" [style.font-weight]="x.bestSharpe ? 650 : 400">{{ x.sharpe | fixed: 2 }}@if (x.bestSharpe) { <span class="badge-best" title="Best of the three">✓</span> }</td>
-                        <td class="num" [style.font-weight]="x.bestDd ? 650 : 400">{{ x.maxDd | pct: 1 }}@if (x.bestDd) { <span class="badge-best" title="Best of the three">✓</span> }</td>
+                        <td class="num" [style.font-weight]="x.bestSharpe ? 650 : 400">{{ x.sharpe | fixed: 2 }}@if (x.bestSharpe) { <span class="badge-best" title="Best of the decision-layer rules">✓</span> }</td>
+                        <td class="num" [style.font-weight]="x.bestDd ? 650 : 400">{{ x.maxDd | pct: 1 }}@if (x.bestDd) { <span class="badge-best" title="Best of the decision-layer rules">✓</span> }</td>
                         <td class="num">{{ x.exposure | pct: 0 }}</td>
                         <td class="num">{{ x.trades | num }}</td>
                         <td class="num"><app-delta [value]="x.excess" kind="pct" [digits]="1" /></td>
@@ -432,13 +434,17 @@ export class StrategiesPage {
     };
   });
 
-  /** The three AI rules that share one set of probabilities and differ only in how they act on them. */
+  /** The AI rules that share one set of probabilities and differ only in how they act on them. */
   protected readonly decisionLayer = computed(() => {
     const byKey = new Map(this.results().map((s) => [s.strategyKey, s]));
     const spec = [
       { key: AI_KEY, label: 'Standard rule', note: 'enter at p ≥ 0.55, equal slices' },
       { key: 'AI_CONF', label: 'Confident entries only', note: 'abstain unless p ≥ 0.60' },
-      { key: 'AI_SIZED', label: 'Sized by volatility', note: 'same trades, 0.04 / volatility each' },
+      { key: 'AI_SIZED', label: 'Sized by volatility', note: 'the recorded book: same trades, 0.04 / volatility each' },
+      { key: 'AI_RANK', label: 'Book follows the ranking', note: 'replace the weakest holding when beaten by 0.08' },
+      { key: 'AI_RANK_VOL', label: 'Ranking + volatility sizing', note: 'the swap rule alone: no conviction tilt' },
+      { key: 'AI_RANK_SIZED', label: 'Ranking + conviction sizing', note: 'volatility size × conviction tilt' },
+      { key: 'AI_WITH_EVENTS', label: 'With policy-event features', note: 'standard rule, model also sees tariff/rate shocks' },
     ];
     const rows = spec
       .map((x) => {

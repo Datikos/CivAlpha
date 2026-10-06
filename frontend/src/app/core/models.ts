@@ -587,10 +587,31 @@ export interface IssuedAccuracy {
   hitRate: number | null;
 }
 
+export interface LiveTestModel {
+  resolved: number;
+  auc: number | null;
+  brier: number | null;
+  baseRateBrier: number | null;
+  verdict: 'PENDING' | 'PASS' | 'FAIL';
+  /** resolved / minResolved, capped at 1. */
+  progress: number;
+}
+
+/** The pre-registered live test: criteria written down before any live forecast resolved, scored per model. */
+export interface LiveTest {
+  registeredOn: string;
+  minResolved: number;
+  minAuc: number;
+  brierBelowBaseRate: boolean;
+  rule: string;
+  models: Partial<Record<ModelKind, LiveTestModel>>;
+}
+
 export interface AccuracyResponse {
   evaluation: Evaluation | null;
   /** LIVE-issued forecasts only (published before their outcome window opened). */
   issued: Partial<Record<ModelKind, IssuedAccuracy>> | null;
+  liveTest?: LiveTest;
   /** Same statistics split by issue mode; REPLAY = published after its data cutoff. */
   issuedByMode?: Partial<
     Record<'LIVE' | 'REPLAY', Partial<Record<ModelKind, IssuedAccuracy>>>
@@ -735,6 +756,24 @@ export interface AiDecision {
     nTrain: number;
     horizon: number;
     codeVersion: string;
+    /**
+     * The recorded book: the equal slot the rule gives the stock (0 when not held) and, when the rule has them, the
+     * replacement margin, the conviction tilt applied to the volatility size and the stock on the other side of a
+     * replacement (AI_RANK_SIZED, recorded on 2026-10-05 only; null under AI_SIZED, the book since 2026-10-06).
+     * Absent on decisions stored under AI_GBM before that (then `weight` is the equal slice).
+     */
+    book?: {
+      key: string;
+      maxPositions: number;
+      slot: number;
+      swapMargin: number | null;
+      tilt: number | null;
+      replacedBy: string | null;
+      replaces: string | null;
+      features?: string;
+      /** True when the language model's review vetoed this entry (CIVALPHA_LLM_REVIEW=veto): stored as STAY_OUT with weight 0. */
+      vetoed?: boolean;
+    };
     /** The decision layer: volatility-scaled size and whether the probability clears the confident bar. */
     sizing?: {
       vol21: number | null;
@@ -748,6 +787,20 @@ export interface AiDecision {
   issuedAt: string;
   explanation: string | null;
   explanationModel: string | null;
+  /** The language model's review of an ENTER candidate; null when not reviewed (HOLD/STAY_OUT, or no model configured). */
+  review: DecisionReview | null;
+}
+
+export type ReviewStance = 'AGREE' | 'CAUTION' | 'DISAGREE';
+
+export interface DecisionReview {
+  stance: ReviewStance;
+  confidence: 'LOW' | 'MEDIUM' | 'HIGH';
+  rationale: string;
+  flags: string[];
+  /** Whether the review changed the stored action (veto mode and DISAGREE). */
+  veto: boolean;
+  model: string;
 }
 
 export interface DecisionsResponse {
@@ -1162,8 +1215,20 @@ export interface Job {
   jobType: string;
   status: 'PENDING' | 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | string;
   log: string | null;
+  /** Null until the worker claims the job. */
   startedAt: string | null;
   finishedAt: string | null;
+  /** Steps done / total and the current step, when the job body reports them; null otherwise. */
+  progressDone: number | null;
+  progressTotal: number | null;
+  progressStep: string | null;
+}
+
+/** Whole-number completion percentage of a job, or null when it reports no total. */
+export function jobPct(j: Pick<Job, 'progressDone' | 'progressTotal'>): number | null {
+  const d = j.progressDone, t = j.progressTotal;
+  if (typeof d !== 'number' || typeof t !== 'number' || t <= 0) return null;
+  return Math.max(0, Math.min(100, Math.floor((d / t) * 100)));
 }
 
 // ---------- Universe management ----------

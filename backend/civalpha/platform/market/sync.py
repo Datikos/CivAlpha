@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from ..errors import Problem
-from ..jobs import Log
+from ..jobs import Log, report
 from ..settings import Prices, settings
 from ..sql import Db, db
 from ..storage import DocumentStore, NewDocument
@@ -105,6 +105,7 @@ class PriceSyncService:
         targets = self.targets()
         log(f"price sync from {p.name} for {len(targets)} symbols through {to}")
         for i, t in enumerate(targets):
+            report(log, i, len(targets), f"prices {t.symbol} ({i + 1}/{len(targets)})")
             try:
                 last = self._last_bar(t)
                 if last is not None and not last < latest_weekday(to):
@@ -143,6 +144,7 @@ class PriceSyncService:
             except Exception as e:  # noqa: BLE001 - one symbol's failure must not stop the others
                 failed += 1
                 log(f"{t.symbol}: FAILED {e}")
+        report(log, len(targets), len(targets), "price sync done")
         log(f"price sync done: {len(targets)} symbols, {current} already current, {failed} failed, {inserted} new bars, {corrected} corrected")
         if rate_limit is not None and failed + current == len(targets) and inserted == 0:
             raise Problem(rate_limit + "; no prices were updated. Try again later (an hour on the free plan).")

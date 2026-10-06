@@ -11,8 +11,10 @@ import pandas as pd
 
 from ...dividends import BUYBACK_CONCEPT, PAYOUT_CONCEPTS, dividend_profile, payout_from_facts
 from ...earnings import announcements, next_estimate, session_excess
+from ...evaluation import LIVE_TEST, live_test_verdict
 from ...returns import total_return_index
 from ... import pit
+from ...strategies.ai import AI_RANK_SIZED_KEY, BOOK_KEY
 from ..errors import BadRequest, NotFound
 from ..llm import provider
 from ..market import MarketDataService
@@ -32,6 +34,7 @@ LABELS = {
     "CashAndCashEquivalentsAtCarryingValue": "Cash and equivalents",
 }
 AI_KEY = "AI_GBM"
+BOOK_KEYS = (BOOK_KEY, AI_RANK_SIZED_KEY, AI_KEY)   # the recorded book today, then the keys it was stored under before
 REFERENCE = "EW_BUY_HOLD"
 DISCLAIMERS = [
     "Research software. Not investment advice. No brokerage connection or order placement.",
@@ -570,7 +573,25 @@ def accuracy():
         FROM latest l LEFT JOIN forecast_outcome o ON o.forecast_id = l.id GROUP BY l.issue_mode, l.model_kind"""):
         m = camel(r)
         by_mode.setdefault(m.pop("issueMode"), {})[m.pop("modelKind")] = m
-    return {"evaluation": camel(ev) if ev else None, "issued": by_mode.get("LIVE", {}), "issuedByMode": by_mode}
+    return {"evaluation": camel(ev) if ev else None, "issued": by_mode.get("LIVE", {}), "issuedByMode": by_mode,
+            "liveTest": _live_test(by_mode.get("LIVE", {}))}
+
+
+def _live_test(live: dict) -> dict:
+    """The pre-registered test scored on the resolved LIVE forecasts (latest version of each series) per model."""
+    from sklearn.metrics import roc_auc_score
+
+    per_model = {}
+    for kind, v in live.items():
+        rows = db().all("""
+            WITH latest AS (SELECT DISTINCT ON (series_key) * FROM forecast WHERE issue_mode = 'LIVE' AND model_kind = :k
+                            ORDER BY series_key, version DESC)
+            SELECT l.probability::float8 AS p, o.outcome FROM latest l JOIN forecast_outcome o ON o.forecast_id = l.id""", k=kind)
+        y = [1.0 if r["outcome"] else 0.0 for r in rows]
+        auc = float(roc_auc_score(y, [r["p"] for r in rows])) if len(set(y)) == 2 else None
+        per_model[kind] = live_test_verdict(len(rows), auc, None if v.get("brier") is None else float(v["brier"]),
+                                            None if v.get("baseRate") is None else float(v["baseRate"]))
+    return {**LIVE_TEST, "models": per_model}
 
 
 # --------------------------------------------------------------------------- strategies, decisions, time machine
@@ -611,18 +632,34 @@ def strategy(key: str):
 
 @router.get("/decisions")
 def decisions(date_: str | None = Query(None, alias="date")):
-    dates = db().scalars("SELECT DISTINCT as_of_date FROM strategy_decision WHERE strategy_key = :k ORDER BY as_of_date DESC LIMIT 60", k=AI_KEY)
+    """The recorded book's decisions for one day. Days decided under an earlier book (AI_RANK_SIZED on 2026-10-05, AI_GBM
+    before) are served under the key they were stored with, so the history stays readable."""
+    stored = db().all("""SELECT as_of_date, strategy_key FROM strategy_decision WHERE strategy_key IN (:a, :b, :c)
+                         GROUP BY as_of_date, strategy_key ORDER BY as_of_date DESC""", a=BOOK_KEYS[0], b=BOOK_KEYS[1], c=BOOK_KEYS[2])
+    key_on: dict = {}
+    for r in stored:                       # the recorded book first, then the key used before it existed
+        k = key_on.get(r["as_of_date"])
+        if k is None or BOOK_KEYS.index(r["strategy_key"]) < BOOK_KEYS.index(k):
+            key_on[r["as_of_date"]] = r["strategy_key"]
+    dates = list(key_on)[:60]
     d = parse_date(date_) or (dates[0] if dates else None)
-    rows = [] if d is None else camel_all(db().all("""
+    key = key_on.get(d)
+    rows = [] if key is None else camel_all(db().all("""
         SELECT s.id, s.company_id, c.name,
                (SELECT symbol FROM ticker_history t WHERE t.company_id = c.id ORDER BY valid_from DESC LIMIT 1) AS symbol,
                s.as_of_date, s.strategy_key, s.action, s.probability, s.entry_p, s.exit_p, s.weight, s.rank,
                s.factors, s.rule_votes, s.model, s.issued_at,
-               e.text AS explanation, e.model AS explanation_model
+               e.text AS explanation, e.model AS explanation_model,
+               r.stance AS review_stance, r.confidence AS review_confidence, r.rationale AS review_rationale,
+               r.flags AS review_flags, r.veto AS review_veto, r.model AS review_model
         FROM strategy_decision s JOIN company c ON c.id = s.company_id
         LEFT JOIN decision_explanation e ON e.decision_id = s.id
+        LEFT JOIN decision_review r ON r.decision_id = s.id
         WHERE s.strategy_key = :k AND s.as_of_date = :d
-        ORDER BY CASE s.action WHEN 'ENTER' THEN 0 WHEN 'EXIT' THEN 1 WHEN 'HOLD' THEN 2 ELSE 3 END, s.probability DESC""", k=AI_KEY, d=d))
+        ORDER BY CASE s.action WHEN 'ENTER' THEN 0 WHEN 'EXIT' THEN 1 WHEN 'HOLD' THEN 2 ELSE 3 END, s.probability DESC""", k=key, d=d))
+    for row in rows:   # fold the reviewer's columns into one object, null when the decision was not reviewed
+        rv = {k: row.pop("review" + k[0].upper() + k[1:]) for k in ("stance", "confidence", "rationale", "flags", "veto", "model")}
+        row["review"] = rv if rv["stance"] else None
     return {"asOfDate": value(d), "dates": [value(x) for x in dates], "decisions": rows}
 
 

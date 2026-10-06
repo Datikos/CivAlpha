@@ -12,6 +12,29 @@ coverage curve: what acting only on the most confident forecasts would have earn
 """
 from __future__ import annotations
 
+# The pre-registered live test: the bar the LIVE forecasts must clear, written down on 2026-10-06 before any of the
+# 1,557 open forecasts had resolved, so the verdict cannot be fitted to the data after the fact. PENDING until
+# min_resolved outcomes exist per model; then PASS only if every criterion holds, else FAIL.
+LIVE_TEST = {
+    "registeredOn": "2026-10-06",
+    "minResolved": 500,
+    "minAuc": 0.53,
+    "brierBelowBaseRate": True,
+    "rule": "On at least 500 resolved LIVE forecasts per model: AUC >= 0.53 and Brier below the base-rate Brier "
+            "(what always forecasting the realized hit rate would score). Registered before the first outcome resolved.",
+}
+
+
+def live_test_verdict(resolved: int, auc: float | None, brier: float | None, base_rate: float | None) -> dict:
+    """Score one model against LIVE_TEST. base_rate is the realized share of positive outcomes among resolved forecasts."""
+    base_brier = None if base_rate is None else float(base_rate * (1.0 - base_rate))
+    if resolved < LIVE_TEST["minResolved"] or auc is None or brier is None or base_brier is None:
+        verdict = "PENDING"
+    else:
+        verdict = "PASS" if auc >= LIVE_TEST["minAuc"] and brier < base_brier else "FAIL"
+    return {"resolved": int(resolved), "auc": auc, "brier": brier, "baseRateBrier": base_brier, "verdict": verdict,
+            "progress": min(1.0, resolved / LIVE_TEST["minResolved"])}
+
 import math
 from dataclasses import dataclass
 

@@ -9,7 +9,7 @@ from datetime import date
 
 from ..errors import Problem
 from ..exposure import ExposureService
-from ..jobs import Log
+from ..jobs import Log, report
 from ..settings import settings
 from ..sql import Db, db, jsonb
 from ..storage import DocumentStore, NewDocument
@@ -101,6 +101,7 @@ class FilingIngestionService:
                         key=lambda f: f.accepted_at)
         filing_ids: dict[str, int] = {}
         new_filings = 0
+        report(log_line, 0, len(wanted) + 1, f"{symbol}: filing index")
         for f in wanted:
             existing = self.db.scalar("SELECT id FROM filing WHERE accession_no = :a", a=f.accession_no)
             if existing is not None:
@@ -115,6 +116,7 @@ class FilingIngestionService:
                 doc=f.primary_document, items=f.items, amends=amends)
             new_filings += 1
         # 2. XBRL facts (point-in-time key: EDGAR acceptance of the reporting filing)
+        report(log_line, 0, len(wanted) + 1, f"{symbol}: XBRL company facts")
         by_acc = {f.accession_no: f for f in everything}
         cf_url = company_facts_url(cik)
         facts = 0
@@ -126,7 +128,8 @@ class FilingIngestionService:
             facts = self.insert_facts(company_id, rows, by_acc, filing_ids, cf_url)
         # 3. documents, passages, instance facts, exposures
         passages = expo = 0
-        for f in wanted:
+        for i, f in enumerate(wanted, 1):
+            report(log_line, i, len(wanted) + 1, f"{symbol}: {f.form} {f.report_date or f.filing_date} ({i}/{len(wanted)})")
             fid = filing_ids[f.accession_no]
             has_doc = self.db.scalar("SELECT source_document_id IS NOT NULL FROM filing WHERE id = :id", id=fid)
             if not has_doc and f.primary_document is not None and f.primary_document.strip():
@@ -146,6 +149,7 @@ class FilingIngestionService:
                         dim_facts = parse_xbrl_instance(xml, INSTANCE_CONCEPTS, f.accession_no, f.form, f.filing_date)
                         facts += self.insert_facts(company_id, dim_facts, by_acc, filing_ids, inst)
                 expo += self.exposures.derive_for_filing(fid)
+        report(log_line, len(wanted) + 1, len(wanted) + 1, f"{symbol}: done")
         log_line(f"{symbol}: {new_filings} new filings, {facts} facts, {passages} passages, {expo} exposures")
         return Result(symbol, new_filings, facts, passages, expo)
 

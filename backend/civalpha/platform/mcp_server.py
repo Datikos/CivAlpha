@@ -101,9 +101,16 @@ def _ret(bars: list[dict], days: int, key: str = "close") -> float | None:
     return round(bars[-1][key] / bars[-1 - days][key] - 1, 4)
 
 
+def _progress(j: dict) -> dict:
+    """Percentage and current step of a job, when its body reports them (null otherwise)."""
+    done, total = j.get("progressDone"), j.get("progressTotal")
+    pct = int(100 * min(done, total) / total) if isinstance(done, int) and isinstance(total, int) and total > 0 else None
+    return {"progressPct": pct, "progressStep": j.get("progressStep")}
+
+
 def _job(j: dict, log_lines: int = 15) -> dict:
     lines = (j.get("log") or "").strip().splitlines()
-    return {**_pick(j, "id", "jobType", "status", "startedAt", "finishedAt", "params"), "logTail": lines[-log_lines:]}
+    return {**_pick(j, "id", "jobType", "status", "startedAt", "finishedAt", "params"), **_progress(j), "logTail": lines[-log_lines:]}
 
 
 def _wait(job: dict, wait_seconds: int) -> dict:
@@ -350,8 +357,11 @@ def build() -> MCPServer:
     def get_strategies() -> dict:
         """Strategy lab: every classic rule (trend, mean reversion, fundamental, dividend, event) and the AI strategies
         backtested on one out-of-sample window after costs, ranked by Sharpe, each with a multiple-testing-aware verdict.
-        AI_CONF (abstention) and AI_SIZED (volatility sizing) act on the same probabilities as AI_GBM; run.aiCoverage is
-        the abstention curve: what acting only on the AI's most confident 5%..100% of forecasts earned per position after costs."""
+        AI_CONF (abstention), AI_SIZED (volatility sizing, the book recorded daily), AI_RANK / AI_RANK_VOL / AI_RANK_SIZED
+        (a replacement rule so the book follows the ranking, bare, with volatility sizing, with a conviction tilt) act on the
+        same probabilities as AI_GBM; AI_WITH_EVENTS adds the policy-event features back to the model;
+        run.aiCoverage is the abstention curve: what acting only on the AI's most confident 5%..100% of forecasts earned per
+        position after costs."""
         r = read.strategies()
         keys = ("start", "end", "years", "cagr", "sharpe", "maxDrawdown", "exposure", "trades", "excessReturn", "excessCiLow",
                 "excessCiHigh", "deflatedSharpe")
@@ -376,14 +386,18 @@ def build() -> MCPServer:
     @tool_read
     @_domain
     def get_decisions(as_of_date: str | None = None) -> dict:
-        """The AI strategy's decisions for a trading day (default: latest): ENTER/EXIT/HOLD/STAY_OUT per stock with the model
-        probability, rank, top factors, which classic rules agree, and the plain-language explanation if any. `sizing` is the
-        decision layer: the volatility-scaled weight (AI_SIZED rule) and whether p clears the confident bar (AI_CONF rule)."""
+        """The recorded AI book's decisions (AI_SIZED since 2026-10-06) for a trading day (default: latest): ENTER/EXIT/HOLD/
+        STAY_OUT per stock with the model probability, rank, volatility-sized weight, top factors, which classic rules agree,
+        and the plain-language explanation if any. `book` names the rule; on 2026-10-05 (AI_RANK_SIZED) it also says whether
+        an exit was a replacement (replacedBy) or an entry took a weaker holding's slot (replaces), and the conviction tilt.
+        `sizing` is the volatility weight and whether p clears the confident bar (AI_CONF rule). `review` is the language model's second opinion on ENTER candidates
+        (stance AGREE/CAUTION/DISAGREE, confidence, rationale, flags; veto=true when it turned the entry into STAY_OUT)."""
         d = _date(as_of_date, "as_of_date")
         r = read.decisions(d.isoformat() if d else None)
         return {"asOfDate": r.get("asOfDate"), "availableDates": r.get("dates", [])[:10],
                 "decisions": [{**_pick(x, "symbol", "name", "action", "probability", "rank", "weight", "entryP", "exitP", "explanation"),
-                               "sizing": (x.get("model") or {}).get("sizing"),
+                               "book": (x.get("model") or {}).get("book"), "sizing": (x.get("model") or {}).get("sizing"),
+                               "review": x.get("review"),
                                "topFactors": [_pick(f, "label", "value", "contribution") for f in (x.get("factors") or [])[:3]],
                                "rulesHolding": sorted(k for k, v in (x.get("ruleVotes") or {}).items() if v)}
                               for x in r.get("decisions", [])]}
@@ -522,7 +536,8 @@ def build() -> MCPServer:
     def list_jobs(ctx: Context, limit: int = 10) -> list[dict]:
         """Recent background jobs (pipeline runs, price updates, backtests, time machine...) with their status."""
         require_admin(ctx)
-        return [_pick(j, "id", "jobType", "status", "startedAt", "finishedAt") for j in admin.jobs()[:max(1, min(limit, 30))]]
+        return [{**_pick(j, "id", "jobType", "status", "startedAt", "finishedAt"), **_progress(j)}
+                for j in admin.jobs()[:max(1, min(limit, 30))]]
 
     @tool_read
     @_domain

@@ -11,7 +11,7 @@ from .decisions import DecisionService
 from .errors import Problem
 from .events import EventService, LiveEventSources
 from .forecasts import ForecastService
-from .jobs import Log
+from .jobs import Log, Progress
 from .macro import MacroService
 from .market import MarketDataService, PriceSyncService
 from .earnings import EarningsIngestionService
@@ -32,6 +32,9 @@ def java_map(m: dict) -> str:
     return "{" + ", ".join(f"{k}={v}" for k, v in m.items()) + "}"
 
 
+AFTER_STEPS = 7   # evaluation, forecasts, outcomes, strategy lab, doubler study, setup playbook, signal health
+
+
 class Pipeline:
     def __init__(self, database: Db | None = None):
         self.db = database or db()
@@ -48,8 +51,13 @@ class Pipeline:
 
     # ------------------------------------------------------------------ configured pipeline
     def run_configured(self, log: Log) -> None:
-        if not self.universe.companies():
+        companies = self.universe.companies()
+        if not companies:
             raise Problem("The universe is empty. Add companies on the Universe page first.")
+        # progress: imports, prices, one step per company's SEC filings plus insiders (or one skipped step), macro,
+        # events, then the after-ingest steps
+        sec_steps = len(companies) + 1 if self.s.sec.configured else 1
+        p = Progress(log, 2 + sec_steps + 2 + AFTER_STEPS, "CSV imports")
         imports = Path(self.s.imports_dir)
         if imports.is_dir():
             for f in sorted(imports.iterdir()):
@@ -61,9 +69,10 @@ class Pipeline:
                     log(f"{name}: {self.market.import_actions(f.read_bytes(), name, 'CSV import')} actions")
         else:
             log(f"no imports directory {imports} (put prices*.csv / corporate_actions*.csv there)")
+        p.step("price update")
         if self.prices.enabled():
             try:
-                self.prices.sync(log)
+                self.prices.sync(p.child())
             except Problem as e:
                 # a refresh failure (rate limit, network) must not block filings, events and models when prices are stored
                 stored = self.market.latest_benchmark_date()
@@ -74,59 +83,77 @@ class Pipeline:
             log("no price provider configured (CIVALPHA_PRICE_PROVIDER); using imported prices only")
         if self.s.sec.configured:
             sec = self.sec_factory.configured()
-            for c in self.universe.companies():
+            for i, c in enumerate(companies, 1):
+                p.step(f"SEC filings {c['name']} ({i}/{len(companies)})")
                 try:
-                    self.filings.ingest(sec, c["id"], log)
+                    self.filings.ingest(sec, c["id"], p.child())
                 except Exception as e:  # noqa: BLE001 - one company's filings must not stop the run
                     log(f"SEC ingest failed for company {c['id']}: {e}")
                 try:
                     EarningsIngestionService(self.db).ingest(sec, c["id"], log)
                 except Exception as e:  # noqa: BLE001
                     log(f"earnings releases failed for company {c['id']}: {e}")
+            p.step("insider transactions")
             try:
-                InsiderIngestionService(self.db).ingest(sec, log)
+                InsiderIngestionService(self.db).ingest(sec, p.child())
             except Exception as e:  # noqa: BLE001
                 log(f"insider transactions failed ({e}); continuing")
         else:
+            p.step("SEC filings skipped")
             log("SEC_USER_AGENT is not set (your name and contact e-mail, required by the SEC); SEC filings skipped")
+        p.step("macro series")
         if self.s.fred.enabled:
             for series in self.s.fred.series:
                 log(f"FRED {series}: {self.macro.fetch_fred(series.strip())} observations")
         else:
             log("FRED_API_KEY not set; macro series skipped")
+        p.step("policy events")
         for d in LiveEventSources().collect(log):
             r = self.events.ingest(d)
             if r.created:
                 log(f"event {r.event_id}: {d.title}")
-        self.after_ingest(log)
+        self.after_ingest(log, p)
 
-    def after_ingest(self, log: Log) -> None:
+    def after_ingest(self, log: Log, p: Progress | None = None) -> None:
+        """The AFTER_STEPS model steps; `p`, when given, advances one step per stage."""
+        step = p.step if p is not None else (lambda label: None)
         if self.market.latest_benchmark_date() is None:
             log(f"No benchmark ETF prices are loaded ({', '.join(self.market.missing_benchmarks())}); skipping evaluation and "
                 "forecasts. Import a prices CSV that includes them.")
+            if p is not None:
+                p.finish()
             return
         warning = self.market.require_benchmarks()
         if warning:
             log(warning)
+        step("walk-forward evaluation")
         log("walk-forward evaluation: " + str(ml.evaluate(engine())["verdict"]))
+        step("live forecasts")
         live = self.forecasts.issue_live(None, "Scheduled issue")
         log(f"live forecasts: {live.created} created, {live.unchanged} unchanged")
+        step("outcomes")
         log("outcomes: " + java_map(ml.resolve_outcomes(engine())))
+        step("strategy lab")
         try:
             log("strategy lab: " + str(strategy_lab.backtest_strategies(engine())["summary"]))
             d = self.decisions.decide(None, log)
             log(f"AI decisions: {d.created} stored, {d.existing} already existed, {d.explained} explained")
         except Exception as e:  # noqa: BLE001 - the lab is optional; forecasts above are already stored
             log(f"strategy lab skipped: {e}")
+        step("doubler study")
         try:
             log("doubler study: " + str(doublers.study(engine())["headline"]))
         except Exception as e:  # noqa: BLE001
             log(f"doubler study skipped: {e}")
+        step("setup playbook")
         try:
             log("setup playbook: " + str(setups.study(engine())["headline"]))
         except Exception as e:  # noqa: BLE001
             log(f"setup playbook skipped: {e}")
+        step("signal health")
         try:
             log("signal health: " + str(signals.study(engine())["headline"]))
         except Exception as e:  # noqa: BLE001
             log(f"signal health skipped: {e}")
+        if p is not None:
+            p.finish()

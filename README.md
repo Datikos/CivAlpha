@@ -279,6 +279,19 @@ strategies on the same data, the same out-of-sample window and the same costs. T
   With `CIVALPHA_LLM_PROVIDER=anthropic`, Claude writes a short plain-language explanation for ENTER/EXIT actions. The
   explanation is stored separately and never changes the decision.
 
+  The book recorded here is `AI_SIZED`: fixed entry (p ≥ 0.55, top 8) and exit (p < 0.48) thresholds, each position sized
+  as 0.04 / annualized 21-day volatility, capped at 20%, no leverage. The model behind it leaves out the policy-event
+  features (tariff and rate shocks, fed funds × leverage) since the lab showed the book does better without them. The
+  Strategy lab backtests it next to the standard rule (`AI_GBM`), a replacement rule that lets a stronger candidate take
+  the weakest holding's slot (`AI_RANK`, `AI_RANK_VOL`, `AI_RANK_SIZED` with a conviction tilt) and the model with the
+  event features added back (`AI_WITH_EVENTS`), so the price of each decision-layer idea stays visible.
+
+  Claude can also act as a reviewer of the entry candidates (`CIVALPHA_LLM_REVIEW`): it reads a brief of what the
+  platform knows about the stock (factors, recent prices and corporate actions, results announcements, insider activity,
+  key filed facts) and records AGREE / CAUTION / DISAGREE with a rationale and flags. `advisory` (default) logs the review
+  and leaves the decision alone; `veto` stores a DISAGREE as STAY_OUT; `off` disables it. The brief is stored with every
+  review so the reviewer can be scored once outcomes resolve.
+
 Code: `backend/civalpha/strategies/` (`rules.py`, `ai.py`, `backtest.py`, `stats.py`). `backend/tests/test_strategies.py` covers:
 * look-ahead, for every strategy;
 * the AI's training purge;
@@ -337,6 +350,7 @@ the page says so.
 | Federal Reserve monetary press RSS (FOMC statements) | off | `EVENTS_FED_RSS_ENABLED=true` | Parses the rate change from the statement text. |
 | News RSS (discovery only) | off | `EVENTS_NEWS_FEEDS=url1,url2` | Stays `NEWS_ONLY` and is excluded from features until an official document is linked. |
 | LLM-assisted exposure extraction | off | `CIVALPHA_LLM_PROVIDER=anthropic`, `ANTHROPIC_API_KEY` (model `CIVALPHA_LLM_MODEL`, default `claude-opus-5-5`) | Optional. Output is schema-constrained and stored as `ESTIMATED` with confidence no higher than MEDIUM. Any failure means no hints, never a failed ingest. |
+| LLM review of AI entries | advisory | `CIVALPHA_LLM_REVIEW=off|advisory|veto` (needs the LLM above) | A schema-constrained second opinion on each ENTER, stored with the brief it saw. `veto` turns a DISAGREE into STAY_OUT; any failure means no review, never a missed decision. |
 
 With the sources configured, run **Data & pipeline → Run pipeline** (`POST /api/admin/pipeline/run`).
 
@@ -431,7 +445,7 @@ on another interface, list the host names clients use in `CIVALPHA_MCP_ALLOWED_H
 All variables are listed with comments in `.env.example`. The main ones are `CIVALPHA_PORT` (8088),
 `CIVALPHA_BIND`, `CIVALPHA_ADMIN_TOKEN`, `CIVALPHA_PIPELINE_CRON`, `CIVALPHA_OUTCOMES_CRON`, `POSTGRES_PASSWORD`,
 `SEC_USER_AGENT`, `SEC_MAX_RPS`, `SEC_LOOKBACK_YEARS`, `CIVALPHA_PRICE_PROVIDER`, `TIINGO_API_KEY`, `FRED_API_KEY`,
-`EVENTS_*`, `CIVALPHA_LLM_PROVIDER`, `CIVALPHA_LLM_MODEL`, `ANTHROPIC_API_KEY`, `CIVALPHA_MCP_ALLOWED_HOSTS` and
+`EVENTS_*`, `CIVALPHA_LLM_PROVIDER`, `CIVALPHA_LLM_MODEL`, `CIVALPHA_LLM_REVIEW`, `ANTHROPIC_API_KEY`, `CIVALPHA_MCP_ALLOWED_HOSTS` and
 `CIVALPHA_MCP_ALLOWED_ORIGINS`. The stocks themselves are managed
 on the Universe page; 20–50 symbols is a sensible size.
 

@@ -15,7 +15,7 @@ from .expand import UniverseExpansion
 from .earnings import EarningsIngestionService
 from .insiders import InsiderIngestionService
 from .forecasts import ForecastService
-from .jobs import Log
+from .jobs import Log, Progress
 from .market import MarketDataService, PriceSyncService
 from .pipeline import Pipeline, java_map, java_set
 from .sec import FilingIngestionService, SecClientFactory
@@ -52,7 +52,7 @@ def strategy_backtest(params: dict, log: Log) -> None:
 def strategy_decide(params: dict, log: Log) -> None:
     _benchmarks(log)
     r = DecisionService().decide(_date(params), log)
-    log(f"AI decisions: {r.created} stored, {r.existing} already existed, {r.explained} explained")
+    log(f"AI decisions: {r.created} stored, {r.existing} already existed, {r.explained} explained, {r.reviewed} reviewed, {r.vetoed} vetoed")
 
 
 def doubler_study(params: dict, log: Log) -> None:
@@ -110,11 +110,15 @@ def earnings_ingest(params: dict, log: Log) -> None:
     svc = EarningsIngestionService()
     svc.reclassify(log)
     total = 0
-    for c in UniverseService().companies():
+    companies = UniverseService().companies()
+    p = Progress(log, len(companies))
+    for i, c in enumerate(companies, 1):
+        p.at(f"earnings releases {c['name']} ({i}/{len(companies)})")
         try:
             total += svc.ingest(sec, int(c["id"]), log).releases
         except Exception as e:  # noqa: BLE001
             log(f"earnings releases failed for company {c['id']}: {e}")
+        p.step()
     log(f"earnings releases: {total} read")
 
 

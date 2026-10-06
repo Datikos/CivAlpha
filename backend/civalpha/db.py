@@ -172,6 +172,12 @@ def previous_ai_holdings(engine: Engine, strategy_key: str, before) -> set[int]:
     return set(df.loc[df["action"].isin(["ENTER", "HOLD"]), "company_id"].astype(int))
 
 
+def has_decisions(engine: Engine, strategy_key: str, before) -> bool:
+    """Whether any decision under `strategy_key` is dated before `before` (an empty book is then a real empty book)."""
+    df = _q(engine, "SELECT 1 AS x FROM strategy_decision WHERE strategy_key = :k AND as_of_date < :d LIMIT 1", k=strategy_key, d=before)
+    return not df.empty
+
+
 def unresolved_forecasts(engine: Engine) -> pd.DataFrame:
     return _dates(_q(engine, """SELECT f.id, f.company_id, f.benchmark_symbol, f.as_of_date, f.horizon_trading_days, f.probability::float8 AS probability
                                 FROM forecast f LEFT JOIN forecast_outcome o ON o.forecast_id = f.id WHERE o.forecast_id IS NULL"""), ["as_of_date"])

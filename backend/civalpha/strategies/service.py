@@ -13,8 +13,10 @@ from .. import db, pit
 from ..evaluation import brier, coverage_curve, coverage_sentence, log_loss
 from ..features import DataBundle
 from . import backtest, stats
-from .ai import (AI_CONF_KEY, AI_DIV_FEATURES, AI_FEATURES, AI_KEY, AI_SIZED_KEY, FUND_MODEL_FEATURES, ALGORITHM, CODE_VERSION,
-                 AiConfig, ai_strategies, dataset, decide_positions, explain, new_model, size_by_volatility, sized_weight,
+from .ai import (AI_CONF_KEY, AI_DIV_FEATURES, AI_EVENTS_FEATURES, AI_FEATURES, AI_KEY, AI_RANK_KEY, AI_RANK_SIZED_KEY,
+                 AI_RANK_VOL_KEY, AI_SIZED_KEY, AI_WITH_EVENTS_KEY, BOOK_KEY,
+                 FUND_MODEL_FEATURES, ALGORITHM, CODE_VERSION, AiConfig, ai_strategies,
+                 dataset, decide_positions, explain, new_model, size_by_conviction, size_by_volatility, sized_weight,
                  technical_features, walk_forward_probabilities)
 from .base import Strategy
 from .panel import MarketPanel
@@ -51,9 +53,16 @@ def run_lab(bundle: DataBundle, cfg: LabConfig) -> dict:
     div_w, _ = decide_positions(wf_div["prob"], panel.member, ai_cfg, start_idx=oos)
     feature_test = compare_forecasts(panel, data, wf["prob"], wf_div["prob"])
     conf_w, _ = decide_positions(wf["prob"], panel.member, ai_cfg.confident(), start_idx=oos)
-    sized_w = size_by_volatility(ai_w, technical_features(panel)["vol_21"], ai_cfg)
+    vol_21 = technical_features(panel)["vol_21"]
+    sized_w = size_by_volatility(ai_w, vol_21, ai_cfg)
+    rank_w, _ = decide_positions(wf["prob"], panel.member, ai_cfg.ranked(), start_idx=oos)
+    rank_sized_w = size_by_conviction(rank_w, vol_21, wf["prob"], ai_cfg)
+    rank_vol_w = size_by_volatility(rank_w, vol_21, ai_cfg)
+    wf_ev = walk_forward_probabilities(panel, ai_cfg, data, features=AI_EVENTS_FEATURES)
+    events_w, _ = decide_positions(wf_ev["prob"], panel.member, ai_cfg, start_idx=oos)
     ai_coverage = ai_coverage_curve(panel, data, wf["prob"], cfg.cost_bps_per_side)
-    strategies = rule_strategies() + ai_strategies(ai_cfg, ai_w, fund_w, div_w, conf_w, sized_w)
+    strategies = rule_strategies() + ai_strategies(ai_cfg, ai_w, fund_w, div_w, conf_w, sized_w, rank_w, rank_sized_w,
+                                                   rank_vol_w, events_w)
     start = oos + 1  # first decision is at close(oos), first trade at close(oos + 1)
     if start >= len(panel.calendar) - 1:
         raise ValueError("not enough out-of-sample history to backtest strategies")
@@ -93,6 +102,7 @@ def run_lab(bundle: DataBundle, cfg: LabConfig) -> dict:
     results.sort(key=lambda x: -(x["metrics"]["sharpe"] if np.isfinite(x["metrics"]["sharpe"]) else -1e9))
     config = {"costBpsPerSide": cfg.cost_bps_per_side, "costSensitivityBps": list(COST_SENSITIVITY_BPS),
               "reference": REFERENCE, "nCandidates": len(candidates), "ai": ai_cfg.params(), "aiFolds": wf["folds"],
+              "bookKey": BOOK_KEY,
               "dividendFeatureTest": feature_test, "aiCoverage": ai_coverage,
               "execution": "Decided at the close, traded at the next close; long-only; idle cash earns realized FEDFUNDS",
               "verdictRule": f"SUPPORTED only if >= {stats.MIN_YEARS:g} years out of sample, the 95% CI of the excess return over "
@@ -116,6 +126,9 @@ def ai_coverage_curve(panel: MarketPanel, data: pd.DataFrame, prob: pd.DataFrame
 def _trade_labels(s: Strategy, cfg: AiConfig) -> tuple[str, str]:
     if s.key == AI_CONF_KEY:
         return f"p ≥ {cfg.confident_entry_p:.2f}, top {cfg.max_positions}", f"p < {cfg.confident_exit_p:.2f}"
+    if s.key in (AI_RANK_KEY, AI_RANK_SIZED_KEY, AI_RANK_VOL_KEY):
+        m = cfg.ranked().swap_margin
+        return f"p ≥ {cfg.entry_p:.2f}, top {cfg.max_positions} or beats weakest holding by {m:.2f}", f"p < {cfg.exit_p:.2f} or replaced"
     if s.family == "AI":
         return f"p ≥ {cfg.entry_p:.2f}, top {cfg.max_positions}", f"p < {cfg.exit_p:.2f}"
     if s.sizing == "EQUAL":
@@ -191,6 +204,20 @@ def _summary(results: list[dict], cfg: LabConfig, n: int, feature_test: dict | N
                      f"{base['exposure']:.0%} for the standard rule; sizing each position by its volatility gives Sharpe "
                      f"{sized['sharpe']:.2f} with a max drawdown of {sized['maxDrawdown']*100:.1f}% against "
                      f"{base['maxDrawdown']*100:.1f}%.")
+    rank, tilted, rank_vol = by_key.get(AI_RANK_KEY), by_key.get(AI_RANK_SIZED_KEY), by_key.get(AI_RANK_VOL_KEY)
+    if base and rank and tilted:
+        parts.append(f"Letting the book follow the ranking (replace the weakest holding when a candidate beats it by "
+                     f"{cfg.ai().ranked().swap_margin:.2f}) gives Sharpe {rank['sharpe']:.2f} with {rank['trades']:,} trades against "
+                     f"{base['sharpe']:.2f} with {base['trades']:,}; adding conviction and volatility sizing gives Sharpe "
+                     f"{tilted['sharpe']:.2f} and a max drawdown of {tilted['maxDrawdown']*100:.1f}%.")
+    if sized and rank_vol and tilted:
+        parts.append(f"Separating the two: ranking with volatility sizing and no tilt gives Sharpe {rank_vol['sharpe']:.2f} against "
+                     f"{sized['sharpe']:.2f} for volatility sizing alone, the recorded book ({BOOK_KEY}) (the replacement rule's "
+                     f"cost), and {tilted['sharpe']:.2f} with the conviction tilt (the tilt's effect).")
+    ev = by_key.get(AI_WITH_EVENTS_KEY)
+    if base and ev:
+        parts.append(f"With the policy-event features added back the standard rule gives Sharpe {ev['sharpe']:.2f} against "
+                     f"{base['sharpe']:.2f} without them.")
     if ai_coverage:
         parts.append(coverage_sentence(ai_coverage, "the AI's own forecasts"))
     return " ".join(p for p in parts if p)
@@ -207,20 +234,33 @@ def backtest_strategies(engine, cfg: LabConfig | None = None) -> dict:
 
 
 # --------------------------------------------------------------------------- decisions
+PRIOR_BOOK_KEYS = (AI_RANK_SIZED_KEY, AI_KEY)   # keys the daily book was recorded under before BOOK_KEY, newest first
+
+
 def decide(engine, as_of: str | None = None, cfg: LabConfig | None = None) -> dict:
-    """Today's AI action per company. The backend persists them (append-only) and adds explanations."""
+    """Today's AI action per company under the recorded book (BOOK_KEY). The backend persists them (append-only) and
+    adds explanations. Yesterday's book comes from the latest decisions under BOOK_KEY; before the first of those it is
+    seeded from the holdings recorded under the previous book keys, so switching the book does not restart from cash."""
     cfg = cfg or LabConfig()
     bundle = db.load_bundle(engine)
     # an as-of date means "after that day's close", like forecast replays
     d = pit.last_trading_date_at(bundle.calendar, pit.close_ts(pd.Timestamp(as_of))) if as_of else bundle.calendar[-1]
     if d is None:
         raise ValueError("no trading day at or before the requested date")
-    held = db.previous_ai_holdings(engine, AI_KEY, d.date())
+    held = db.previous_ai_holdings(engine, BOOK_KEY, d.date())
+    if not held and not db.has_decisions(engine, BOOK_KEY, d.date()):
+        for k in PRIOR_BOOK_KEYS:
+            if k != BOOK_KEY and db.has_decisions(engine, k, d.date()):
+                held = db.previous_ai_holdings(engine, k, d.date())
+                break
     return {"decisions": decisions_at(bundle, int(bundle.calendar.get_loc(d)), cfg, held)}
 
 
 def decisions_at(bundle: DataBundle, idx: int, cfg: LabConfig, held: set[int],
                  panel: MarketPanel | None = None, data: pd.DataFrame | None = None) -> list[dict]:
+    """One decision per company at close(idx) under the recorded book (AI_SIZED): the standard thresholds, no replacement
+    rule, and the volatility size as `weight`. `model.book` describes the rule (swapMargin and tilt are null: no swaps, no
+    conviction tilt); `model.sizing` repeats the volatility size and the confident flag."""
     ai_cfg = cfg.ai()
     panel = MarketPanel.from_bundle(bundle) if panel is None else panel
     data = dataset(panel, ai_cfg) if data is None else data
@@ -243,19 +283,24 @@ def decisions_at(bundle: DataBundle, idx: int, cfg: LabConfig, held: set[int],
     trained_through = panel.calendar[int(train["idx"].max())].date()
     rank = pd.Series(p, index=rows["company_id"].to_numpy()).rank(ascending=False, method="first")
     vols = rows["vol_21"].to_numpy(float)
-    raw_sized = {int(c): sized_weight(float(weights.at[d, int(c)]), float(v), ai_cfg) for c, v in zip(rows["company_id"], vols)}
-    scale = 1.0 / max(1.0, sum(raw_sized.values()))      # no leverage: scale every position down if the book exceeds 1
+    cids = [int(c) for c in rows["company_id"].to_numpy()]
+    slots = {c: float(weights.at[d, c]) for c in cids}
+    raw_sized = {c: sized_weight(slots[c], float(v), ai_cfg) for c, v in zip(cids, vols)}
+    sized_scale = 1.0 / max(1.0, sum(raw_sized.values()))   # no leverage: scale every position down if the book exceeds 1
     out = []
-    for i, cid in enumerate(rows["company_id"].to_numpy()):
-        cid = int(cid)
+    for i, cid in enumerate(cids):
+        action = actions.at[d, cid]
         out.append(db._clean({
             "companyId": cid, "symbol": panel.symbols[cid], "name": panel.names[cid], "asOfDate": str(d.date()),
-            "strategyKey": AI_KEY, "action": actions.at[d, cid], "probability": float(p[i]), "rank": int(rank[cid]),
-            "weight": float(weights.at[d, cid]), "entryP": ai_cfg.entry_p, "exitP": ai_cfg.exit_p,
+            "strategyKey": BOOK_KEY, "action": action, "probability": float(p[i]), "rank": int(rank[cid]),
+            "weight": raw_sized[cid] * sized_scale, "entryP": ai_cfg.entry_p, "exitP": ai_cfg.exit_p,
             "maxPositions": ai_cfg.max_positions, "factors": explain(model, X[i], medians), "ruleVotes": votes.get(cid, {}),
             "model": {"algorithm": ALGORITHM, "codeVersion": CODE_VERSION, "trainedThrough": str(trained_through),
                       "nTrain": int(len(train)), "horizon": ai_cfg.horizon, "params": ai_cfg.params(),
-                      "sizing": {"vol21": float(vols[i]), "sizedWeight": raw_sized[cid] * scale,
+                      "book": {"key": BOOK_KEY, "maxPositions": ai_cfg.max_positions, "slot": slots[cid],
+                               "swapMargin": ai_cfg.swap_margin, "tilt": None, "replacedBy": None, "replaces": None,
+                               "features": "no policy-event features"},
+                      "sizing": {"vol21": float(vols[i]), "sizedWeight": raw_sized[cid] * sized_scale,
                                  "confident": bool(p[i] >= ai_cfg.confident_entry_p),
                                  "volBudget": ai_cfg.vol_budget, "maxWeight": ai_cfg.max_weight,
                                  "confidentEntryP": ai_cfg.confident_entry_p}},

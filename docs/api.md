@@ -202,7 +202,7 @@ Forecast summary object:
 `contribution` is in log-odds units (coefficient × standardized value).
 
 ## Accuracy
-`GET /api/accuracy`
+`GET /api/accuracy` — also returns `liveTest`: the pre-registered bar for the LIVE forecasts (`registeredOn` 2026-10-06, `minResolved` 500 per model, `minAuc` 0.53, Brier below the base-rate Brier) scored on the resolved LIVE forecasts per model (`models.<kind>`: `resolved`, `auc`, `brier`, `baseRateBrier`, `progress`, `verdict` PENDING / PASS / FAIL).
 ```json
 { "evaluation": { "id": 1, "runAt": "...", "dataCutoff": "2026-09-30",
     "config": {"horizon": 21, "sampleEvery": 5, "embargo": 21, "foldLength": 63, "minTrainDays": 504, "costBpsPerSide": 10},
@@ -262,7 +262,7 @@ out-of-sample window after costs. Results are sorted by Sharpe.
      "verdict": "Beats buy-and-hold after costs: NOT supported"}
   ] }
 ```
-Families: `BENCHMARK`, `TREND`, `MEAN_REVERSION`, `FUNDAMENTAL`, `EVENT`, `SPECULATIVE`, `AI`. `DOUBLER_SCREEN` (family `SPECULATIVE`) trades the doubler study's screen: hold 63 days with a 50% stop. Report-based strategies are `QUALITY_GROWTH`, `PEAD_SUE`, `VALUE_EY`, `GROSS_PROFIT` and `AI_FUND` (the AI on the financial-report profile only); decision factors of kind `FUNDAMENTAL` come from that profile. `DIV_YIELD` holds the 5 highest dividend yields; `AI_DIV` is `AI_GBM` plus the dividend signals (yield, change in the regular dividend, filed payout ratio). The decision layer is tested on `AI_GBM`'s own probabilities: `AI_CONF` (abstention) enters at p ≥ `confident_entry_p` (0.60) and exits below `confident_exit_p` (0.50); `AI_SIZED` keeps `AI_GBM`'s entries and exits but sizes each position as `vol_budget` (0.04) / annualized 21-day volatility, capped at `max_weight` (0.20) and at 100% in total. `config.aiCoverage` is the abstention curve of the AI's own out-of-sample forecasts, long only (`side` `long`: ranked by p, `minConfidence` is the lowest p in the slice), costs on 2 legs; same fields as `trading.<model>.coverage` on `/api/accuracy`. `config.dividendFeatureTest` compares the out-of-sample forecasts of the two models on the same rows: `brierDiff` = Brier(with) − Brier(without), negative when the dividend signals help, with a 95% CI from a bootstrap over 21-day blocks of dates. `excess*` compare daily net returns with
+Families: `BENCHMARK`, `TREND`, `MEAN_REVERSION`, `FUNDAMENTAL`, `EVENT`, `SPECULATIVE`, `AI`. `DOUBLER_SCREEN` (family `SPECULATIVE`) trades the doubler study's screen: hold 63 days with a 50% stop. Report-based strategies are `QUALITY_GROWTH`, `PEAD_SUE`, `VALUE_EY`, `GROSS_PROFIT` and `AI_FUND` (the AI on the financial-report profile only); decision factors of kind `FUNDAMENTAL` come from that profile. `DIV_YIELD` holds the 5 highest dividend yields; `AI_DIV` is `AI_GBM` plus the dividend signals (yield, change in the regular dividend, filed payout ratio). The decision layer is tested on `AI_GBM`'s own probabilities: `AI_CONF` (abstention) enters at p ≥ `confident_entry_p` (0.60) and exits below `confident_exit_p` (0.50); `AI_SIZED` keeps `AI_GBM`'s entries and exits but sizes each position as `vol_budget` (0.04) / annualized 21-day volatility, capped at `max_weight` (0.20) and at 100% in total. `AI_RANK` adds a replacement rule: when the book is full and an outsider clears `entry_p` and beats the weakest holding's probability by `swap_margin` (0.08), the weakest is sold and the outsider bought, so the book follows the ranking instead of the order in which stocks qualified. `AI_RANK_SIZED` is `AI_RANK` with conviction sizing: the volatility size × (p − 0.5) / (`entry_p` − 0.5), clipped to [`tilt_floor` 0.5, `tilt_cap` 3.0], capped at `max_weight`. `AI_RANK_VOL` is `AI_RANK` with volatility sizing and no tilt, so its gap to `AI_SIZED` prices the replacement rule alone and its gap to `AI_RANK_SIZED` the tilt alone. The AI model leaves out the policy-event features (`trade_shock`, `rate_shock`, `fedfunds_chg_x_lev`) since 2026-10-06; `AI_WITH_EVENTS` is the standard rule with them added back. `AI_SIZED` is the book recorded daily (`config.bookKey`). `config.aiCoverage` is the abstention curve of the AI's own out-of-sample forecasts, long only (`side` `long`: ranked by p, `minConfidence` is the lowest p in the slice), costs on 2 legs; same fields as `trading.<model>.coverage` on `/api/accuracy`. `config.dividendFeatureTest` compares the out-of-sample forecasts of the two models on the same rows: `brierDiff` = Brier(with) − Brier(without), negative when the dividend signals help, with a 95% CI from a bootstrap over 21-day blocks of dates. `excess*` compare daily net returns with
 `EW_BUY_HOLD` (annualized, 95% stationary block-bootstrap CI). `deflatedSharpe` is the Deflated Sharpe Ratio of that excess,
 deflated for `nCandidates` strategies. A verdict says SUPPORTED only with at least 3 years out of sample, an excess CI above
 0 and DSR ≥ 0.95. `equity` is sampled weekly. `run` is null and `results` empty before the first backtest.
@@ -271,23 +271,33 @@ deflated for `nCandidates` strategies. A verdict says SUPPORTED only with at lea
 trips: `companyId`, `symbol`, `entryDate`, `exitDate` (null = still open), `tradeReturn` (gross), `holdingDays`,
 `entryReason`, `exitReason`; dates are execution dates) and `tradeCount`. 404 for an unknown key or before the first run.
 
-`GET /api/decisions?date=2026-09-30` — the AI strategy's decisions for one trading day (default: the latest).
+`GET /api/decisions?date=2026-09-30` — the recorded book's decisions (`AI_SIZED` since 2026-10-06) for one trading day (default: the latest). A day stored under several keys is served under the newest book (2026-10-05 exists under `AI_SIZED` and `AI_RANK_SIZED`, the replacement-rule-plus-conviction-tilt book tried that day, whose rows carry `swapMargin`, `tilt`, `replaces` and `replacedBy`); earlier days are served under `AI_GBM`, without `model.book`.
 ```json
 { "asOfDate": "2026-09-30", "dates": ["2026-09-30", "2026-09-29"],
   "decisions": [
-    {"id": 812, "companyId": 3, "symbol": "NVDA", "name": "NVIDIA Corporation", "asOfDate": "2026-09-30", "strategyKey": "AI_GBM",
-     "action": "ENTER", "probability": 0.61, "entryP": 0.55, "exitP": 0.48, "weight": 0.125, "rank": 1,
+    {"id": 812, "companyId": 3, "symbol": "NVDA", "name": "NVIDIA Corporation", "asOfDate": "2026-09-30", "strategyKey": "AI_SIZED",
+     "action": "ENTER", "probability": 0.61, "entryP": 0.55, "exitP": 0.48, "weight": 0.129, "rank": 1,
      "factors": [{"feature": "mom_12_1", "label": "12-1 month momentum", "kind": "TECHNICAL", "value": 0.42, "median": 0.11,
                   "contribution": 0.031, "direction": "UP"}],
      "ruleVotes": {"SMA_50_200": true, "RSI2_SMA200": false, "...": "..."},
      "model": {"algorithm": "hist_gradient_boosting", "trainedThrough": "2026-09-15", "nTrain": 31250, "horizon": 10, "...": "...",
+               "book": {"key": "AI_SIZED", "maxPositions": 8, "slot": 0.125, "swapMargin": null, "tilt": null, "replacedBy": null, "replaces": null, "features": "no policy-event features"},
                "sizing": {"vol21": 0.31, "sizedWeight": 0.129, "confident": true, "volBudget": 0.04, "maxWeight": 0.2, "confidentEntryP": 0.6}},
      "issuedAt": "2026-09-30T22:05:00Z",
-     "explanation": "The model ...", "explanationModel": "anthropic:claude-opus-5-5"}
+     "explanation": "The model ...", "explanationModel": "anthropic:claude-opus-5-5",
+     "review": {"stance": "CAUTION", "confidence": "MEDIUM", "flags": ["EARNINGS_IMMINENT"], "veto": false,
+                "rationale": "Results are estimated in 6 trading days, inside the 10-day horizon ...", "model": "anthropic:claude-opus-5-5"}}
   ] }
 ```
-`action` is `ENTER`, `EXIT`, `HOLD` or `STAY_OUT` (relative to the previous stored decision). `contribution` is the change
-in probability compared with the feature at its training median. `explanation` is written by the language model only for
+`action` is `ENTER`, `EXIT`, `HOLD` or `STAY_OUT` (relative to the previous stored decision). `weight` is the volatility size
+(`model.book.slot` is the equal 1/N slot, 0 when not held; `model.sizing.sizedWeight` repeats the volatility size). Under the
+2026-10-05 book, `tilt` is the conviction multiplier, an `EXIT` with `replacedBy` set left because that stock beat it by
+`swapMargin`, and the newcomer carries `replaces`; under `AI_SIZED` those fields are null. `contribution` is the change in probability compared with the feature at its training median. `review` is the
+language model's second opinion on an ENTER candidate, or null: `stance` `AGREE` / `CAUTION` / `DISAGREE`, `confidence` `LOW` /
+`MEDIUM` / `HIGH`, `flags` from `DATA_ARTEFACT`, `CORPORATE_ACTION`, `EARNINGS_IMMINENT`, `MISSING_INPUTS`, `INSIDER_SELLING`,
+`WEAK_PATTERN`, `STALE_FUNDAMENTALS`. With `CIVALPHA_LLM_REVIEW=advisory` (default) the decision is unchanged; with `veto` a
+`DISAGREE` is stored as `STAY_OUT` with weight 0, `model.book.vetoed` true and `review.veto` true; `off` disables the review.
+The brief the model saw is stored in `decision_review.brief` for audit. `explanation` is written by the language model only for
 ENTER/EXIT when `CIVALPHA_LLM_PROVIDER=anthropic`; it is null otherwise and never changes the decision. Decision rows are
 append-only (UPDATE/DELETE are rejected by the database).
 
@@ -429,7 +439,11 @@ When the server sets `CIVALPHA_ADMIN_TOKEN`, every `/api/admin/**` request and e
 (e.g. `POST /api/events`) must send `X-Admin-Token: <token>` (or `Authorization: Bearer <token>`); otherwise the
 response is `401`. `GET /api/meta` reports `adminTokenRequired`.
 
-* `GET /api/admin/jobs` → `[{"id":1,"jobType":"PIPELINE_RUN","status":"SUCCEEDED","log":"...","startedAt":"...","finishedAt":"..."}]`
+* `GET /api/admin/jobs` → `[{"id":1,"jobType":"PIPELINE_RUN","status":"SUCCEEDED","log":"...","startedAt":"...","finishedAt":"...","progressDone":361,"progressTotal":361,"progressStep":"signal health"}]`
+  — `startedAt` is null while a job is QUEUED; `progressDone`/`progressTotal`/`progressStep` are the steps done, the
+  steps in total and the step running now, reported by jobs that iterate (pipeline run: one step per company plus
+  the fixed stages; price sync, SEC ingest, insiders, earnings, universe expansion), null for single-step jobs. MCP's
+  `list_jobs`/`get_job` return the same as `progressPct` and `progressStep`.
 * `POST /api/admin/pipeline/run` → job — refresh prices, SEC filings, macro data and events, then evaluate, issue
   forecasts, run the strategy lab and record the AI's decisions. Fails if the universe is empty.
 * `POST /api/admin/forecasts/issue` body `{"asOfDate": "2026-09-30"}` (optional) → job

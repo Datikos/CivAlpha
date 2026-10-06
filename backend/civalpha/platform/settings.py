@@ -60,10 +60,16 @@ class Llm:
     provider: str
     model: str
     api_key: str
+    review: str = "advisory"   # off | advisory | veto: how the model's review of ENTER decisions is used
 
     @property
     def enabled(self) -> bool:
         return self.provider.lower() == "anthropic" and bool(self.api_key)
+
+    @property
+    def review_mode(self) -> str:
+        m = (self.review or "advisory").lower()
+        return m if m in ("off", "advisory", "veto") else "advisory"
 
 
 @dataclass(frozen=True)
@@ -129,7 +135,7 @@ def load() -> Settings:
         events=Events(federal_register_enabled=_bool("EVENTS_FEDERAL_REGISTER_ENABLED"), fed_rss_enabled=_bool("EVENTS_FED_RSS_ENABLED"),
                       news_feeds=_list("EVENTS_NEWS_FEEDS")),
         llm=Llm(provider=_env("CIVALPHA_LLM_PROVIDER", "none"), model=_env("CIVALPHA_LLM_MODEL", "claude-opus-5-5"),
-                api_key=_env("ANTHROPIC_API_KEY")),
+                api_key=_env("ANTHROPIC_API_KEY"), review=_env("CIVALPHA_LLM_REVIEW", "advisory")),
         prices=Prices(provider=_env("CIVALPHA_PRICE_PROVIDER", "none"), tiingo_api_key=_env("TIINGO_API_KEY"),
                       history_start=date.fromisoformat(start) if start else date(2019, 1, 2)),
         schedule=Schedule(pipeline_cron=_env("CIVALPHA_PIPELINE_CRON", "-"), outcomes_cron=_env("CIVALPHA_OUTCOMES_CRON", "-"),

@@ -5,7 +5,7 @@ import { LineChart, LineSeries } from '../charts/line-chart';
 import { ReliabilityChart, ReliabilitySeries } from '../charts/reliability-chart';
 import { apiUrl, valueOf } from '../core/api';
 import { FORMAT_PIPES, fmtFixed, fmtNum, fmtPct, fmtSigned, fmtSignedPct } from '../core/format';
-import { AccuracyResponse, ForecastSummary, MODEL_KINDS, ModelKind, ModelMetrics, TradingStats } from '../core/models';
+import { AccuracyResponse, ForecastSummary, LiveTestModel, MODEL_KINDS, ModelKind, ModelMetrics, TradingStats } from '../core/models';
 import { CoverageTable } from '../shared/coverage-table';
 import { Icon } from '../shared/icon';
 import { UI, modelColor } from '../shared/ui';
@@ -373,6 +373,37 @@ function row<T>(
         <app-status [res]="historyRes" what="forecast history" />
       }
 
+      @if (liveTest(); as lt) {
+        <div class="card live-test">
+          <h3>Pre-registered live test <app-help text="A bar for the live forecasts that was written down before any of them resolved, so the verdict cannot be adjusted to fit the data. Per model: at least the stated number of resolved forecasts, AUC at or above the stated level, and a Brier score below the base-rate Brier (what always forecasting the realized hit rate would score). PENDING until enough forecasts resolve." topic="confidence-interval" label="pre-registered test" /></h3>
+          <p class="small muted">Registered {{ lt.registeredOn }}: {{ lt.rule }}</p>
+          <div class="table-wrap">
+            <table class="table compact">
+              <thead>
+                <tr><th>Model</th><th class="num">Resolved</th><th class="num">AUC</th><th class="num">Brier</th><th class="num">Base-rate Brier</th><th>Verdict</th></tr>
+              </thead>
+              <tbody>
+                @for (r of liveTestRows(); track r.kind) {
+                  <tr>
+                    <td><app-model-tag [kind]="r.kind" /></td>
+                    <td class="num">
+                      {{ r.v.resolved | num }} / {{ lt.minResolved | num }}
+                      <app-meter [value]="r.v.progress" label="Resolved share of the required sample" />
+                    </td>
+                    <td class="num">{{ r.v.auc | fixed: 3 }} <span class="small muted">≥ {{ lt.minAuc | fixed: 2 }}</span></td>
+                    <td class="num">{{ r.v.brier | fixed: 4 }}</td>
+                    <td class="num">{{ r.v.baseRateBrier | fixed: 4 }}</td>
+                    <td>
+                      <span class="badge" [class]="'badge tone-' + (r.v.verdict === 'PASS' ? 'good' : r.v.verdict === 'FAIL' ? 'bad' : 'neutral')">{{ r.v.verdict }}</span>
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        </div>
+      }
+
       <h2>Issued forecasts — realized accuracy</h2>
       <p class="small muted">
         Forecasts published by the platform and later resolved against outcomes. LIVE forecasts were published before
@@ -548,6 +579,11 @@ export class AccuracyPage {
   });
 
   protected readonly fewResolved = computed(() => this.issuedRows().some((r) => r.mode === 'LIVE' && r.v.resolved < 30));
+  protected readonly liveTest = computed(() => valueOf(this.res)?.liveTest ?? null);
+  protected readonly liveTestRows = computed(() => {
+    const lt = this.liveTest();
+    return lt ? (Object.entries(lt.models) as [ModelKind, LiveTestModel][]).map(([kind, v]) => ({ kind, v })) : [];
+  });
 
   // ----- accuracy over time -----
   protected readonly includeReplay = signal(false);

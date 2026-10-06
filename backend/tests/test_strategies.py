@@ -246,3 +246,71 @@ def test_live_decisions_carry_a_volatility_sized_weight():
         s = d["model"]["sizing"]
         assert (s["sizedWeight"] > 0) == (d["weight"] > 0)
         assert s["confident"] == (d["probability"] >= 0.60)
+
+
+def test_replacement_rule_lets_the_book_follow_the_ranking():
+    from civalpha.strategies.ai import AiConfig, decide_positions
+    cal = pd.bdate_range("2024-01-01", periods=4)
+    #                     name 1 drifts to 0.50 and keeps its slot under the standard rule; name 3 arrives at 0.65
+    prob = pd.DataFrame([[0.60, 0.58, 0.40], [0.50, 0.70, 0.56], [0.50, 0.70, 0.65], [0.50, 0.70, 0.57]], index=cal, columns=[1, 2, 3])
+    member = pd.DataFrame(True, index=cal, columns=[1, 2, 3])
+    std = AiConfig(entry_p=0.55, exit_p=0.48, max_positions=2)
+    _, a = decide_positions(prob, member, std)
+    assert list(a.iloc[2]) == ["HOLD", "HOLD", "STAY_OUT"]                 # path dependence: 0.65 waits behind 0.50
+    ranked = std.ranked()
+    assert ranked.swap_margin == 0.08 and std.swap_margin is None
+    w, a = decide_positions(prob, member, ranked)
+    assert list(a.iloc[1]) == ["HOLD", "HOLD", "STAY_OUT"]                 # 0.56 beats 0.50 by less than the margin: no churn
+    assert list(a.iloc[2]) == ["EXIT", "HOLD", "ENTER"]                    # 0.65 >= 0.50 + 0.08: the weakest holding is replaced
+    assert list(a.iloc[3]) == ["STAY_OUT", "HOLD", "HOLD"]                 # 1 does not come back: 0.50 is below entry
+    assert w.iloc[2].tolist() == [0.0, 0.5, 0.5]
+
+
+def test_conviction_sizing_tilts_volatility_sizes_by_probability():
+    from civalpha.strategies.ai import AiConfig, conviction_tilt, conviction_weight, size_by_conviction
+    cfg = AiConfig(entry_p=0.55, max_positions=4, vol_budget=0.04, max_weight=0.20)
+    assert conviction_tilt(0.55, cfg) == pytest.approx(1.0) and conviction_tilt(0.65, cfg) == pytest.approx(3.0)
+    assert conviction_tilt(0.48, cfg) == 0.5 and conviction_tilt(0.90, cfg) == 3.0      # clipped both ways
+    cal = pd.bdate_range("2024-01-01", periods=2)
+    w = pd.DataFrame([[0.25, 0.25, 0.25, 0.0], [0.25, 0.25, 0.25, 0.25]], index=cal, columns=[1, 2, 3, 4])
+    vol = pd.DataFrame([[0.40, 0.40, 0.40, 0.40], [0.10, 0.10, 0.10, np.nan]], index=cal, columns=[1, 2, 3, 4])
+    prob = pd.DataFrame([[0.55, 0.60, 0.49, 0.70], [0.56, 0.56, 0.56, np.nan]], index=cal, columns=[1, 2, 3, 4])
+    s = size_by_conviction(w, vol, prob, cfg)
+    # 0.04 / 0.40 = 10% per name; tilts 1.0, 2.0, 0.5; the fourth is not held
+    assert s.iloc[0].tolist() == pytest.approx([0.10, 0.20, 0.05, 0.0])
+    # 0.04 / 0.10 = 40%, capped at 20% before and after the tilt; no vol and no p -> equal slice, also capped at 20%
+    assert s.iloc[1].tolist() == pytest.approx([0.20, 0.20, 0.20, 0.20])
+    assert (s.sum(axis=1) <= 1.0 + 1e-9).all()
+    assert conviction_weight(0.25, 0.40, 0.60, cfg) == pytest.approx(0.20) and conviction_weight(0.0, 0.1, 0.9, cfg) == 0.0
+    assert conviction_weight(0.25, np.nan, np.nan, cfg) == 0.20                         # the equal slice is capped too
+
+
+def test_lab_backtests_the_ranking_book_and_names_it():
+    lab = run_lab(make_bundle(n_days=1450, n_companies=5, seed=9), LabConfig(max_positions=2))
+    by = {r["key"]: r for r in lab["results"]}
+    assert {"AI_RANK", "AI_RANK_SIZED", "AI_RANK_VOL", "AI_WITH_EVENTS"} <= set(by) and lab["config"]["bookKey"] == "AI_SIZED"
+    assert by["AI_RANK_VOL"]["metrics"]["trades"] == by["AI_RANK"]["metrics"]["trades"]          # same entries and exits, other sizes
+    assert by["AI_RANK_VOL"]["params"]["tilt_cap"] == 1.0 and "trade_shock" in by["AI_WITH_EVENTS"]["params"]["features"]
+    assert "Separating the two" in lab["summary"] and "policy-event features" in lab["summary"]
+    assert by["AI_RANK"]["params"]["swap_margin"] == 0.08 and by["AI_GBM"]["params"]["swap_margin"] is None
+    assert by["AI_RANK"]["metrics"]["trades"] >= by["AI_GBM"]["metrics"]["trades"]      # replacements can only add round trips
+    assert by["AI_RANK_SIZED"]["metrics"]["exposure"] <= 1.0
+    assert "replaced" in by["AI_RANK_SIZED"]["description"]["exit"].lower() or "replacement" in by["AI_RANK_SIZED"]["description"]["exit"].lower()
+    assert "follow the ranking" in lab["summary"] and "the recorded book (AI_SIZED)" in lab["summary"]
+
+
+def test_live_decisions_are_the_volatility_sized_book_without_event_features():
+    from civalpha.strategies.ai import AI_FEATURES
+    assert not {"trade_shock", "rate_shock", "fedfunds_chg_x_lev"} & set(AI_FEATURES)
+    b = make_bundle(n_days=520, n_companies=4, seed=6)
+    out = decisions_at(b, len(b.calendar) - 1, LabConfig(max_positions=2), held={1})
+    assert all(d["strategyKey"] == "AI_SIZED" for d in out)
+    assert sum(d["weight"] for d in out) <= 1.0 + 1e-9
+    for d in out:
+        book, sizing = d["model"]["book"], d["model"]["sizing"]
+        assert book["key"] == "AI_SIZED" and book["swapMargin"] is None and book["tilt"] is None and book["maxPositions"] == 2
+        assert (book["slot"] > 0) == (d["action"] in {"ENTER", "HOLD"}) == (d["weight"] > 0) == (sizing["sizedWeight"] > 0)
+        assert d["weight"] == pytest.approx(sizing["sizedWeight"])       # the recorded weight is the volatility size
+        assert book["replacedBy"] is None and book["replaces"] is None
+        if d["action"] == "EXIT":
+            assert d["probability"] < d["exitP"]                         # no replacement rule: exits only below the threshold

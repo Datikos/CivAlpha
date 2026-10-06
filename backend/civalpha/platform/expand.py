@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import date
 
 from .errors import BadRequest
-from .jobs import Jobs, Log
+from .jobs import Jobs, Log, Progress
 from .sec.profile import CompanyProfiler
 from .sql import Db, db
 from .universe import UniverseService, normalize_tags
@@ -66,12 +66,15 @@ class UniverseExpansion:
         since = date.fromisoformat(params["memberSince"]) if params.get("memberSince") else None
         out = Expansion()
         log(f"expanding the universe by up to {len(cands)} companies" + (f", tagged {', '.join(tags)}" if tags else ""))
-        for c in cands:
+        p = Progress(log, len(cands))
+        for i, c in enumerate(cands, 1):
+            p.at(f"adding {c['symbol']} ({i}/{len(cands)})")
             try:
                 self._add_one(c, tags, since, out, log)
             except Exception as e:  # noqa: BLE001 - one company must not stop the rest
                 out.skipped.append({**c, "reason": str(e)})
                 log(f"{c['symbol']}: skipped ({e})")
+            p.step()
         log(f"added {len(out.added)} companies ({out.review} with the sector marked for review), skipped {len(out.skipped)}")
         if out.added and params.get("syncPrices", True):
             job = self.jobs.submit("PRICE_SYNC", {"reason": f"universe expanded by {len(out.added)} companies"})
@@ -79,13 +82,17 @@ class UniverseExpansion:
             log(f"queued price sync (job #{out.price_job}); a provider quota may spread the download over several runs")
         if out.added and params.get("ingestSec", False) and ingest is not None:
             log(f"ingesting SEC filings for {len(out.added)} companies (seconds to minutes each; the price sync waits meanwhile)")
-            for a in out.added:
+            p.extend(len(out.added))
+            for i, a in enumerate(out.added, 1):
+                p.at(f"SEC filings {a['symbol']} ({i}/{len(out.added)})")
                 try:
-                    ingest(a["companyId"], log)
+                    ingest(a["companyId"], p.child())
                 except Exception as e:  # noqa: BLE001
                     log(f"{a['symbol']}: SEC ingest failed ({e}); the next pipeline run retries it")
+                p.step()
         elif out.added:
             log("SEC filings for the new companies arrive with the next pipeline run (Data & pipeline -> Run pipeline)")
+        p.finish()
         return out
 
     def _add_one(self, c: dict, tags: list[str], since: date | None, out: Expansion, log: Log) -> None:

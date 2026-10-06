@@ -43,6 +43,7 @@ def test_writes_are_validated_before_any_work_starts(api):
 def test_admin_actions_queue_jobs_for_the_worker(api):
     job = api.post("/api/admin/evaluate").json()
     assert job["jobType"] == "EVALUATE" and job["status"] == "QUEUED"
+    assert job["startedAt"] is None and job["progressDone"] is None and job["progressTotal"] is None   # not started yet
     assert any(j["id"] == job["id"] for j in api.get("/api/admin/jobs").json())
 
 

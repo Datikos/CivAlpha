@@ -141,7 +141,7 @@ export const PAGES: PageCard[] = [
       'The bars in the table are scaled to the column\'s largest value, so the eye can rank without reading. The ✓ marks the best cell in a column.',
       'The Excess column shows the annual return above buy & hold with its confidence interval drawn against the zero line: green when the whole interval is above zero, red when wholly below, grey when it crosses.',
       'A strategy earns "Beats buy & hold" only with three years of data, an interval above zero and a Deflated Sharpe Ratio of at least 0.95. Anything else is treated as luck.',
-      'The AI family tests the decision layer on the same probabilities: "confident entries only" waits for p ≥ 0.60 (abstention), "sized by volatility" keeps the same entries but gives calm stocks more capital than volatile ones (position sizing). The "Does confidence pay?" table ranks the AI\'s own forecasts by probability and shows the net return of acting only on the top slice.',
+      'The AI family tests the decision layer on the same probabilities: "confident entries only" waits for p ≥ 0.60 (abstention), "sized by volatility" keeps the same entries but gives calm stocks more capital than volatile ones (position sizing), "book follows the ranking" lets a stock that beats the weakest holding by 0.08 take its slot, "ranking + conviction sizing" adds a tilt so surer calls get more capital, and "with policy-event features" adds the tariff and rate-shock inputs back to the model. The recorded book is "sized by volatility". The "Does confidence pay?" table ranks the AI\'s own forecasts by probability and shows the net return of acting only on the top slice.',
     ],
     caution: 'Twenty strategies tested on five years and thirty stocks will always produce one that looks great. The DSR exists to deflate exactly that.',
   },
@@ -156,7 +156,9 @@ export const PAGES: PageCard[] = [
       'One card per stock with its probability of beating the sector ETF over the next 10 trading days and the action: Enter (green), Exit (red), Hold or Stay out.',
       'The zoned meter puts the probability against the two thresholds: red zone below the exit level, green zone at or above the entry level.',
       'Open "Why" for the factors that moved the probability (blue raises it, red lowers it) and which classic rules would also hold the stock.',
-      'Each held stock also shows its volatility-sized weight (the AI_SIZED rule: 0.04 divided by its annualized 21-day volatility, at most 20%) and a "confident" chip when the probability clears the 0.60 bar of the AI_CONF rule. Both are what the sized and confident variants in the Strategy lab would do today.',
+      'The recorded book is the AI_SIZED rule: fixed thresholds (enter at p ≥ 0.55 in the top 8, exit below 0.48) and a weight of 0.04 divided by the stock\'s annualized 21-day volatility, at most 20%, with the whole book capped at 100%. The model behind it leaves out the policy-event features (tariff and rate shocks), which the lab showed hurt the book. A "confident" chip marks a probability that clears the 0.60 bar of the AI_CONF rule.',
+      'On 2026-10-05 a second rule, AI_RANK_SIZED (a replacement rule plus a conviction tilt), was recorded for the same day and kept in the database for the record; the lab priced those two ideas at about 0.1 Sharpe and the book stayed with volatility sizing.',
+      'With a language model configured, every entry candidate also carries a reviewer block: the model reads a brief of what the platform knows about the stock (factors, recent prices and corporate actions, results announcements, insider activity, filed facts) and records whether it agrees, urges caution or disagrees, with the numbers it relied on. In advisory mode (the default) the decision stands either way; in veto mode a disagreement stops the entry and the card says "Vetoed by the reviewer". Every review is stored with its brief so it can be scored against outcomes later.',
     ],
     caution: 'Decisions are recorded for research and never sent anywhere. The backtest of this exact strategy is on the Strategy lab page.',
   },
@@ -242,7 +244,7 @@ export const PAGES: PageCard[] = [
     read: [
       'The status tiles show the data cutoff and whether the price provider and SEC access are configured; green means ready.',
       '"Run pipeline" does everything in order: prices, filings, insider transactions, macro and events, evaluation, forecasts, outcome resolution, the strategy lab, AI decisions, the doubler study, the setup playbook and signal health. It only fetches what is new.',
-      'Advanced lists each step separately. The jobs table shows progress and logs; it refreshes itself while something runs.',
+      'Advanced lists each step separately. The jobs table shows each running job\'s completion percentage and current step (a pipeline run counts one step per company), plus its log; it refreshes itself while something runs. A queued job has no duration until the worker picks it up.',
     ],
   },
 ];
@@ -418,6 +420,14 @@ export const METRICS: MetricDoc[] = [
     where: 'Strategy lab, AI decisions (sized weight on each card).',
   },
   {
+    id: 'ranking-book',
+    name: 'Book follows the ranking (replacement rule)',
+    short: 'a stronger candidate takes the weakest holding\'s slot',
+    what: 'With fixed thresholds alone the book is path-dependent: a holding drifting at p = 0.50 keeps its slot (exit is below 0.48) while a p = 0.65 candidate waits in cash. The AI_RANK rule adds a replacement: when the book is full and an outsider clears 0.55 and beats the weakest holding by 0.08, the weakest is sold and the outsider bought. The margin stops the book churning on noise. AI_RANK_VOL sizes those positions by volatility; AI_RANK_SIZED adds conviction sizing on top: volatility size × (p − 0.5) / 0.05, clipped to 0.5×–3×, capped at 20%.',
+    good: 'Compare trades, Sharpe and max drawdown with AI_SIZED. On the first run (2026-10-06) the replacement rule cost about 0.07 Sharpe and the tilt a further 0.03 with a worse drawdown, so the recorded book stayed with volatility sizing; the rows remain so the price of following the ranking is always visible.',
+    where: 'Strategy lab (decision-layer table), AI decisions.',
+  },
+  {
     id: 'ic',
     name: 'Information coefficient (IC)',
     short: 'the rank correlation between a signal and what followed',
@@ -481,7 +491,7 @@ export const GLOSSARY: Term[] = [
   { id: 'setup', term: 'Setup', def: 'A situation a trader waits for, recognisable at the close from data known then: a catalyst (an earnings surprise, a dividend change, a policy shock) or a technical state (a breakout, a cross, an oversold reading). The playbook scores each one on what followed.' },
   { id: 'stock-days', term: 'Stock-days', def: 'One stock on one trading day. The doubler study counts them: 30 stocks over 250 days are 7,500 stock-days.' },
   { id: 'episode', term: 'Episode', def: 'In the doubler study, one move of +100%: the first day the screen flagged it, the entry, and the day the close first reached twice the entry.' },
-  { id: 'decision-layer', term: 'Decision layer', def: 'Everything between a probability and a position: whether to act at all (abstention, the AI_CONF rule), how much to buy (position sizing, the AI_SIZED rule) and when to leave (the exit threshold and the trailing stop). Traders earn most of their keep here; the Strategy lab tests each piece on the same probabilities.' },
+  { id: 'decision-layer', term: 'Decision layer', def: 'Everything between a probability and a position: whether to act at all (abstention, the AI_CONF rule), how much to buy (position sizing, the AI_SIZED rule, which is the recorded book; conviction sizing in AI_RANK_SIZED), which names fill the slots (the replacement rule, AI_RANK) and when to leave (the exit threshold and the trailing stop). Traders earn most of their keep here; the Strategy lab tests each piece on the same probabilities.' },
   { id: 'rule-votes', term: 'Rule votes', def: 'On an AI decision card, which of the classic rules (golden cross, momentum, RSI pullback and so on) would hold the stock that day.' },
   { id: 'pipeline', term: 'Pipeline', def: 'The one background job that refreshes everything in order. Later runs only fetch what is new.' },
   { id: 'mcp', term: 'MCP', def: 'Model Context Protocol: the API also speaks it at /mcp, so Claude Code, Claude Desktop or any MCP client can read the research data and start jobs.' },
@@ -507,11 +517,11 @@ export const FAQ: Faq[] = [
   },
   {
     q: 'What is the difference between a forecast, an AI decision and a strategy?',
-    a: 'A forecast is a probability for one stock over 21 days from a logistic model. An AI decision is the gradient-boosted strategy\'s action for today over a 10-day horizon with fixed thresholds. A strategy is any rule, classic or AI, backtested in the Strategy lab.',
+    a: 'A forecast is a probability for one stock over 21 days from a logistic model. An AI decision is the gradient-boosted strategy\'s action for today over a 10-day horizon: fixed thresholds and volatility sizing (the AI_SIZED rule). A strategy is any rule, classic or AI, backtested in the Strategy lab.',
   },
   {
     q: 'Why does the AI appear several times in the Strategy lab?',
-    a: 'Each AI row changes one thing and keeps the rest. AI_GBM is the standard rule. AI_GBM_TSTOP10 adds a trailing stop. AI_CONF raises the bar to act (abstention). AI_SIZED keeps the same trades but sizes them by volatility. AI_FUND sees only the financial reports; AI_DIV adds dividend signals. Reading them side by side shows which part of the decision layer, if any, earns its place.',
+    a: 'Each AI row changes one thing and keeps the rest. AI_GBM is the standard rule. AI_GBM_TSTOP10 adds a trailing stop. AI_CONF raises the bar to act (abstention). AI_SIZED keeps the same trades but sizes them by volatility. AI_SIZED is the book recorded on the AI decisions page. AI_RANK lets a stronger candidate replace the weakest holding, AI_RANK_VOL sizes that by volatility and AI_RANK_SIZED adds a conviction tilt. AI_WITH_EVENTS adds the policy-event features back. AI_FUND sees only the financial reports; AI_DIV adds dividend signals. Reading them side by side shows which part of the decision layer, if any, earns its place.',
   },
   {
     q: 'Can I trade from this?',

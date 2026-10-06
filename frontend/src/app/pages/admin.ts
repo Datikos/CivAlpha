@@ -7,7 +7,7 @@ import { getAdminToken, setAdminToken } from '../core/admin-token';
 import { ApiService, apiUrl, errorMessage, valueOf } from '../core/api';
 import { FORMAT_PIPES } from '../core/format';
 import { MetaService } from '../core/meta.service';
-import { CompanySummary, Job } from '../core/models';
+import { CompanySummary, Job, jobPct } from '../core/models';
 import { Icon } from '../shared/icon';
 import { UI } from '../shared/ui';
 import { VIZ } from '../shared/viz';
@@ -138,8 +138,21 @@ const JOBS_SHOWN = 10;
       <div class="hero-action">
         @if (runningPipeline(); as j) {
           <button type="button" class="btn btn-primary btn-lg" disabled>
-            <span class="spinner" aria-hidden="true"></span> Running… job #{{ j.id }}
+            <span class="spinner" aria-hidden="true"></span>
+            {{ j.status === 'QUEUED' ? 'Queued…' : 'Running…' }} job #{{ j.id }}
+            @if (pct(j) !== null) {
+              · {{ pct(j) }}%
+            }
           </button>
+          @if (j.status === 'RUNNING') {
+            <app-progress
+              class="hero-progress"
+              [done]="j.progressDone"
+              [total]="j.progressTotal"
+              [step]="j.progressStep"
+              label="pipeline progress"
+            />
+          }
         } @else {
           <button
             type="button"
@@ -354,6 +367,7 @@ const JOBS_SHOWN = 10;
                 <th>#</th>
                 <th>Type</th>
                 <th>Status</th>
+                <th>Progress <app-help text="Steps done out of the steps the job reported, as a percentage, with the step running now. Jobs that run as one step (evaluation, studies) show a moving bar instead." label="progress" /></th>
                 <th>Started</th>
                 <th>Finished</th>
                 <th class="num">Duration</th>
@@ -373,6 +387,22 @@ const JOBS_SHOWN = 10;
                       [class.badge-run]="isActive(j)"
                       >{{ j.status }}</span
                     >
+                  </td>
+                  <td class="progress-cell">
+                    @if (j.status === 'RUNNING') {
+                      <app-progress
+                        [done]="j.progressDone"
+                        [total]="j.progressTotal"
+                        [step]="j.progressStep"
+                        label="job progress"
+                      />
+                    } @else if (isActive(j)) {
+                      <span class="small muted">waiting for the worker</span>
+                    } @else if (j.status === 'FAILED' && pct(j) !== null) {
+                      <span class="small muted" [title]="j.progressStep || ''">stopped at {{ pct(j) }}%</span>
+                    } @else {
+                      <span class="muted">—</span>
+                    }
                   </td>
                   <td class="nowrap">{{ j.startedAt | utc }}</td>
                   <td class="nowrap">{{ j.finishedAt | utc }}</td>
@@ -432,6 +462,16 @@ const JOBS_SHOWN = 10;
     }
     .hero-action {
       flex: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      align-items: stretch;
+    }
+    .hero-progress {
+      max-width: 22rem;
+    }
+    .progress-cell {
+      min-width: 180px;
     }
     .btn-lg {
       font-size: 1rem;
@@ -543,8 +583,13 @@ export class AdminPage {
     return ACTIVE.has(j.status);
   }
 
+  protected pct(j: Job): number | null {
+    return jobPct(j);
+  }
+
+  /** Elapsed time since the worker claimed the job; a queued job has not started, so it has none. */
   protected duration(j: Job): string {
-    if (!j.startedAt) return '—';
+    if (!j.startedAt) return this.isActive(j) ? 'queued' : '—';
     const end = j.finishedAt ? Date.parse(j.finishedAt) : Date.now();
     const s = Math.max(0, Math.round((end - Date.parse(j.startedAt)) / 1000));
     if (!Number.isFinite(s)) return '—';

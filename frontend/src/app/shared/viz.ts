@@ -144,6 +144,50 @@ export class Meter {
   });
 }
 
+/**
+ * Progress of a running task: a bar with the whole-number percentage and the current step. Without a total
+ * (the task reports no steps) the bar is indeterminate and only the step, if any, is shown.
+ */
+@Component({
+  selector: 'app-progress',
+  template: `<span
+    class="progress"
+    [class.progress-indeterminate]="pct() === null"
+    role="progressbar"
+    aria-valuemin="0"
+    aria-valuemax="100"
+    [attr.aria-valuenow]="pct()"
+    [attr.aria-valuetext]="pct() === null ? 'in progress' : null"
+    [attr.aria-label]="label() || 'progress'"
+    [title]="title()"
+  >
+    <span class="meter tone-info"><span class="meter-fill" [style.width.%]="pct() ?? 35"></span></span>
+    <span class="progress-text">
+      @if (pct() !== null) {
+        <strong class="num progress-pct">{{ pct() }}%</strong>
+      }
+      @if (step()) {
+        <span class="small muted progress-step">{{ step() }}</span>
+      }
+    </span>
+  </span>`,
+})
+export class Progress {
+  readonly done = input<Num>(null);
+  readonly total = input<Num>(null);
+  readonly step = input<string | null | undefined>(null);
+  readonly label = input('');
+
+  protected readonly pct = computed(() => {
+    const d = this.done(), t = this.total();
+    if (!isNum(d) || !isNum(t) || t <= 0) return null;
+    return Math.max(0, Math.min(100, Math.floor((d / t) * 100)));
+  });
+  protected readonly title = computed(() =>
+    this.pct() === null ? 'in progress (no step count reported)' : `${this.done()} of ${this.total()} steps`,
+  );
+}
+
 /** Inline "table lens" bar behind a formatted number; scaled to the column's largest |value|. */
 @Component({
   selector: 'app-cell-bar',
@@ -334,6 +378,6 @@ export class PageIcon {
   readonly area = input<Area>('forecast');
 }
 
-export const VIZ = [Delta, Meter, CellBar, RangeBar, LeanChip, Help, Verdict, PageIcon] as const;
+export const VIZ = [Delta, Meter, CellBar, RangeBar, LeanChip, Help, Verdict, PageIcon, Progress] as const;
 
 export { fmtPct, fmtSignedPct, fmtFixed, fmtNum };

@@ -1,8 +1,10 @@
 """The AI strategy: a gradient-boosted model that combines every theory's indicator and decides entries/exits.
 
 Inputs per (date, company), all known at close(t):
-  * the forecasting model's features (features.build_rows): relative momentum, volatility, as-filed
-    fundamentals, tariff/rate shocks through SEC-filing exposures, fed funds change x leverage;
+  * the BASELINE forecasting model's features (features.build_rows): relative momentum, volatility, as-filed
+    fundamentals, insider net buying, the last earnings reaction and guidance tone. The policy-event features (tariff
+    and rate shocks through SEC-filing exposures, fed funds change x leverage) are left out since 2026-10-06: the lab
+    showed the book does better without them (AI_WITH_EVENTS keeps them for comparison);
   * the indicators behind the classic rules: distance from the 50/200-day averages, RSI(2)/RSI(14),
     Bollinger z-score, position in the 55-day Donchian channel, 12-1 momentum, 5-day reversal,
     21-day volatility, drawdown from the 52-week high;
@@ -21,12 +23,24 @@ Decision rule (hysteresis keeps turnover down): ENTER when p >= entry_p and the 
 `max_positions`; EXIT when p < exit_p; otherwise HOLD / STAY_OUT. Each position gets 1/max_positions of
 capital, the rest stays in cash, so the model also decides how much is invested.
 
-Two variants test the decision layer on the same probabilities, the way a discretionary trader works:
+Four variants test the decision layer on the same probabilities, the way a discretionary trader works:
   * AI_CONF (abstention): enter only at a higher probability (confident_entry_p) and exit at a higher one
     (confident_exit_p); it trades less and sits in cash more.
   * AI_SIZED (position sizing): the same entries and exits as AI_GBM, but each position is sized by its
     21-day volatility (size_by_volatility): vol_budget / vol_21 of capital, capped at max_weight, total
     capped at 1. A calm stock gets more, a volatile one less, and the book shrinks when markets get wild.
+  * AI_RANK (the book follows the ranking): the standard thresholds plus a replacement rule. When the book is
+    full and a stock outside it clears entry_p and beats the weakest holding's probability by swap_margin, the
+    weakest holding is sold and the newcomer bought. Without it the book is path-dependent: a holding drifting at
+    p = 0.50 keeps its slot while a p = 0.65 candidate waits for an exit.
+  * AI_RANK_SIZED (ranking + conviction sizing): AI_RANK's positions sized by volatility and then tilted by
+    conviction (size_by_conviction): the volatility size times (p - 0.5) / (entry_p - 0.5), so a p = 0.65 name
+    gets three times the slice of a p = 0.55 name before the max_weight cap.
+  * AI_RANK_VOL: AI_RANK sized by volatility only, so the lab can separate the swap rule from the tilt.
+
+The book the platform records daily is BOOK_KEY (AI_SIZED since 2026-10-06; AI_RANK_SIZED on 2026-10-05, AI_GBM
+before): the lab priced the replacement rule at about 0.07 Sharpe and the conviction tilt at a further 0.03 with a
+worse drawdown, so the recorded book keeps the standard thresholds and sizes by volatility.
 """
 from __future__ import annotations
 
@@ -39,7 +53,7 @@ from sklearn.ensemble import HistGradientBoostingClassifier
 from ..dividends import DIV_FEATURES, DIV_LABELS
 from ..earnings import EARNINGS_LABELS
 from ..evaluation import EvalConfig, train_mask, walk_forward_folds
-from ..features import AUGMENTED_FEATURES, FEATURE_KIND, FEATURE_LABELS
+from ..features import AUGMENTED_FEATURES, BASELINE_FEATURES, EVENT_FEATURES, FEATURE_KIND, FEATURE_LABELS
 from ..fundamentals import FUND_FEATURES, FUND_LABELS
 from .base import Strategy, prior_high, prior_low, rolling_std, rsi, sma
 from .panel import MarketPanel
@@ -49,7 +63,9 @@ INSIDER_PANEL_FEATURES = ["insider_buyers_21d", "insider_sellers_21d"]     # ins
 EARNINGS_PANEL_FEATURES = ["days_since_earnings", "days_to_earnings_est"]  # earn_react_last and guidance_last come with AUGMENTED_FEATURES
 INSIDER_LABELS = {"insider_buyers_21d": "Insiders buying in the open market, last 21 days (distinct)",
                   "insider_sellers_21d": "Insiders selling in the open market, last 21 days (distinct)"}
-AI_FEATURES = AUGMENTED_FEATURES + TECH_FEATURES + FUND_FEATURES + INSIDER_PANEL_FEATURES + EARNINGS_PANEL_FEATURES
+AI_FEATURES = BASELINE_FEATURES + TECH_FEATURES + FUND_FEATURES + INSIDER_PANEL_FEATURES + EARNINGS_PANEL_FEATURES
+# the same model with the tariff / rate-shock / fed-funds x leverage features (the AUGMENTED forecast model's additions)
+AI_EVENTS_FEATURES = AI_FEATURES + EVENT_FEATURES
 # the reports-only model: what the quarterly/annual filings say, nothing from prices except valuation and recency
 FUND_MODEL_FEATURES = ["rev_yoy", "gm_chg", "leverage"] + FUND_FEATURES
 AI_DIV_FEATURES = AI_FEATURES + DIV_FEATURES
@@ -64,6 +80,12 @@ AI_FUND_KEY = "AI_FUND"
 AI_DIV_KEY = "AI_DIV"
 AI_CONF_KEY = "AI_CONF"
 AI_SIZED_KEY = "AI_SIZED"
+AI_RANK_KEY = "AI_RANK"
+AI_RANK_SIZED_KEY = "AI_RANK_SIZED"
+AI_RANK_VOL_KEY = "AI_RANK_VOL"         # AI_RANK sized by volatility only (tilt fixed at 1): isolates the swap rule from the tilt
+AI_WITH_EVENTS_KEY = "AI_WITH_EVENTS"   # AI_GBM trained with the policy-event features too: is AUGMENTED's weakness in the book too?
+BOOK_KEY = AI_SIZED_KEY             # the variant whose decisions are recorded every day
+RANK_SWAP_MARGIN = 0.08
 ALGORITHM = "hist_gradient_boosting"
 CODE_VERSION = "strategy-0.1.0"
 
@@ -80,6 +102,9 @@ class AiConfig:
     confident_exit_p: float = 0.50    # ...and to stay
     vol_budget: float = 0.04          # AI_SIZED: weight = vol_budget / annualized 21-day volatility
     max_weight: float = 0.20          # AI_SIZED: cap per position
+    swap_margin: float | None = None  # AI_RANK: replace the weakest holding when a candidate beats its p by this much (None = never)
+    tilt_floor: float = 0.5           # AI_RANK_SIZED: conviction tilt (p - 0.5) / (entry_p - 0.5) is clipped to [tilt_floor, tilt_cap]
+    tilt_cap: float = 3.0
     max_iter: int = 150
     learning_rate: float = 0.05
     max_depth: int = 3
@@ -92,6 +117,10 @@ class AiConfig:
 
     def confident(self) -> "AiConfig":
         return AiConfig(**{**asdict(self), "entry_p": self.confident_entry_p, "exit_p": self.confident_exit_p})
+
+    def ranked(self) -> "AiConfig":
+        """The same thresholds with the replacement rule switched on (AI_RANK, AI_RANK_SIZED, the recorded book)."""
+        return AiConfig(**{**asdict(self), "swap_margin": RANK_SWAP_MARGIN})
 
 
 def feature_label(f: str) -> str:
@@ -232,7 +261,12 @@ def walk_forward_probabilities(p: MarketPanel, cfg: AiConfig, data: pd.DataFrame
 
 def decide_positions(prob: pd.DataFrame, member: pd.DataFrame, cfg: AiConfig, start_idx: int = 0,
                      held0: set | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Run the entry/exit rule day by day. Returns (weights, actions) over the whole calendar."""
+    """Run the entry/exit rule day by day. Returns (weights, actions) over the whole calendar.
+
+    Order within a day: exits (p below exit_p, or no longer a member / no probability), then entries into free slots from
+    the top of the ranking, then, with cfg.swap_margin set, replacements: once the book is full, the weakest holding leaves
+    when the best remaining outsider clears entry_p and beats it by swap_margin, repeated while that holds. A replaced
+    holding is an EXIT like any other; the live decision marks it as replaced because its p is still at or above exit_p."""
     P = prob.to_numpy(float)
     M = member.reindex(index=prob.index, columns=prob.columns, fill_value=False).to_numpy(bool)
     T, N = P.shape
@@ -255,10 +289,34 @@ def decide_positions(prob: pd.DataFrame, member: pd.DataFrame, cfg: AiConfig, st
                 break
             if not held[j] and p[j] >= cfg.entry_p:
                 held[j] = True
+        if cfg.swap_margin is not None:
+            # the book is full (or nothing else qualifies): let the best outsider replace the weakest holding while it
+            # beats it by the margin, best outsider first
+            outsiders = [j for j in order if valid[j] and not held[j] and p[j] >= cfg.entry_p]
+            while held.sum() >= cfg.max_positions and outsiders:
+                held_idx = np.flatnonzero(held)
+                weakest = held_idx[np.argmin(p[held_idx])]
+                if p[outsiders[0]] < p[weakest] + cfg.swap_margin:
+                    break
+                held[weakest] = False
+                held[outsiders.pop(0)] = True
         W[t] = np.where(held, 1.0 / cfg.max_positions, 0.0)
         A[t] = np.where(held & ~was, "ENTER", np.where(~held & was, "EXIT", np.where(held, "HOLD", "STAY_OUT")))
         A[t][~M[t] & ~was] = ""
     return pd.DataFrame(W, index=prob.index, columns=prob.columns), pd.DataFrame(A, index=prob.index, columns=prob.columns)
+
+
+def _vol_slices(weights: pd.DataFrame, vol: pd.DataFrame, cfg: AiConfig) -> pd.DataFrame:
+    """vol_budget / vol per held name, capped at max_weight; a held name without a volatility estimate keeps its equal slice."""
+    held = weights > 0
+    v = vol.reindex(index=weights.index, columns=weights.columns).astype(float)
+    sized = (cfg.vol_budget / v.where(v > 0)).clip(upper=cfg.max_weight)
+    return sized.where(sized.notna(), 1.0 / cfg.max_positions).where(held, 0.0)
+
+
+def _no_leverage(sized: pd.DataFrame) -> pd.DataFrame:
+    tot = sized.sum(axis=1)
+    return sized.div(tot.where(tot > 1.0, 1.0), axis=0)
 
 
 def size_by_volatility(weights: pd.DataFrame, vol: pd.DataFrame, cfg: AiConfig) -> pd.DataFrame:
@@ -269,12 +327,26 @@ def size_by_volatility(weights: pd.DataFrame, vol: pd.DataFrame, cfg: AiConfig) 
     exceed 1 every position is scaled down (no leverage). A held name without a volatility estimate keeps its
     equal slice. Names the decision rule does not hold stay at 0, so entries and exits are unchanged.
     """
+    return _no_leverage(_vol_slices(weights, vol, cfg))
+
+
+def conviction_tilt(p, cfg: AiConfig):
+    """How much more than a marginal entry (p = entry_p) a name deserves: (p - 0.5) / (entry_p - 0.5), clipped.
+
+    1.0 at the entry threshold, 3.0 at p = 0.65 for the default 0.55 threshold; never below tilt_floor so a holding that
+    drifted towards the exit still carries some capital, never above tilt_cap. Works on scalars and DataFrames."""
+    return np.clip((p - 0.5) / (cfg.entry_p - 0.5), cfg.tilt_floor, cfg.tilt_cap)
+
+
+def size_by_conviction(weights: pd.DataFrame, vol: pd.DataFrame, prob: pd.DataFrame, cfg: AiConfig) -> pd.DataFrame:
+    """Volatility sizes (size_by_volatility) tilted by conviction: each held name's slice is multiplied by
+    conviction_tilt(p), capped again at max_weight, and the book is scaled down when it would exceed 1 (no leverage).
+    A held name without a probability that day keeps its volatility size (tilt 1)."""
     held = weights > 0
-    v = vol.reindex(index=weights.index, columns=weights.columns).astype(float)
-    sized = (cfg.vol_budget / v.where(v > 0)).clip(upper=cfg.max_weight)
-    sized = sized.where(sized.notna(), 1.0 / cfg.max_positions).where(held, 0.0)
-    tot = sized.sum(axis=1)
-    return sized.div(tot.where(tot > 1.0, 1.0), axis=0)
+    pr = prob.reindex(index=weights.index, columns=weights.columns).astype(float)
+    tilt = pd.DataFrame(conviction_tilt(pr, cfg), index=weights.index, columns=weights.columns).where(pr.notna(), 1.0)
+    sized = (_vol_slices(weights, vol, cfg) * tilt).clip(upper=cfg.max_weight).where(held, 0.0)
+    return _no_leverage(sized)
 
 
 def sized_weight(weight: float, vol: float, cfg: AiConfig) -> float:
@@ -286,13 +358,23 @@ def sized_weight(weight: float, vol: float, cfg: AiConfig) -> float:
     return float(min(cfg.max_weight, cfg.vol_budget / vol))
 
 
+def conviction_weight(weight: float, vol: float, p: float, cfg: AiConfig) -> float:
+    """One position's conviction-tilted volatility size (see size_by_conviction), before the no-leverage cap."""
+    if weight <= 0:
+        return 0.0
+    tilt = float(conviction_tilt(p, cfg)) if np.isfinite(p) else 1.0
+    return float(min(cfg.max_weight, sized_weight(weight, vol, cfg) * tilt))
+
+
 def ai_strategies(cfg: AiConfig, weights: pd.DataFrame, fund_weights: pd.DataFrame | None = None,
                   div_weights: pd.DataFrame | None = None, conf_weights: pd.DataFrame | None = None,
-                  sized_weights: pd.DataFrame | None = None) -> list[Strategy]:
+                  sized_weights: pd.DataFrame | None = None, rank_weights: pd.DataFrame | None = None,
+                  rank_sized_weights: pd.DataFrame | None = None, rank_vol_weights: pd.DataFrame | None = None,
+                  events_weights: pd.DataFrame | None = None) -> list[Strategy]:
     desc = dict(entry=f"Model probability ≥ {cfg.entry_p:.2f} that the stock beats its sector ETF over the next "
                       f"{cfg.horizon} days, and among the top {cfg.max_positions}",
-                origin="Gradient-boosted trees over every rule's indicator plus fundamentals, tariff/rate shocks and macro; "
-                       f"retrained every {cfg.fold_length} trading days on past data only")
+                origin="Gradient-boosted trees over every rule's indicator plus the report profile, insider activity and the "
+                       f"last earnings reaction; retrained every {cfg.fold_length} trading days on past data only")
     fixed = lambda _p: weights  # noqa: E731 - weights were computed walk-forward already
     out = [
         Strategy(AI_KEY, "AI", "AI decides (gradient boosting)", exit=f"Probability falls below {cfg.exit_p:.2f}",
@@ -329,8 +411,43 @@ def ai_strategies(cfg: AiConfig, weights: pd.DataFrame, fund_weights: pd.DataFra
                             origin="The same entries and exits as AI_GBM; each position is sized by its 21-day volatility "
                                    f"({cfg.vol_budget:.2f} / annualized volatility, at most {cfg.max_weight:.0%} of capital, "
                                    "no leverage) so every position carries about the same risk and the book shrinks "
-                                   "when markets turn volatile (volatility targeting)",
+                                   "when markets turn volatile (volatility targeting). This is the book recorded on the "
+                                   "AI decisions page",
                             sizing="WEIGHTS", fn=lambda _p: sized_weights, params=cfg.params()))
+    rcfg = cfg.ranked()
+    swap = (f"Probability falls below {cfg.exit_p:.2f}, or a stock outside the book clears {cfg.entry_p:.2f} and beats this "
+            f"holding's probability by {rcfg.swap_margin:.2f} (replacement)")
+    if rank_weights is not None:
+        out.append(Strategy(AI_RANK_KEY, "AI", "AI decides, book follows its ranking",
+                            entry=desc["entry"] + f", or beats the weakest holding's probability by {rcfg.swap_margin:.2f}",
+                            exit=swap,
+                            origin="The same model and thresholds as AI_GBM plus a replacement rule, so the book tracks today's "
+                                   "ranking instead of the order in which stocks happened to cross the entry threshold; the "
+                                   "margin keeps it from churning on noise",
+                            sizing="WEIGHTS", fn=lambda _p: rank_weights, params=rcfg.params()))
+    if rank_sized_weights is not None:
+        out.append(Strategy(AI_RANK_SIZED_KEY, "AI", "AI decides, ranking + conviction sizing",
+                            entry=desc["entry"] + f", or beats the weakest holding's probability by {rcfg.swap_margin:.2f}",
+                            exit=swap,
+                            origin="AI_RANK's positions sized by volatility (as AI_SIZED) and tilted by conviction: the size is "
+                                   f"multiplied by (p - 0.5) / ({cfg.entry_p:.2f} - 0.5), between {cfg.tilt_floor:g}x and "
+                                   f"{cfg.tilt_cap:g}x, then capped at {cfg.max_weight:.0%} with no leverage",
+                            sizing="WEIGHTS", fn=lambda _p: rank_sized_weights, params=rcfg.params()))
+    if rank_vol_weights is not None:
+        out.append(Strategy(AI_RANK_VOL_KEY, "AI", "AI decides, ranking + volatility sizing",
+                            entry=desc["entry"] + f", or beats the weakest holding's probability by {rcfg.swap_margin:.2f}",
+                            exit=swap,
+                            origin="AI_RANK's positions sized by volatility exactly as AI_SIZED, with no conviction tilt, so the "
+                                   "gap to AI_SIZED is the price of the replacement rule alone and the gap to AI_RANK_SIZED is "
+                                   "the effect of the tilt alone",
+                            sizing="WEIGHTS", fn=lambda _p: rank_vol_weights, params={**rcfg.params(), "tilt_floor": 1.0, "tilt_cap": 1.0}))
+    if events_weights is not None:
+        out.append(Strategy(AI_WITH_EVENTS_KEY, "AI", "AI decides + policy-event features",
+                            entry=desc["entry"], exit=f"Probability falls below {cfg.exit_p:.2f}",
+                            origin="The standard rule on a model that also sees the tariff shock, rate shock and fed-funds x "
+                                   "leverage features (the ones the AUGMENTED forecast model adds and that make it worse); the "
+                                   "book dropped them on 2026-10-06 after this row underperformed AI_GBM without them",
+                            sizing="WEIGHTS", fn=lambda _p: events_weights, params={**cfg.params(), "features": AI_EVENTS_FEATURES}))
     return out
 
 

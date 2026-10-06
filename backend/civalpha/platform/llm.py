@@ -1,8 +1,10 @@
 """Optional language-model assistance (Claude via the official Anthropic Python SDK).
 
 The application must work with the no-op provider. Exposure hints are schema-constrained and stored as ESTIMATED
-with at most MEDIUM confidence; decision explanations only restate the decision's own inputs. Any failure
-(network, refusal, schema) degrades to "nothing" so ingestion and decisions never depend on the model.
+with at most MEDIUM confidence; decision explanations only restate the decision's own inputs; decision reviews are a
+second, logged opinion on ENTER candidates (schema-constrained stance, confidence, rationale and flags) and change the
+stored action only in veto mode. Any failure (network, refusal, schema) degrades to "nothing" so ingestion and
+decisions never depend on the model.
 """
 from __future__ import annotations
 
@@ -31,6 +33,29 @@ HINTS_SCHEMA = {
 }
 
 
+REVIEW_STANCES = ("AGREE", "CAUTION", "DISAGREE")
+REVIEW_CONFIDENCE = ("LOW", "MEDIUM", "HIGH")
+REVIEW_FLAGS = ("DATA_ARTEFACT", "CORPORATE_ACTION", "EARNINGS_IMMINENT", "MISSING_INPUTS", "INSIDER_SELLING",
+                "WEAK_PATTERN", "STALE_FUNDAMENTALS", "NONE")
+REVIEW_SCHEMA = {
+    "type": "object",
+    "properties": {"stance": {"type": "string", "enum": list(REVIEW_STANCES)},
+                   "confidence": {"type": "string", "enum": list(REVIEW_CONFIDENCE)},
+                   "rationale": {"type": "string"},
+                   "flags": {"type": "array", "items": {"type": "string", "enum": list(REVIEW_FLAGS)}}},
+    "required": ["stance", "confidence", "rationale", "flags"],
+    "additionalProperties": False,
+}
+
+
+@dataclass(frozen=True)
+class DecisionReview:
+    stance: str        # AGREE | CAUTION | DISAGREE
+    confidence: str    # LOW | MEDIUM | HIGH
+    rationale: str
+    flags: tuple[str, ...]
+
+
 @dataclass(frozen=True)
 class ExposureHint:
     target_type: str
@@ -55,6 +80,9 @@ class LlmProvider:
         return []
 
     def explain_decision(self, company_name: str, symbol: str, decision: dict) -> str | None:
+        return None
+
+    def review_decision(self, company_name: str, symbol: str, brief: dict) -> DecisionReview | None:
         return None
 
 
@@ -114,6 +142,34 @@ class AnthropicLlmProvider(LlmProvider):
             return self._text(prompt)
         except Exception as e:  # noqa: BLE001
             log.warning("LLM decision explanation failed; continuing without it: %s", e)
+            return None
+
+    def review_decision(self, company_name: str, symbol: str, brief: dict) -> DecisionReview | None:
+        prompt = (f"You are the second pair of eyes on a quantitative stock-selection model. The model has decided to ENTER "
+                  f"{company_name} ({symbol}) today, and your job is to check the decision for reasons it should not be trusted, "
+                  "using only the brief below. The model's probabilities carry little information (out-of-sample AUC near "
+                  "0.50), so do not argue about whether the stock will go up. Look for: a price series that looks broken (a "
+                  "one-day move of 30% or more with no split or spin-off recorded: DATA_ARTEFACT / CORPORATE_ACTION); top "
+                  "factors whose value is missing (MISSING_INPUTS); a results announcement expected inside the holding horizon "
+                  "(EARNINGS_IMMINENT); several insiders selling in the open market recently (INSIDER_SELLING); fundamentals "
+                  "older than two quarters (STALE_FUNDAMENTALS); a setup the platform's own playbook grades as noise, such as "
+                  "buying a stock that fell on results (WEAK_PATTERN). AGREE means you found nothing material; CAUTION means a "
+                  "concern worth logging that does not invalidate the decision; DISAGREE means the decision rests on bad data "
+                  "or a pattern the evidence says not to buy. Give confidence LOW, MEDIUM or HIGH in your own stance. Write "
+                  "the rationale in 2 to 4 plain sentences that quote the numbers you relied on. Do not add outside news, "
+                  "price targets or advice.\n\n"
+                  f"<brief>\n{json.dumps(brief, default=str)}\n</brief>")
+        try:
+            text = self._text(prompt, REVIEW_SCHEMA)
+            if not text:
+                return None
+            r = json.loads(text)
+            if r.get("stance") not in REVIEW_STANCES or r.get("confidence") not in REVIEW_CONFIDENCE or not r.get("rationale"):
+                return None
+            flags = tuple(f for f in r.get("flags", []) if f in REVIEW_FLAGS and f != "NONE")
+            return DecisionReview(r["stance"], r["confidence"], r["rationale"].strip(), flags)
+        except Exception as e:  # noqa: BLE001 - decisions never depend on the model
+            log.warning("LLM decision review failed; continuing without it: %s", e)
             return None
 
 

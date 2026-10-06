@@ -1241,6 +1241,58 @@ td .meter {
   margin-left: 0.5em;
 }
 
+/* ---------- task progress ---------- */
+.progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 150px;
+  max-width: 28rem;
+}
+.progress .meter,
+td .progress .meter {
+  display: block;
+  width: 100%;
+  margin-left: 0;
+}
+.progress-text {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  min-width: 0;
+}
+.progress-pct {
+  font-variant-numeric: tabular-nums;
+  color: var(--info-ink);
+}
+.progress-step {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.progress-indeterminate .meter {
+  overflow: hidden;
+}
+.progress-indeterminate .meter-fill {
+  animation: progress-slide 1.4s ease-in-out infinite;
+  transition: none;
+}
+@keyframes progress-slide {
+  0% {
+    left: -35%;
+  }
+  100% {
+    left: 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .progress-indeterminate .meter-fill {
+    animation: none;
+    left: 0;
+    opacity: 0.5;
+  }
+}
+
 /* ---------- table-lens cell bars ---------- */
 .cellbar {
   position: relative;

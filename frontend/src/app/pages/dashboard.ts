@@ -11,6 +11,7 @@ import {
   DecisionsResponse,
   ForecastSummary,
   Job,
+  jobPct,
   ModelKind,
   StrategiesResponse,
 } from '../core/models';
@@ -430,7 +431,13 @@ export class DashboardPage {
     const m = this.meta.meta();
     const running = jobs.filter((j) => ACTIVE.has(j.status));
     const last = [...jobs].sort((a, b) => b.id - a.id)[0];
-    if (running.length) return { tone: 'tone-info', headline: 'running', detail: `${running.length} job${running.length > 1 ? 's' : ''} in progress` };
+    if (running.length) {
+      const active = running.find((j) => j.status === 'RUNNING') ?? running[0];
+      const pct = jobPct(active);
+      const what = humanJob(active.jobType) + (pct !== null ? ` ${pct}%` : '');
+      const more = running.length > 1 ? ` · ${running.length - 1} more queued` : '';
+      return { tone: 'tone-info', headline: pct !== null ? `${pct}%` : 'running', detail: `${what}${more}` };
+    }
     if (!last) return { tone: 'tone-warn', headline: 'never run', detail: 'run the pipeline to load data' };
     const cutoff = m?.dataCutoff ? `data to ${m.dataCutoff}` : 'no prices yet';
     if (last.status === 'FAILED') return { tone: 'tone-bad', headline: 'last job failed', detail: `${humanJob(last.jobType)} · ${cutoff}` };
