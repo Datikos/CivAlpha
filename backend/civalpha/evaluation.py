@@ -166,6 +166,16 @@ def run_walk_forward(panel: pd.DataFrame, calendar: pd.DatetimeIndex, cfg: EvalC
         trading[k]["coverage"] = coverage_curve(d["probability"].to_numpy(float), d["outcome"].to_numpy(float),
                                                 d["exec_excess_return"].to_numpy(float), d["idx"].to_numpy(),
                                                 cost_bps_per_side=cfg.cost_bps_per_side, cost_legs=4)
+    from .calibration import study_model   # ADR-0002: every model after a forward isotonic map on earlier folds
+    for k in kinds:
+        d = P[P.model_kind == k]
+        cal = study_model(d.assign(outcome=d["outcome"].astype(bool)))
+        metrics[k]["calibrated"] = ({kk: cal["after"][kk] for kk in ("brier", "brierSkill", "auc", "ece", "spread")}
+                                    | {"confidentHitRate": cal["after"]["confident"]["hitRate"],
+                                       "confidentMeanNetExcess": cal["after"]["confident"]["meanNetExcess"],
+                                       "rawEce": cal["before"]["ece"], "rawSpread": cal["before"]["spread"],
+                                       "brierDiff": cal["brierDiff"], "brierDiffCi95": cal["brierDiffCi95"], "n": cal["n"],
+                                       "method": "isotonic on earlier folds, first 3 folds left out"}) if cal.get("n") else None
     models = {k: by_kind[k].info() for k in kinds}
     config = {"horizon": cfg.horizon, "sampleEvery": cfg.sample_every, "embargo": cfg.embargo, "foldLength": cfg.fold_length,
               "minTrainDays": cfg.min_train_days, "costBpsPerSide": cfg.cost_bps_per_side, "signalBand": cfg.signal_band,
@@ -368,6 +378,12 @@ def verdict(metrics: dict, comparison: dict, trading: dict, cfg: EvalConfig, mod
         info = models.get(k) or {}
         parts.append(f"{k} ({fs[k]}, the recorded book's inputs, {info.get('horizon', '?')}-day label entered at {info.get('entry', '?')}): "
                      f"Brier skill {m['brierSkill']:+.3f}, AUC {m['auc']:.3f} on {m['n']} predictions.")
+        c = m.get("calibrated")
+        if c:
+            lo, hi = c["brierDiffCi95"]
+            parts.append(f"Calibrated on earlier folds its Brier skill is {c['brierSkill']:+.3f} (difference CI {lo:+.4f} to {hi:+.4f}), "
+                         f"AUC {c['auc']:.3f}, spread of probabilities {c['rawSpread']:.3f} -> {c['spread']:.3f}, confident-decile hit rate "
+                         f"{c['confidentHitRate']:.0%}.")
     if comparison["ciHigh"] < 0:
         parts.append("The augmented model's Brier score is lower than the baseline's and the 95% CI excludes zero.")
     elif comparison["ciLow"] > 0:

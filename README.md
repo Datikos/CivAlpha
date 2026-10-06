@@ -74,6 +74,7 @@ Design decisions with alternatives are written down before they are built, in `d
 | ADR | Title | Status |
 |---|---|---|
 | ADR-0001 | One forecast horizon for the live models, the recorded book and the lab (21 trading days) | Accepted, implemented 2026-10-06 |
+| ADR-0002 | Calibrate the book's probabilities before judging its thresholds | Accepted, implemented 2026-10-06 |
 
 ## Architecture
 
@@ -163,7 +164,8 @@ How an event is linked to a company:
   * Test blocks of 63 trading days. Each model is trained only on samples whose 21-day label window closed
     before its block starts.
   * Reports Brier score, Brier skill, log loss, AUC, accuracy, reliability bins, and the augmented-minus-baseline
-    Brier difference with a bootstrap CI. Since 2026-10-06 every model's Brier skill and AUC also carry a 95% CI from a
+    Brier difference with a bootstrap CI; and, per model, the same numbers after an isotonic map fitted on earlier folds
+    (`metrics.<model>.calibrated`, ADR-0002): how much of a model's Brier score is overconfidence rather than information. Since 2026-10-06 every model's Brier skill and AUC also carry a 95% CI from a
     bootstrap over 21-day blocks of as-of dates (`metrics.<kind>.ci`); the Accuracy page draws all evaluated models
     (the two live logistic models and the recorded book's gradient-boosted model on both of its labels) as
     dot-and-whisker charts for Brier skill, AUC and the top-10% net excess, each against its bar.
@@ -286,7 +288,7 @@ strategies on the same data, the same out-of-sample window and the same costs. T
 | Speculative | Doubler screen: volatile, small, cheap stock on a breakout or volume spike; hold 63 days, 50% stop |
 | Fundamental / event | Quality & growth screen on as-filed XBRL data; post-earnings-announcement drift (earnings surprise ≥ 1, hold 60 days); value (top 5 earnings yield); gross profitability (top 5 gross profit / assets); dividend yield (top 5); stepping aside from tariff/rate shocks using SEC-filing exposures |
 | AI | Gradient-boosted trees that combine every rule's indicator with the financial-report profile, event shocks and macro (with and without a 10% trailing stop); the same model on the financial-report profile alone (`AI_FUND`); the same model plus dividend signals (`AI_DIV`), compared with it on the same out-of-sample forecasts |
-| AI, decision layer | The same probabilities as `AI_GBM`, acted on differently: `AI_CONF` abstains unless p ≥ 0.60 (exit below 0.50); `AI_SIZED` keeps the standard entries and exits but sizes each position by volatility (0.04 / annualized 21-day volatility, at most 20%, no leverage) |
+| AI, decision layer | The same probabilities as `AI_GBM`, acted on differently: `AI_CONF` abstains unless p ≥ 0.60 (exit below 0.50); `AI_SIZED` keeps the standard entries and exits but sizes each position by volatility (0.04 / annualized 21-day volatility, at most 20%, no leverage); `AI_GBM_CAL` and `AI_SIZED_CAL` apply the same thresholds to probabilities calibrated fold by fold on earlier folds (ADR-0002), to show how often honest probabilities clear them |
 
 * **The AI decides.** The model estimates the probability that a stock beats its sector ETF over the next 21 trading days,
   the platform's forecast target (ADR-0001; it trained on a 10-day label until 2026-10-06).
@@ -329,6 +331,10 @@ strategies on the same data, the same out-of-sample window and the same costs. T
 
   With `CIVALPHA_LLM_PROVIDER=anthropic`, Claude writes a short plain-language explanation for ENTER/EXIT actions. The
   explanation is stored separately and never changes the decision.
+
+  Every decision also carries `probabilityCalibrated` and `model.calibration`: the raw probability mapped through an
+  isotonic curve fitted on the latest walk-forward's out-of-sample `AI_BOOK_21` rows, i.e. what that probability has
+  meant so far (ADR-0002). The action is taken on the raw probability.
 
   The book recorded here is `AI_SIZED`: fixed entry (p ≥ 0.55, top 8) and exit (p < 0.48) thresholds, each position sized
   as 0.04 / annualized 21-day volatility, capped at 20%, no leverage. The model behind it leaves out the policy-event

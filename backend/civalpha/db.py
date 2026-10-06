@@ -186,6 +186,19 @@ def has_decisions(engine: Engine, strategy_key: str, before) -> bool:
     return not df.empty
 
 
+def load_backtest_predictions(engine: Engine, kind: str, evaluation_id: int | None = None) -> tuple[int | None, pd.DataFrame]:
+    """Out-of-sample predictions of one model kind from an evaluation (the latest by default): the calibration set of
+    ADR-0002. Returns (evaluation id, frame with fold, as_of_date, probability, outcome)."""
+    with engine.connect() as c:
+        if evaluation_id is None:
+            evaluation_id = c.execute(text("SELECT max(evaluation_id) FROM backtest_prediction WHERE model_kind = :k"), {"k": kind}).scalar()
+        if evaluation_id is None:
+            return None, pd.DataFrame(columns=["fold", "as_of_date", "probability", "outcome"])
+        df = pd.read_sql(text("""SELECT fold, as_of_date, probability::float8 AS probability, outcome FROM backtest_prediction
+                                 WHERE evaluation_id = :e AND model_kind = :k"""), c, params={"e": int(evaluation_id), "k": kind})
+    return int(evaluation_id), df
+
+
 def unresolved_forecasts(engine: Engine) -> pd.DataFrame:
     return _dates(_q(engine, """SELECT f.id, f.company_id, f.benchmark_symbol, f.as_of_date, f.horizon_trading_days, f.probability::float8 AS probability
                                 FROM forecast f LEFT JOIN forecast_outcome o ON o.forecast_id = f.id WHERE o.forecast_id IS NULL"""), ["as_of_date"])

@@ -359,7 +359,9 @@ def build() -> MCPServer:
         backtested on one out-of-sample window after costs, ranked by Sharpe, each with a multiple-testing-aware verdict.
         AI_CONF (abstention), AI_SIZED (volatility sizing, the book recorded daily), AI_RANK / AI_RANK_VOL / AI_RANK_SIZED
         (a replacement rule so the book follows the ranking, bare, with volatility sizing, with a conviction tilt) act on the
-        same probabilities as AI_GBM; AI_WITH_EVENTS adds the policy-event features back to the model;
+        same probabilities as AI_GBM; AI_WITH_EVENTS adds the policy-event features back to the model; AI_GBM_CAL and
+        AI_SIZED_CAL (ADR-0002) use the same thresholds on probabilities calibrated on earlier folds, so they show how often
+        honest probabilities clear 0.55;
         run.aiCoverage is the abstention curve: what acting only on the AI's most confident 5%..100% of forecasts earned per
         position after costs."""
         r = read.strategies()

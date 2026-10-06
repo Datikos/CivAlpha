@@ -13,9 +13,9 @@ from .. import db, pit
 from ..evaluation import brier, coverage_curve, coverage_sentence, log_loss
 from ..features import DataBundle
 from . import backtest, registry, stats
-from .ai import (AI_CONF_KEY, AI_DIV_FEATURES, AI_EVENTS_FEATURES, AI_FEATURE_SET, AI_FEATURES, AI_KEY, AI_RANK_KEY, AI_RANK_SIZED_KEY,
-                 AI_RANK_VOL_KEY, AI_SIZED_KEY, AI_WITH_EVENTS_KEY, BOOK_KEY,
-                 FUND_MODEL_FEATURES, ALGORITHM, CODE_VERSION, AiConfig, ai_strategies,
+from .ai import (AI_CAL_KEY, AI_CONF_KEY, AI_DIV_FEATURES, AI_EVENTS_FEATURES, AI_FEATURE_SET, AI_FEATURES, AI_KEY, AI_RANK_KEY,
+                 AI_RANK_SIZED_KEY, AI_RANK_VOL_KEY, AI_SIZED_CAL_KEY, AI_SIZED_KEY, AI_WITH_EVENTS_KEY, BOOK_KEY,
+                 FUND_MODEL_FEATURES, ALGORITHM, CODE_VERSION, AiConfig, ai_strategies, calibrated_probabilities,
                  dataset, decide_positions, explain, new_model, size_by_conviction, size_by_volatility, sized_weight,
                  technical_features, walk_forward_probabilities)
 from .base import Strategy
@@ -63,8 +63,12 @@ def run_lab(bundle: DataBundle, cfg: LabConfig, n_trials: int | None = None) -> 
     wf_ev = walk_forward_probabilities(panel, ai_cfg, data, features=AI_EVENTS_FEATURES)
     events_w, _ = decide_positions(wf_ev["prob"], panel.member, ai_cfg, start_idx=oos)
     ai_coverage = ai_coverage_curve(panel, data, wf["prob"], cfg.cost_bps_per_side)
+    cal_prob = calibrated_probabilities(wf["prob"], data, wf["folds"], ai_cfg)        # ADR-0002
+    cal_w, _ = decide_positions(cal_prob, panel.member, ai_cfg, start_idx=oos)
+    cal_sized_w = size_by_volatility(cal_w, vol_21, ai_cfg)
+    cal_coverage = ai_coverage_curve(panel, data, cal_prob, cfg.cost_bps_per_side)
     strategies = rule_strategies() + ai_strategies(ai_cfg, ai_w, fund_w, div_w, conf_w, sized_w, rank_w, rank_sized_w,
-                                                   rank_vol_w, events_w)
+                                                   rank_vol_w, events_w, cal_w, cal_sized_w)
     start = oos + 1  # first decision is at close(oos), first trade at close(oos + 1)
     if start >= len(panel.calendar) - 1:
         raise ValueError("not enough out-of-sample history to backtest strategies")
@@ -106,7 +110,9 @@ def run_lab(bundle: DataBundle, cfg: LabConfig, n_trials: int | None = None) -> 
     config = {"costBpsPerSide": cfg.cost_bps_per_side, "costSensitivityBps": list(COST_SENSITIVITY_BPS),
               "reference": REFERENCE, "nCandidates": len(candidates), "nTrials": n_trials, "ai": ai_cfg.params(), "aiFolds": wf["folds"],
               "bookKey": BOOK_KEY, "featureSets": {k: registry.feature_set_of(r) for k, r in ((x["key"], x) for x in results)},
-              "dividendFeatureTest": feature_test, "aiCoverage": ai_coverage,
+              "dividendFeatureTest": feature_test, "aiCoverage": ai_coverage, "aiCoverageCalibrated": cal_coverage,
+              "calibration": {"method": "isotonic", "fittedOn": "earlier folds' out-of-sample predictions, purged",
+                              "minPriorFolds": 3, "rows": [AI_CAL_KEY, AI_SIZED_CAL_KEY]},
               "execution": "Decided at the close, traded at the next close; long-only; idle cash earns realized FEDFUNDS",
               "verdictRule": f"SUPPORTED only if >= {stats.MIN_YEARS:g} years out of sample, the 95% CI of the excess return over "
                              f"{REFERENCE} is above 0, and the Deflated Sharpe Ratio (deflated for the {n_trials} trials in the trial "
@@ -234,6 +240,12 @@ def _summary(results: list[dict], cfg: LabConfig, n: int, feature_test: dict | N
                         f"before any correction for the trials made")
                      + (f"; a 12-1 momentum screen under the same sizing does better still ({mom_sized['sharpe']:.2f}), so the sizing, not the forecast, "
                         f"is the part that travels." if mom_sized and not same and mom_sized["sharpe"] > sized["sharpe"] else "."))
+    cal, cal_sized = by_key.get(AI_CAL_KEY), by_key.get(AI_SIZED_CAL_KEY)
+    if base and cal and sized and cal_sized:
+        parts.append(f"On probabilities calibrated on earlier folds (ADR-0002) the same thresholds give Sharpe {cal['sharpe']:.2f} at "
+                     f"{cal['exposure']:.0%} invested with {cal['trades']:,} trades against {base['sharpe']:.2f} at {base['exposure']:.0%} "
+                     f"with {base['trades']:,} on raw probabilities; the sized book {cal_sized['sharpe']:.2f} at {cal_sized['exposure']:.0%} "
+                     f"against {sized['sharpe']:.2f} at {sized['exposure']:.0%}.")
     ev = by_key.get(AI_WITH_EVENTS_KEY)
     if base and ev:
         parts.append(f"With the policy-event features added back the standard rule gives Sharpe {ev['sharpe']:.2f} against "
@@ -281,11 +293,22 @@ def decide(engine, as_of: str | None = None, cfg: LabConfig | None = None) -> di
             if k != BOOK_KEY and db.has_decisions(engine, k, d.date()):
                 held = db.previous_ai_holdings(engine, k, d.date())
                 break
-    return {"decisions": decisions_at(bundle, int(bundle.calendar.get_loc(d)), cfg, held)}
+    eval_id, cal_rows = db.load_backtest_predictions(engine, "AI_BOOK_21")
+    return {"decisions": decisions_at(bundle, int(bundle.calendar.get_loc(d)), cfg, held, calibration=(eval_id, cal_rows))}
+
+
+def calibration_map(rows: pd.DataFrame):
+    """Isotonic map p -> observed rate fitted on out-of-sample (probability, outcome) rows; None when too few."""
+    from sklearn.isotonic import IsotonicRegression
+    if rows is None or len(rows) < 200 or rows["outcome"].nunique() < 2:
+        return None
+    return IsotonicRegression(y_min=0.0, y_max=1.0, out_of_bounds="clip").fit(rows["probability"].to_numpy(float),
+                                                                              rows["outcome"].astype(float).to_numpy())
 
 
 def decisions_at(bundle: DataBundle, idx: int, cfg: LabConfig, held: set[int],
-                 panel: MarketPanel | None = None, data: pd.DataFrame | None = None) -> list[dict]:
+                 panel: MarketPanel | None = None, data: pd.DataFrame | None = None,
+                 calibration: tuple[int | None, pd.DataFrame] | None = None) -> list[dict]:
     """One decision per company at close(idx) under the recorded book (AI_SIZED): the standard thresholds, no replacement
     rule, and the volatility size as `weight`. `model.book` describes the rule (swapMargin and tilt are null: no swaps, no
     conviction tilt); `model.sizing` repeats the volatility size and the confident flag."""
@@ -310,6 +333,12 @@ def decisions_at(bundle: DataBundle, idx: int, cfg: LabConfig, held: set[int],
     medians = train[AI_FEATURES].median().to_numpy(float)
     trained_through = panel.calendar[int(train["idx"].max())].date()
     rank = pd.Series(p, index=rows["company_id"].to_numpy()).rank(ascending=False, method="first")
+    eval_id, cal_rows = calibration if calibration is not None else (None, None)
+    iso = calibration_map(cal_rows)
+    p_cal = iso.predict(p) if iso is not None else np.full(len(p), np.nan)
+    cal_note = ({"method": "isotonic", "fittedOn": f"backtest_prediction AI_BOOK_21 of evaluation {eval_id}", "n": int(len(cal_rows)),
+                 "note": "the action is taken on the raw probability (ADR-0002); the calibrated one is what that probability has meant out of sample"}
+                if iso is not None else None)
     vols = rows["vol_21"].to_numpy(float)
     cids = [int(c) for c in rows["company_id"].to_numpy()]
     slots = {c: float(weights.at[d, c]) for c in cids}
@@ -321,10 +350,11 @@ def decisions_at(bundle: DataBundle, idx: int, cfg: LabConfig, held: set[int],
         out.append(db._clean({
             "companyId": cid, "symbol": panel.symbols[cid], "name": panel.names[cid], "asOfDate": str(d.date()),
             "strategyKey": BOOK_KEY, "action": action, "probability": float(p[i]), "rank": int(rank[cid]),
+            "probabilityCalibrated": None if np.isnan(p_cal[i]) else float(p_cal[i]),
             "weight": raw_sized[cid] * sized_scale, "entryP": ai_cfg.entry_p, "exitP": ai_cfg.exit_p,
             "maxPositions": ai_cfg.max_positions, "factors": explain(model, X[i], medians), "ruleVotes": votes.get(cid, {}),
             "model": {"algorithm": ALGORITHM, "codeVersion": CODE_VERSION, "trainedThrough": str(trained_through),
-                      "nTrain": int(len(train)), "horizon": ai_cfg.horizon, "params": ai_cfg.params(),
+                      "nTrain": int(len(train)), "horizon": ai_cfg.horizon, "params": ai_cfg.params(), "calibration": cal_note,
                       "book": {"key": BOOK_KEY, "maxPositions": ai_cfg.max_positions, "slot": slots[cid],
                                "swapMargin": ai_cfg.swap_margin, "tilt": None, "replacedBy": None, "replaces": None,
                                "features": "no policy-event features", "featureSet": AI_FEATURE_SET, "horizon": ai_cfg.horizon},

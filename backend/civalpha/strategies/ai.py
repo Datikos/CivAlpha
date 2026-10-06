@@ -88,6 +88,9 @@ AI_RANK_KEY = "AI_RANK"
 AI_RANK_SIZED_KEY = "AI_RANK_SIZED"
 AI_RANK_VOL_KEY = "AI_RANK_VOL"         # AI_RANK sized by volatility only (tilt fixed at 1): isolates the swap rule from the tilt
 AI_WITH_EVENTS_KEY = "AI_WITH_EVENTS"   # AI_GBM trained with the policy-event features too: is AUGMENTED's weakness in the book too?
+AI_CAL_KEY = "AI_GBM_CAL"               # ADR-0002: the standard rule on probabilities calibrated fold by fold on earlier folds
+AI_SIZED_CAL_KEY = "AI_SIZED_CAL"       # ADR-0002: the sized book on the same calibrated probabilities
+CAL_MIN_PRIOR_FOLDS = 3
 BOOK_KEY = AI_SIZED_KEY             # the variant whose decisions are recorded every day
 RANK_SWAP_MARGIN = 0.08
 ALGORITHM = "hist_gradient_boosting"
@@ -295,6 +298,37 @@ def walk_forward_probabilities(p: MarketPanel, cfg: AiConfig, data: pd.DataFrame
             "oos_start_idx": out_folds[0]["testStartIdx"]}
 
 
+def calibrated_probabilities(prob: pd.DataFrame, data: pd.DataFrame, folds: list[dict], cfg: AiConfig,
+                             min_prior_folds: int = CAL_MIN_PRIOR_FOLDS) -> pd.DataFrame:
+    """ADR-0002: map each fold's out-of-sample probabilities through an isotonic curve fitted on earlier folds only.
+
+    For a fold starting at test index S, the fit uses every scored (day, company) row with idx + horizon + 1 < S, i.e.
+    whose outcome had resolved before the fold's test block began. Folds with fewer than `min_prior_folds` earlier
+    folds keep their raw probabilities. Days before the first fold stay NaN as in `prob`."""
+    from sklearn.isotonic import IsotonicRegression
+    P = prob.to_numpy(float)
+    out = P.copy()
+    ci = prob.columns.get_indexer(data["company_id"].to_numpy())
+    ri = data["idx"].to_numpy()
+    ok = ci >= 0
+    ci, ri = ci[ok], ri[ok]
+    y = data["label"].to_numpy(float)[ok]
+    starts = sorted(f["testStartIdx"] for f in folds)
+    ends = {s: (starts[i + 1] - 1 if i + 1 < len(starts) else P.shape[0] - 1) for i, s in enumerate(starts)}
+    for k, S in enumerate(starts):
+        prior = (ri + cfg.horizon + 1 < S) & np.isfinite(P[ri, ci]) & np.isfinite(y)
+        if k < min_prior_folds or prior.sum() < 200 or len(np.unique(y[prior])) < 2:
+            continue
+        iso = IsotonicRegression(y_min=0.0, y_max=1.0, out_of_bounds="clip").fit(P[ri[prior], ci[prior]], y[prior])
+        rows = slice(S, ends[S] + 1)
+        block = P[rows]
+        finite = np.isfinite(block)
+        mapped = block.copy()
+        mapped[finite] = iso.predict(block[finite])
+        out[rows] = mapped
+    return pd.DataFrame(out, index=prob.index, columns=prob.columns)
+
+
 def decide_positions(prob: pd.DataFrame, member: pd.DataFrame, cfg: AiConfig, start_idx: int = 0,
                      held0: set | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Run the entry/exit rule day by day. Returns (weights, actions) over the whole calendar.
@@ -406,7 +440,8 @@ def ai_strategies(cfg: AiConfig, weights: pd.DataFrame, fund_weights: pd.DataFra
                   div_weights: pd.DataFrame | None = None, conf_weights: pd.DataFrame | None = None,
                   sized_weights: pd.DataFrame | None = None, rank_weights: pd.DataFrame | None = None,
                   rank_sized_weights: pd.DataFrame | None = None, rank_vol_weights: pd.DataFrame | None = None,
-                  events_weights: pd.DataFrame | None = None) -> list[Strategy]:
+                  events_weights: pd.DataFrame | None = None, cal_weights: pd.DataFrame | None = None,
+                  cal_sized_weights: pd.DataFrame | None = None) -> list[Strategy]:
     desc = dict(entry=f"Model probability ≥ {cfg.entry_p:.2f} that the stock beats its sector ETF over the next "
                       f"{cfg.horizon} days, and among the top {cfg.max_positions}",
                 origin="Gradient-boosted trees over every rule's indicator plus the report profile, insider activity and the "
@@ -477,6 +512,18 @@ def ai_strategies(cfg: AiConfig, weights: pd.DataFrame, fund_weights: pd.DataFra
                                    "gap to AI_SIZED is the price of the replacement rule alone and the gap to AI_RANK_SIZED is "
                                    "the effect of the tilt alone",
                             sizing="WEIGHTS", fn=lambda _p: rank_vol_weights, params={**rcfg.params(), "tilt_floor": 1.0, "tilt_cap": 1.0}))
+    cal_origin = ("The same model with each fold's probabilities mapped through an isotonic curve fitted on earlier folds' "
+                  "out-of-sample predictions only (ADR-0002), so a stated 0.60 is what 0.60 has meant so far; the thresholds "
+                  "are unchanged, so this row shows how often honest probabilities clear them")
+    if cal_weights is not None:
+        out.append(Strategy(AI_CAL_KEY, "AI", "AI decides on calibrated probabilities", entry=desc["entry"],
+                            exit=f"Calibrated probability falls below {cfg.exit_p:.2f}", origin=cal_origin, sizing="WEIGHTS",
+                            fn=lambda _p: cal_weights, params={**cfg.params(), "calibration": "isotonic, prior folds"}))
+    if cal_sized_weights is not None:
+        out.append(Strategy(AI_SIZED_CAL_KEY, "AI", "AI decides on calibrated probabilities, sized by volatility", entry=desc["entry"],
+                            exit=f"Calibrated probability falls below {cfg.exit_p:.2f}",
+                            origin=cal_origin + "; positions sized by volatility exactly as the recorded book (AI_SIZED)",
+                            sizing="WEIGHTS", fn=lambda _p: cal_sized_weights, params={**cfg.params(), "calibration": "isotonic, prior folds"}))
     if events_weights is not None:
         out.append(Strategy(AI_WITH_EVENTS_KEY, "AI", "AI decides + policy-event features",
                             entry=desc["entry"], exit=f"Probability falls below {cfg.exit_p:.2f}",
