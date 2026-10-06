@@ -130,26 +130,30 @@ def test_book_model_runs_on_the_same_folds_with_its_own_label():
     from civalpha.evaluation import default_specs
     from civalpha.strategies.ai import AI_FEATURE_SET, AI_FEATURES, attach_book_features, book_model_specs
 
+    from civalpha.strategies.ai import AiConfig
+
     b = make_bundle(n_days=900, n_companies=8, seed=5)
     panel = build_panel(b, sample_every=7)
+    # ADR-0001: the book trains on the 21-day target; its own label is the next-close 21-day excess return
     panel = attach_book_features(b, panel)
-    assert {"label_10", "excess_10"} <= set(panel.columns) and set(AI_FEATURES) <= set(panel.columns)
-    # the book's label is the next-close 10-day excess return: known 11 sessions after the as-of date
-    row = panel.dropna(subset=["label_10"]).iloc[0]
+    assert {"label_21", "excess_21"} <= set(panel.columns) and set(AI_FEATURES) <= set(panel.columns)
+    row = panel.dropna(subset=["label_21"]).iloc[0]
     i, cid = int(row["idx"]), int(row["company_id"])
     tr, bt = b.tr[cid], b.bench_tr["BMK"]
-    assert np.isclose(row["excess_10"], (tr[i + 11] / tr[i + 1] - 1) - (bt[i + 11] / bt[i + 1] - 1))
-    res = run_walk_forward(panel, b.calendar, EvalConfig(min_train_days=300), default_specs() + book_model_specs())
-    assert set(res["metrics"]) == {"BASELINE", "AUGMENTED", "AI_BOOK_21", "AI_BOOK_10"}
-    assert res["models"]["AI_BOOK_10"]["featureSet"] == AI_FEATURE_SET == f"GBM_AI_{len(AI_FEATURES)}"
-    assert res["models"]["AI_BOOK_10"]["horizon"] == 10 and res["models"]["AI_BOOK_21"]["horizon"] == 21
+    assert np.isclose(row["excess_21"], (tr[i + 22] / tr[i + 1] - 1) - (bt[i + 22] / bt[i + 1] - 1))
+    specs = book_model_specs()
+    assert [sp.kind for sp in specs] == ["AI_BOOK_21"]                     # one target, one entry
+    assert [sp.kind for sp in book_model_specs(AiConfig(horizon=10))] == ["AI_BOOK_21", "AI_BOOK_10"]
+    res = run_walk_forward(panel, b.calendar, EvalConfig(min_train_days=300), default_specs() + specs)
+    assert set(res["metrics"]) == {"BASELINE", "AUGMENTED", "AI_BOOK_21"}
+    assert res["models"]["AI_BOOK_21"]["featureSet"] == AI_FEATURE_SET == f"GBM_AI_{len(AI_FEATURES)}"
+    assert res["models"]["AI_BOOK_21"]["horizon"] == 21
     assert res["config"]["models"]["BASELINE"]["featureSet"] == "LOGIT_BASELINE_10"
     P = res["predictions"]
     assert not P.duplicated(["company_id", "idx", "model_kind"]).any()
     # noise in, no skill out, for the book's model too
-    for k in ("AI_BOOK_21", "AI_BOOK_10"):
-        assert abs(res["metrics"][k]["auc"] - 0.5) < 0.1
-        assert k in res["verdict"] and AI_FEATURE_SET in res["verdict"]
-    # the book's label and the forecast target disagree on the same rows often enough to be different labels
-    both = panel.dropna(subset=["label", "label_10"])
-    assert 0.5 < (both["label"].astype(bool) == both["label_10"].astype(bool)).mean() < 0.95
+    assert abs(res["metrics"]["AI_BOOK_21"]["auc"] - 0.5) < 0.1
+    assert "AI_BOOK_21" in res["verdict"] and AI_FEATURE_SET in res["verdict"]
+    # the book's next-close label and the forecast target (close(t)) disagree on some rows: one session apart
+    both = panel.dropna(subset=["label", "label_21"])
+    assert 0.7 < (both["label"].astype(bool) == both["label_21"].astype(bool)).mean() < 1.0

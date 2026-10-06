@@ -431,7 +431,7 @@ def build() -> MCPServer:
     @_domain
     def get_feature_ablation() -> dict:
         """Feature fragility: the recorded book's model (GBM_AI_39) with one input group dropped or one added, scored
-        walk-forward on the 21-day forecast target and on the book's own 10-day label. `walkForward` rows carry Brier skill
+        walk-forward on the 21-day forecast target (and on the book's own label if it ever differs, ADR-0001). `walkForward` rows carry Brier skill
         and AUC with 95% CIs (bootstrap over 21-day blocks of as-of dates); `lab` rows carry the lab Sharpe of the standard
         rule and the sized book on the same probabilities, which is NOT a skill metric. Quote the spread, not a winner."""
         r = read.feature_ablation()
@@ -741,7 +741,7 @@ def build() -> MCPServer:
     def run_feature_ablation(ctx: Context, wait_seconds: int = 0) -> dict:
         """Run the feature fragility study: the recorded book's model with one input group removed at a time (price/technical,
         report profile, insider, earnings) and with dividends or policy events added, each scored walk-forward (Brier skill,
-        AUC, CIs) on the 21-day target and the book's 10-day label, plus lab Sharpe as a non-skill column. Registers every
+        AUC, CIs) on the 21-day target, plus lab Sharpe as a non-skill column. Registers every
         variant as a trial. Read it with get_feature_ablation."""
         return _action(ctx, admin.feature_ablation, wait_seconds)
 

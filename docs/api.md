@@ -341,8 +341,8 @@ the SEC's quarterly insider-transactions data sets for the lookback window plus 
 the latest data set. 404 for an unknown symbol.
 
 `GET /api/ablation` — the latest feature fragility study (`run`, null before the first one) and earlier `runs`; `GET /api/ablation/{id}`
-one run. `run.result.walkForward` has one row per variant and label horizon (21-day forecast target entered at close(t); 10-day
-book label entered at the next close): `variant` (`FULL`, `NO_PRICE_TECHNICAL`, `NO_REPORT_PROFILE`, `NO_INSIDER`, `NO_EARNINGS`,
+one run. `run.result.walkForward` has one row per variant and label horizon (the 21-day forecast target entered at close(t); a second
+row per variant only if the book's horizon ever differs from the target again, ADR-0001): `variant` (`FULL`, `NO_PRICE_TECHNICAL`, `NO_REPORT_PROFILE`, `NO_INSIDER`, `NO_EARNINGS`,
 `PLUS_DIVIDENDS`, `PLUS_POLICY_EVENTS`), `featureSet` (identifier of the input list, e.g. `GBM_AI_39`, `GBM_AI_25_no_price_technical`),
 `brierSkill` / `auc` with `*CiLow` / `*CiHigh` from a bootstrap over 21-day blocks of as-of dates, and the top-10% net excess.
 `run.result.lab` has the lab Sharpe and max drawdown of `AI_GBM` and `AI_SIZED` on each variant's probabilities; its `note` says it is

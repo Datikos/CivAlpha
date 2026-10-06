@@ -38,9 +38,12 @@ AI_FEATURE_SETS = {AI_KEY: AI_FEATURE_SET, AI_KEY + "_TSTOP10": AI_FEATURE_SET, 
 ALIASES = {"AI_NO_EVENTS": AI_KEY, AI_WITH_EVENTS_KEY: AI_KEY}
 
 
-def trial_key(strategy_key: str, feature_set: str | None) -> str:
+def trial_key(strategy_key: str, feature_set: str | None, horizon: int | None = None) -> str:
+    """rule, or rule@featureSet@<h>d for a model-based row: the same inputs on another label are another trial (ADR-0001)."""
     rule = ALIASES.get(strategy_key, strategy_key)
-    return f"{rule}@{feature_set}" if feature_set else rule
+    if not feature_set:
+        return rule
+    return f"{rule}@{feature_set}@{int(horizon)}d" if horizon else f"{rule}@{feature_set}"
 
 
 def current_commit() -> str | None:
@@ -76,9 +79,15 @@ def _identifier(feats: list[str]) -> str:
     return f"GBM_AI_{len(fs)}"
 
 
-def planned_trial_keys(results_keys: list[tuple[str, str]]) -> list[str]:
+def planned_trial_keys(results_keys: list[tuple[str, str]], horizon: int | None = None) -> list[str]:
     """Trial keys of a run about to be scored: (strategy key, family) pairs -> keys, benchmarks excluded."""
-    return [trial_key(k, AI_FEATURE_SETS.get(k) if fam == "AI" else None) for k, fam in results_keys if fam != "BENCHMARK"]
+    return [trial_key(k, AI_FEATURE_SETS.get(k) if fam == "AI" else None, horizon if fam == "AI" else None)
+            for k, fam in results_keys if fam != "BENCHMARK"]
+
+
+def horizon_of(result: dict) -> int | None:
+    h = (result.get("params") or {}).get("horizon")
+    return int(h) if h is not None and result.get("family") == "AI" else None
 
 
 # --------------------------------------------------------------------------- store
@@ -134,7 +143,7 @@ def register_run(engine: Engine, run_id: int, lab: dict, tested_at: datetime | N
         if r["family"] == "BENCHMARK":
             continue
         fs = feature_set_of(r)
-        rows.append({"trial_key": trial_key(r["key"], fs), "strategy_key": r["key"], "feature_set": fs, "family": r["family"],
+        rows.append({"trial_key": trial_key(r["key"], fs, horizon_of(r)), "strategy_key": r["key"], "feature_set": fs, "family": r["family"],
                      "description": _describe(r), "tested_at": tested_at, "run_id": run_id, "metrics": r["metrics"],
                      "git_commit": git_commit, "params": _slim(r.get("params")), "source": source})
     return register(engine, rows)
@@ -213,7 +222,8 @@ def backfill(engine: Engine, commits: list[tuple[datetime, str]] | None = None) 
                 fs, notes = _infer_feature_set(r.strategy_key, rr, params)
             else:
                 fs = None
-            row = {"trial_key": trial_key(r.strategy_key, fs), "strategy_key": r.strategy_key, "feature_set": fs, "family": r.family,
+            h = int(params["horizon"]) if r.family == "AI" and params.get("horizon") is not None else None
+            row = {"trial_key": trial_key(r.strategy_key, fs, h), "strategy_key": r.strategy_key, "feature_set": fs, "family": r.family,
                    "description": _describe({"description": r.description, "name": r.name, "key": r.strategy_key}),
                    "tested_at": run_at, "run_id": int(run.id), "metrics": r.metrics or {}, "git_commit": git, "params": _slim(params),
                    "source": "backfill-inferred" if notes else "backfill",
@@ -228,7 +238,7 @@ def backfill(engine: Engine, commits: list[tuple[datetime, str]] | None = None) 
         later = [fs for t, k, fs in by_key_time if k == row["strategy_key"] and t >= row["tested_at"]]
         fs = later[0] if later else AI_FEATURE_SETS.get(row["strategy_key"])
         row["feature_set"] = fs
-        row["trial_key"] = trial_key(row["strategy_key"], fs)
+        row["trial_key"] = trial_key(row["strategy_key"], fs, (row.get("params") or {}).get("horizon"))
         row["notes"] = "feature set inferred from the next run that recorded one; " + (row["notes"] or "")
         rows.append(row)
     return register(engine, rows)

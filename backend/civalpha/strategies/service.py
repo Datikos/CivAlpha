@@ -13,7 +13,7 @@ from .. import db, pit
 from ..evaluation import brier, coverage_curve, coverage_sentence, log_loss
 from ..features import DataBundle
 from . import backtest, registry, stats
-from .ai import (AI_CONF_KEY, AI_DIV_FEATURES, AI_EVENTS_FEATURES, AI_FEATURES, AI_KEY, AI_RANK_KEY, AI_RANK_SIZED_KEY,
+from .ai import (AI_CONF_KEY, AI_DIV_FEATURES, AI_EVENTS_FEATURES, AI_FEATURE_SET, AI_FEATURES, AI_KEY, AI_RANK_KEY, AI_RANK_SIZED_KEY,
                  AI_RANK_VOL_KEY, AI_SIZED_KEY, AI_WITH_EVENTS_KEY, BOOK_KEY,
                  FUND_MODEL_FEATURES, ALGORITHM, CODE_VERSION, AiConfig, ai_strategies,
                  dataset, decide_positions, explain, new_model, size_by_conviction, size_by_volatility, sized_weight,
@@ -246,7 +246,7 @@ def _summary(results: list[dict], cfg: LabConfig, n: int, feature_test: dict | N
 def planned_trial_keys() -> list[str]:
     """Trial keys of the strategies a lab run scores (rules plus the AI rows on their current feature sets)."""
     pairs = [(s.key, s.family) for s in rule_strategies()] + [(k, "AI") for k in registry.AI_FEATURE_SETS]
-    return registry.planned_trial_keys(pairs)
+    return registry.planned_trial_keys(pairs, AiConfig().horizon)
 
 
 def backtest_strategies(engine, cfg: LabConfig | None = None) -> dict:
@@ -327,7 +327,7 @@ def decisions_at(bundle: DataBundle, idx: int, cfg: LabConfig, held: set[int],
                       "nTrain": int(len(train)), "horizon": ai_cfg.horizon, "params": ai_cfg.params(),
                       "book": {"key": BOOK_KEY, "maxPositions": ai_cfg.max_positions, "slot": slots[cid],
                                "swapMargin": ai_cfg.swap_margin, "tilt": None, "replacedBy": None, "replaces": None,
-                               "features": "no policy-event features"},
+                               "features": "no policy-event features", "featureSet": AI_FEATURE_SET, "horizon": ai_cfg.horizon},
                       "sizing": {"vol21": float(vols[i]), "sizedWeight": raw_sized[cid] * sized_scale,
                                  "confident": bool(p[i] >= ai_cfg.confident_entry_p),
                                  "volBudget": ai_cfg.vol_budget, "maxWeight": ai_cfg.max_weight,

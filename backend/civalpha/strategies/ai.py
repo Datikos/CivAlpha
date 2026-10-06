@@ -16,7 +16,9 @@ AI_FUND is the same model trained on the report profile alone; AI_DIV is AI_GBM 
 backtest shows whether they add anything.
 
 Label: the stock's total return beats its sector ETF over `horizon` days, entering at the next close
-(t+1 -> t+1+horizon). That outcome is known at close(t+1+horizon), so a model refitted at index R only
+(t+1 -> t+1+horizon). Since ADR-0001 (2026-10-06) `horizon` is the platform's 21-day target, so the lab, the recorded
+book, the walk-forward row AI_BOOK_21 and the live AI_BOOK_21 forecasts describe one model on one target; before that the
+book trained on a 10-day label nothing else measured. That outcome is known at close(t+1+horizon), so a model refitted at index R only
 uses samples with t + 1 + horizon < R (walk-forward with an expanding window, refit every `fold_length` days).
 
 Decision rule (hysteresis keeps turnover down): ENTER when p >= entry_p and the stock ranks in the top
@@ -54,6 +56,7 @@ from ..dividends import DIV_FEATURES, DIV_LABELS
 from ..earnings import EARNINGS_LABELS
 from ..evaluation import EvalConfig, train_mask, walk_forward_folds
 from ..features import AUGMENTED_FEATURES, BASELINE_FEATURES, EVENT_FEATURES, FEATURE_KIND, FEATURE_LABELS
+from ..returns import HORIZON
 from ..fundamentals import FUND_FEATURES, FUND_LABELS
 from .base import Strategy, prior_high, prior_low, rolling_std, rsi, sma
 from .panel import MarketPanel
@@ -93,7 +96,7 @@ CODE_VERSION = "strategy-0.1.0"
 
 @dataclass
 class AiConfig:
-    horizon: int = 10
+    horizon: int = HORIZON    # the platform's 21-day target since ADR-0001 (2026-10-06); was 10 before
     fold_length: int = 63
     min_train_days: int = 504
     entry_p: float = 0.55
@@ -250,15 +253,17 @@ def attach_book_features(bundle, panel: pd.DataFrame, cfg: AiConfig | None = Non
 
 
 def book_model_specs(cfg: AiConfig | None = None) -> list:
-    """The recorded book's model (AI_FEATURES, gradient boosting) as two walk-forward entries: scored on the platform's
-    21-day forecast target, and on its own label (cfg.horizon days from the next close) as attach_book_features adds it."""
+    """The recorded book's model (AI_FEATURES, gradient boosting) in the walk-forward: scored on the platform's 21-day
+    forecast target as AI_BOOK_21. If the book ever trains on another horizon again, its own next-close label (as
+    attach_book_features adds it) is scored as a second entry, AI_BOOK_<h>."""
     from ..evaluation import ModelSpec
-    from ..returns import HORIZON
     cfg = cfg or AiConfig()
     h = cfg.horizon
-    return [ModelSpec("AI_BOOK_21", AI_FEATURE_SET, tuple(AI_FEATURES), "gbm", HORIZON, "close(t)"),
-            ModelSpec(f"AI_BOOK_{h}", AI_FEATURE_SET, tuple(AI_FEATURES), "gbm", h, "next close",
-                      label_col=f"label_{h}", excess_col=f"excess_{h}", exec_col=f"excess_{h}")]
+    specs = [ModelSpec(f"AI_BOOK_{HORIZON}", AI_FEATURE_SET, tuple(AI_FEATURES), "gbm", HORIZON, "close(t)")]
+    if h != HORIZON:
+        specs.append(ModelSpec(f"AI_BOOK_{h}", AI_FEATURE_SET, tuple(AI_FEATURES), "gbm", h, "next close",
+                               label_col=f"label_{h}", excess_col=f"excess_{h}", exec_col=f"excess_{h}"))
+    return specs
 
 
 # --------------------------------------------------------------------------- walk-forward

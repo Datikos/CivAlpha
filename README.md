@@ -66,6 +66,15 @@ docker compose down                 # stop (data is kept in volumes)
 docker compose down -v              # stop and delete the database and stored documents
 ```
 
+## Decisions
+
+Design decisions with alternatives are written down before they are built, in `docs/adr/`; open items are ordered in
+`docs/BACKLOG.md`.
+
+| ADR | Title | Status |
+|---|---|---|
+| ADR-0001 | One forecast horizon for the live models, the recorded book and the lab (21 trading days) | Accepted, implemented 2026-10-06 |
+
 ## Architecture
 
 ```
@@ -232,7 +241,7 @@ not calibrated. The first run (2026-10-06) is in `docs/research/2026-10-forecast
 scores it walk-forward six more times: without the price/technical group, without the report profile, without the
 insider inputs, without the earnings inputs, and with the dividend or the policy-event features added. Each variant gets
 Brier skill and AUC with 95% CIs (bootstrap over 21-day blocks of as-of dates) on the 21-day forecast target and on the
-book's own 10-day next-close label, the way feature-set decisions are meant to be made. The lab Sharpe of `AI_GBM` and
+book's own label if it ever differs from the target again (ADR-0001), the way feature-set decisions are meant to be made. The lab Sharpe of `AI_GBM` and
 `AI_SIZED` on the same probabilities is a secondary column marked "not a skill metric". Every variant is a trial and
 lands in the trial registry, so the deflated Sharpe knows about it. Results: `GET /api/ablation`, MCP
 `get_feature_ablation`, and the **Feature fragility** page (`/ablation`, with a "Run the study" button): Brier skill and
@@ -279,7 +288,8 @@ strategies on the same data, the same out-of-sample window and the same costs. T
 | AI | Gradient-boosted trees that combine every rule's indicator with the financial-report profile, event shocks and macro (with and without a 10% trailing stop); the same model on the financial-report profile alone (`AI_FUND`); the same model plus dividend signals (`AI_DIV`), compared with it on the same out-of-sample forecasts |
 | AI, decision layer | The same probabilities as `AI_GBM`, acted on differently: `AI_CONF` abstains unless p ≥ 0.60 (exit below 0.50); `AI_SIZED` keeps the standard entries and exits but sizes each position by volatility (0.04 / annualized 21-day volatility, at most 20%, no leverage) |
 
-* **The AI decides.** The model estimates the probability that a stock beats its sector ETF over the next 10 trading days.
+* **The AI decides.** The model estimates the probability that a stock beats its sector ETF over the next 21 trading days,
+  the platform's forecast target (ADR-0001; it trained on a 10-day label until 2026-10-06).
   It enters when p ≥ 0.55 and the stock ranks in the top 8, and exits when p < 0.48. It is retrained every 63 trading days,
   walk-forward, only on outcomes known before each refit.
 * **The decision layer.** Traders earn most of their keep between the forecast and the position: whether to act at all,

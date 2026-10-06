@@ -104,7 +104,7 @@ def walk_forward_folds(idxs: np.ndarray, n_calendar: int, cfg: EvalConfig) -> li
 
 def train_mask(panel: pd.DataFrame, fold: dict, cfg: EvalConfig, label_col: str = "label") -> pd.Series:
     # label of sample i is known at close(i + horizon); require it strictly before the test block starts. cfg.horizon is
-    # the longest label in the run (21), so a shorter label (the book's 10-day one) is purged more than strictly needed.
+    # the longest label in the run (21), so any shorter label is purged more than strictly needed.
     return (panel["idx"] + cfg.horizon < fold["test_start_idx"]) & panel[label_col].notna()
 
 
@@ -122,7 +122,7 @@ def _fit_predict(spec: ModelSpec, train: pd.DataFrame, test: pd.DataFrame, cfg: 
 
 def run_walk_forward(panel: pd.DataFrame, calendar: pd.DatetimeIndex, cfg: EvalConfig, specs: list[ModelSpec] | None = None) -> dict:
     """Walk-forward over `specs` (default: the two live models). Every spec is scored on the same test blocks; a spec with
-    its own label columns (the book's 10-day label) is scored on the rows where that label is known."""
+    its own label columns is scored on the rows where that label is known."""
     specs = specs or default_specs()
     by_kind = {sp.kind: sp for sp in specs}
     folds = walk_forward_folds(panel["idx"].to_numpy(), len(calendar), cfg)

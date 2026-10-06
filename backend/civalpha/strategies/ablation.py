@@ -3,8 +3,8 @@
 The production feature set (strategies.ai.AI_FEATURES, GBM_AI_39) is split into the groups a trader would name:
 price/technical, report profile, insider, earnings reaction. Each variant drops one group; two more add the groups the
 book does not use (dividends, policy events). Every variant is scored the way feature-set decisions are supposed to be
-made (ground rule 1): walk-forward Brier skill and AUC on the 21-day forecast target and on the book's own 10-day
-next-close label, with 95% CIs from a bootstrap over 21-day blocks of as-of dates. The lab Sharpe of the standard rule
+made (ground rule 1): walk-forward Brier skill and AUC on the 21-day forecast target (and on the book's own label if it
+ever differs again, ADR-0001), with 95% CIs from a bootstrap over 21-day blocks of as-of dates. The lab Sharpe of the standard rule
 and of the sized book on the same probabilities is reported as a secondary column and labelled "not a skill metric":
 it is one trading rule on one five-year window. Each variant is a trial and is registered as such (source "ablation").
 """
@@ -63,9 +63,12 @@ def variants() -> list[Variant]:
 
 
 def _specs(v: Variant, h: int) -> list[ModelSpec]:
-    return [ModelSpec(f"{v.key}_{HORIZON}", v.feature_set, v.features, "gbm", HORIZON, "close(t)"),
-            ModelSpec(f"{v.key}_{h}", v.feature_set, v.features, "gbm", h, "next close",
-                      label_col=f"label_{h}", excess_col=f"excess_{h}", exec_col=f"excess_{h}")]
+    """The variant on the 21-day forecast target and, only if the book trains on another horizon, on that label too."""
+    specs = [ModelSpec(f"{v.key}_{HORIZON}", v.feature_set, v.features, "gbm", HORIZON, "close(t)")]
+    if h != HORIZON:
+        specs.append(ModelSpec(f"{v.key}_{h}", v.feature_set, v.features, "gbm", h, "next close",
+                               label_col=f"label_{h}", excess_col=f"excess_{h}", exec_col=f"excess_{h}"))
+    return specs
 
 
 def walk_forward_rows(bundle: DataBundle, cfg: EvalConfig, ai_cfg: AiConfig, progress=None) -> list[dict]:
@@ -110,7 +113,7 @@ def lab_rows(bundle: DataBundle, lab_cfg: LabConfig, progress=None, panel: Marke
         start = oos + 1
         for key, weights in ((AI_KEY, w), (AI_SIZED_KEY, size_by_volatility(w, vol21, ai_cfg))):
             res = backtest.run(weights, mp.ret, mp.cash_ret, start, lab_cfg.cost_bps_per_side)
-            rows.append({"variant": v.key, "featureSet": v.feature_set, "strategyKey": key,
+            rows.append({"variant": v.key, "featureSet": v.feature_set, "strategyKey": key, "horizon": ai_cfg.horizon,
                          "sharpe": stats.sharpe(res.net - cash[start:]), "maxDrawdown": stats.max_drawdown(res.equity),
                          "cagr": stats.cagr(res.equity), "start": str(mp.calendar[start].date()), "end": str(mp.calendar[-1].date()),
                          "note": NOT_SKILL})
@@ -176,7 +179,7 @@ def study(engine, with_lab: bool = True, progress=None) -> dict:
         now = datetime.now(timezone.utc)
         rows = []
         for r in res["lab"]:
-            rows.append({"trial_key": registry.trial_key(r["strategyKey"], r["featureSet"]), "strategy_key": r["strategyKey"],
+            rows.append({"trial_key": registry.trial_key(r["strategyKey"], r["featureSet"], r.get("horizon")), "strategy_key": r["strategyKey"],
                          "feature_set": r["featureSet"], "family": "AI",
                          "description": f"{r['strategyKey']} on {r['featureSet']} (feature ablation, {next(v['change'] for v in res['variants'] if v['key'] == r['variant'])})",
                          "tested_at": now, "run_id": None, "metrics": {"sharpe": r["sharpe"], "maxDrawdown": r["maxDrawdown"]},

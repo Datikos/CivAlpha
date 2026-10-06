@@ -24,7 +24,7 @@ LIVE_KINDS = ["BASELINE", "AUGMENTED", BOOK_KIND]
 # --------------------------------------------------------------------------- evaluation
 def evaluate(engine, cfg: EvalConfig | None = None, with_book: bool = True) -> dict:
     """Walk-forward of the two live models and, with_book, of the recorded book's model (strategies.ai.AI_FEATURES) on the
-    same folds: once on the 21-day forecast target and once on the book's own 10-day next-close label."""
+    same folds and the same 21-day target (ADR-0001); a second entry appears only if the book's horizon ever differs."""
     cfg = cfg or EvalConfig()
     bundle = db.load_bundle(engine)
     panel = build_panel(bundle, sample_every=cfg.sample_every)

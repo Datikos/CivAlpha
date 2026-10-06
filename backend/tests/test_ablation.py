@@ -32,12 +32,13 @@ def test_metric_cis_cover_the_point_estimate_and_shrink_with_more_data():
     assert (small["auc"][1] - small["auc"][0]) > (ci["auc"][1] - ci["auc"][0])
 
 
-def test_study_reports_every_variant_at_both_horizons_with_cis_and_a_spread():
+def test_study_reports_every_variant_on_the_target_with_cis_and_a_spread():
     b = make_bundle(n_days=900, n_companies=8, seed=5)
     res = ablation.run_study(b, EvalConfig(min_train_days=300, ci_boot=50), LabConfig(), with_lab=False)
     wf = pd.DataFrame(res["walkForward"])
     assert set(wf["variant"]) == {v.key for v in ablation.variants()}
-    assert set(wf["horizon"]) == {21, 10}
+    assert set(wf["horizon"]) == {21}                        # ADR-0001: one target; a second row only if the book's horizon differs
+    assert len(ablation._specs(ablation.variants()[0], 10)) == 2
     assert wf[["brierSkillCiLow", "brierSkillCiHigh", "aucCiLow", "aucCiHigh"]].notna().all().all()
     assert (wf["brierSkillCiLow"] <= wf["brierSkill"]).all() and (wf["brierSkill"] <= wf["brierSkillCiHigh"]).all()
     assert "Brier skill spans" in res["headline"] and "No variant has Brier skill above zero" in res["headline"]
