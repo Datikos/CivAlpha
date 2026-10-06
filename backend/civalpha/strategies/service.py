@@ -12,7 +12,7 @@ from sklearn.metrics import roc_auc_score
 from .. import db, pit
 from ..evaluation import brier, coverage_curve, coverage_sentence, log_loss
 from ..features import DataBundle
-from . import backtest, stats
+from . import backtest, registry, stats
 from .ai import (AI_CONF_KEY, AI_DIV_FEATURES, AI_EVENTS_FEATURES, AI_FEATURES, AI_KEY, AI_RANK_KEY, AI_RANK_SIZED_KEY,
                  AI_RANK_VOL_KEY, AI_SIZED_KEY, AI_WITH_EVENTS_KEY, BOOK_KEY,
                  FUND_MODEL_FEATURES, ALGORITHM, CODE_VERSION, AiConfig, ai_strategies,
@@ -40,7 +40,9 @@ class LabConfig:
 
 
 # --------------------------------------------------------------------------- backtest
-def run_lab(bundle: DataBundle, cfg: LabConfig) -> dict:
+def run_lab(bundle: DataBundle, cfg: LabConfig, n_trials: int | None = None) -> dict:
+    """Backtest every strategy. `n_trials` is the number of trials the Deflated Sharpe Ratio deflates for: the trial
+    registry's count including this run's candidates (backtest_strategies passes it); without it, this run's candidates."""
     panel = MarketPanel.from_bundle(bundle)
     ai_cfg = cfg.ai()
     data = dataset(panel, ai_cfg)
@@ -84,6 +86,7 @@ def run_lab(bundle: DataBundle, cfg: LabConfig) -> dict:
     cash = panel.cash_ret.to_numpy()[start:]
     candidates = [k for k, r in runs.items() if r["strategy"].family != "BENCHMARK"]
     trial_sr = [stats.per_period_sharpe(runs[k]["res"].net - ref.net) for k in candidates]
+    n_trials = max(int(n_trials or 0), len(candidates))
     results = []
     for key, r in runs.items():
         s: Strategy = r["strategy"]
@@ -93,7 +96,7 @@ def run_lab(bundle: DataBundle, cfg: LabConfig) -> dict:
             lo, hi = stats.stationary_bootstrap_ci(ex)
             m.update({"excessReturn": float(np.mean(ex) * stats.DAYS), "excessCiLow": lo, "excessCiHigh": hi,
                       "informationRatio": stats.sharpe(ex),
-                      "deflatedSharpe": stats.deflated_sharpe(ex, len(candidates), trial_sr) if key in candidates else None})
+                      "deflatedSharpe": stats.deflated_sharpe(ex, n_trials, trial_sr) if key in candidates else None})
         results.append({"key": key, "family": s.family, "name": s.name, "description": s.describe(), "params": s.params,
                         "metrics": m, "equity": stats.equity_points(r["res"]), "yearly": stats.yearly_returns(r["res"]),
                         "costSensitivity": r["sens"], "verdict": stats.verdict(m, s.family == "BENCHMARK"),
@@ -101,15 +104,16 @@ def run_lab(bundle: DataBundle, cfg: LabConfig) -> dict:
                                     "symbol": panel.symbols.get(t["asset"], str(t["asset"]))} for t in r["trades"]]})
     results.sort(key=lambda x: -(x["metrics"]["sharpe"] if np.isfinite(x["metrics"]["sharpe"]) else -1e9))
     config = {"costBpsPerSide": cfg.cost_bps_per_side, "costSensitivityBps": list(COST_SENSITIVITY_BPS),
-              "reference": REFERENCE, "nCandidates": len(candidates), "ai": ai_cfg.params(), "aiFolds": wf["folds"],
-              "bookKey": BOOK_KEY,
+              "reference": REFERENCE, "nCandidates": len(candidates), "nTrials": n_trials, "ai": ai_cfg.params(), "aiFolds": wf["folds"],
+              "bookKey": BOOK_KEY, "featureSets": {k: registry.feature_set_of(r) for k, r in ((x["key"], x) for x in results)},
               "dividendFeatureTest": feature_test, "aiCoverage": ai_coverage,
               "execution": "Decided at the close, traded at the next close; long-only; idle cash earns realized FEDFUNDS",
               "verdictRule": f"SUPPORTED only if >= {stats.MIN_YEARS:g} years out of sample, the 95% CI of the excess return over "
-                             f"{REFERENCE} is above 0, and the Deflated Sharpe Ratio (deflated for {len(candidates)} strategies) "
-                             f">= {stats.DSR_LEVEL}"}
+                             f"{REFERENCE} is above 0, and the Deflated Sharpe Ratio (deflated for the {n_trials} trials in the trial "
+                             f"registry: every strategy and feature-set variant backtested on this history, {len(candidates)} of them "
+                             f"in this run) >= {stats.DSR_LEVEL}"}
     return {"oosStart": panel.calendar[start].date(), "dataCutoff": panel.calendar[-1].date(), "config": config,
-            "results": results, "summary": _summary(results, cfg, len(candidates), feature_test, ai_coverage)}
+            "results": results, "summary": _summary(results, cfg, n_trials, feature_test, ai_coverage, len(candidates))}
 
 
 def ai_coverage_curve(panel: MarketPanel, data: pd.DataFrame, prob: pd.DataFrame, cost_bps_per_side: float) -> list[dict]:
@@ -173,7 +177,8 @@ def compare_forecasts(panel: MarketPanel, data: pd.DataFrame, without: pd.DataFr
 
 
 def _summary(results: list[dict], cfg: LabConfig, n: int, feature_test: dict | None = None,
-             ai_coverage: list[dict] | None = None) -> str:
+             ai_coverage: list[dict] | None = None, n_run: int | None = None) -> str:
+    n_run = n_run if n_run is not None else n
     m0 = results[0]["metrics"]
     ok = [r["name"] for r in results if r["verdict"].endswith("SUPPORTED by this backtest")]
     best = max((r for r in results if r["family"] != "BENCHMARK"), key=lambda r: r["metrics"]["sharpe"] if np.isfinite(r["metrics"]["sharpe"]) else -1e9)
@@ -182,11 +187,13 @@ def _summary(results: list[dict], cfg: LabConfig, n: int, feature_test: dict | N
              f"{m0['years']:.1f} years) after {cfg.cost_bps_per_side:g} bp per side."]
     parts.append(f"Equal-weight buy & hold: CAGR {ref['cagr']*100:+.1f}%, Sharpe {ref['sharpe']:.2f}, max drawdown {ref['maxDrawdown']*100:.1f}%.")
     parts.append(f"Highest Sharpe among active strategies: {best['name']} ({best['metrics']['sharpe']:.2f}).")
+    tried = (f"the {n} trials in the trial registry (every strategy and feature-set variant backtested on this history, "
+             f"{n_run} of them in this run)")
     if ok:
-        parts.append(f"Beat buy & hold after correcting for testing {n} strategies: {', '.join(ok)}. This is a backtest, "
+        parts.append(f"Beat buy & hold after correcting for {tried}: {', '.join(ok)}. This is a backtest, "
                      f"not evidence of live profitability.")
     else:
-        parts.append(f"No strategy beat buy & hold once the test accounts for trying {n} strategies; differences are "
+        parts.append(f"No strategy beat buy & hold once the test accounts for {tried}; differences are "
                      f"consistent with luck.")
     if feature_test and "brierDiff" in feature_test:
         a, b = feature_test["withoutDividends"], feature_test["withDividends"]
@@ -223,12 +230,20 @@ def _summary(results: list[dict], cfg: LabConfig, n: int, feature_test: dict | N
     return " ".join(p for p in parts if p)
 
 
+def planned_trial_keys() -> list[str]:
+    """Trial keys of the strategies a lab run scores (rules plus the AI rows on their current feature sets)."""
+    pairs = [(s.key, s.family) for s in rule_strategies()] + [(k, "AI") for k in registry.AI_FEATURE_SETS]
+    return registry.planned_trial_keys(pairs)
+
+
 def backtest_strategies(engine, cfg: LabConfig | None = None) -> dict:
     cfg = cfg or LabConfig()
     bundle = db.load_bundle(engine)
-    lab = run_lab(bundle, cfg)
+    n_trials = registry.trial_count_including(engine, planned_trial_keys())
+    lab = run_lab(bundle, cfg, n_trials=n_trials)
     run_id = db.insert_strategy_run(engine, lab)
-    return {"runId": run_id, "summary": lab["summary"],
+    registry.register_run(engine, run_id, lab)
+    return {"runId": run_id, "summary": lab["summary"], "nTrials": n_trials,
             "results": [{"key": r["key"], "verdict": r["verdict"], **{k: db._clean(r["metrics"].get(k)) for k in ("cagr", "sharpe", "maxDrawdown")}}
                         for r in lab["results"]]}
 

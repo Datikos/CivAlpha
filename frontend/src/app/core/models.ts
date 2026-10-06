@@ -706,6 +706,8 @@ export interface StrategyRun {
     costSensitivityBps: number[];
     reference: string;
     nCandidates: number;
+    /** Trials the Deflated Sharpe Ratio deflates for: the trial registry's count (every strategy and feature-set variant ever backtested), at least nCandidates. */
+    nTrials?: number;
     execution: string;
     verdictRule: string;
     ai: Record<string, unknown>;

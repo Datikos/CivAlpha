@@ -1,6 +1,8 @@
 # Build context: the repository root (docker-compose.yml), so the image also carries db/migration.
 FROM python:3.11-slim
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 CIVALPHA_MIGRATIONS_DIR=/app/db/migration
+# docker compose build --build-arg GIT_COMMIT=$(git rev-parse HEAD): recorded in the trial registry with every backtest
+ARG GIT_COMMIT=unknown
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 CIVALPHA_MIGRATIONS_DIR=/app/db/migration CIVALPHA_GIT_COMMIT=$GIT_COMMIT
 WORKDIR /app
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

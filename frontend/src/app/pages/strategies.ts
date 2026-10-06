@@ -225,8 +225,10 @@ interface Col {
             <span class="badge-best">✓</span> marks the best value in a column; bars are scaled to the column's largest
             value. "Excess" is the annualized return above equal-weight buy &amp; hold with a 95% block-bootstrap
             interval drawn against the zero line (green when wholly above it, red when wholly below). "DSR" is the
-            Deflated Sharpe Ratio: the probability that the edge over buy &amp; hold is real after accounting for testing
-            {{ r.config.nCandidates }} strategies; the tick marks the 0.95 needed. {{ r.config.verdictRule }}.
+            Deflated Sharpe Ratio: the probability that the edge over buy &amp; hold is real after accounting for the
+            {{ r.config.nTrials ?? r.config.nCandidates }} trials in the trial registry (every strategy and feature-set
+            variant ever backtested on this history, {{ r.config.nCandidates }} of them in this run); the tick marks the
+            0.95 needed. {{ r.config.verdictRule }}.
           </p>
         </div>
 

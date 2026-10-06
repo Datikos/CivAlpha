@@ -274,6 +274,12 @@ strategies on the same data, the same out-of-sample window and the same costs. T
   * it has at least 3 years out of sample;
   * the 95% block-bootstrap CI of its excess return is above zero;
   * its **Deflated Sharpe Ratio** is at least 0.95. The DSR corrects for having tried many strategies on the same history.
+    The number it deflates for is the size of the **trial registry** (`trial_registry`, `civalpha/strategies/registry.py`):
+    one row per strategy variant and feature-set variant ever backtested (`AI_GBM@GBM_AI_39`, `AI_GBM@GBM_AI_42`, ...),
+    with its date, Sharpe, excess-return CI and the git commit (`GIT_COMMIT=$(git rev-parse HEAD) docker compose build api`
+    puts the commit into the image). Every lab run registers its candidates; a variant that was tried once and dropped
+    keeps counting. The registry is a floor: trials that were never stored cannot be counted. `python -m
+    civalpha.strategies.registry` prints it.
 * **AI decisions page.** **Data & pipeline → AI decisions** stores today's ENTER / EXIT / HOLD / STAY OUT for every stock
   and shows the following for each one:
   * the factors that moved the probability;
