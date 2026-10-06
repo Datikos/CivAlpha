@@ -168,7 +168,7 @@ function row<T>(
                 <div class="chart-head">
                   <h4>Reliability before and after <app-help text="Mean predicted probability against the observed rate per bin, for one model, raw and calibrated on the same rows. Dots on the diagonal are honest." topic="calibration" label="reliability before and after" /></h4>
                   <label class="field small">Model
-                    <select [ngModel]="calPick()" (ngModelChange)="calPick.set($event)">
+                    <select [ngModel]="calPickKey()" (ngModelChange)="calPick.set($event)">
                       @for (r of calRows(); track r.kind) { <option [value]="r.kind">{{ r.label }}</option> }
                     </select>
                   </label>
@@ -578,7 +578,8 @@ function row<T>(
     td .meter { display: block; width: auto; margin: 0.3rem 0 0; }
     .grid-3 h4, .cal-rel h4 { margin: 0.25rem 0 0.35rem; font-size: 0.9rem; }
     .cal-rel { margin-top: 1rem; max-width: 640px; }
-    .cal-rel .chart-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 1rem; flex-wrap: wrap; }
+    .cal-rel .chart-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }
+    .cal-rel .chart-head .field { flex-direction: row; align-items: center; gap: 0.5rem; }
   `,
 })
 export class AccuracyPage {
@@ -661,10 +662,14 @@ export class AccuracyPage {
   );
   /** Which model's reliability diagram to show before and after: the book's model when evaluated, else the first. */
   protected readonly calPick = signal<string | null>(null);
+  protected readonly calPickKey = computed(() => {
+    const rows = this.calRows();
+    const pick = this.calPick();
+    return rows.some((r) => r.kind === pick) ? pick : (rows.find((r) => r.kind.startsWith('AI_BOOK'))?.kind ?? rows[0]?.kind ?? null);
+  });
   protected readonly calRel = computed<ReliabilitySeries[] | null>(() => {
     const rows = this.calRows();
-    const pick = this.calPick() ?? rows.find((r) => r.kind.startsWith('AI_BOOK'))?.kind ?? rows[0]?.kind;
-    const r = rows.find((x) => x.kind === pick);
+    const r = rows.find((x) => x.kind === this.calPickKey());
     if (!r || !r.c.reliability || !r.c.rawReliability) return null;
     return [
       { key: 'raw', label: `${r.label}, raw`, color: 'var(--series-1)', bins: r.c.rawReliability },
