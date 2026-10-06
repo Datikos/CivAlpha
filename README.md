@@ -521,7 +521,8 @@ Python continue without any manual step. Never edit an applied migration; add th
 backend/   Python: civalpha/ (models, strategies, time machine) and civalpha/platform/ (API, MCP server, worker, ingestion)
 db/        migration/ (SQL schema migrations)
 frontend/  Angular UI (served by nginx, proxies /api and /mcp)
-docs/      api.md (REST contract and MCP tools)
+docs/      api.md (REST contract and MCP tools); research/ (dated research notes: the pre-registered live test, the
+           October 2026 forecasting-polish report)
 ```
 
 ## Known limitations / next steps
