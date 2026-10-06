@@ -125,5 +125,9 @@ Phase 2, data (2026-10-06):
       16's 6,028 rows.
 
 Phase 3, later:
-- [ ] Decisions page: show the calibrated probability and the calibration note (after the ablation page lands).
+- [x] Decisions page: a "≈ x% calibrated" chip on each card and an "Honest probabilities" tile (how many decisions clear
+      the entry bar raw and once calibrated). *Found while implementing:* the decision store persists only its own
+      columns and the `model` JSON, so the top-level `probabilityCalibrated` would have been dropped on save; it is now
+      stored as `model.calibration.probability` and the API serves it as `probabilityCalibrated` (round-trip test in
+      `test_platform_api.py`).
 - [ ] ADR-0003 thresholds, after batch 2 resolves.

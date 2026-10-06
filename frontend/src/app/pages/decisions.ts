@@ -110,6 +110,13 @@ const RULE_LABEL: Record<string, string> = {
             <div class="stat-value">{{ decisions()[0].model.nTrain | num }}<span class="unit">training samples</span></div>
             <div class="stat-sub">trained through {{ decisions()[0].model.trainedThrough }} · {{ horizon() }}-day horizon</div>
           </div>
+          @if (calibrated(); as cal) {
+            <div class="stat" [class]="'stat ' + (cal.clear < cal.raw ? 'tone-warn' : 'tone-info')">
+              <div class="stat-label">Honest probabilities <app-help text="Each raw probability mapped through an isotonic curve fitted on the walk-forward's out-of-sample forecasts: what a stated 60% has turned out to mean. The book still acts on the raw number; this shows how many of today's decisions would clear the entry bar if the model's probabilities were honest (ADR-0002)." topic="calibration" label="calibrated probabilities" /></div>
+              <div class="stat-value">{{ cal.clear }}<span class="unit">of {{ cal.n }} clear {{ decisions()[0].entryP | pct: 0 }}</span></div>
+              <div class="stat-sub">{{ cal.raw }} clear it on raw probabilities · calibrated range {{ cal.lo | pct: 0 }} – {{ cal.hi | pct: 0 }}</div>
+            </div>
+          }
           @if (reviews(); as rv) {
             <div class="stat tone-warn">
               <div class="stat-label">Reviewer <app-help text="A language model reads a brief on each entry candidate (its factors, recent prices and corporate actions, results announcements, insider activity, filed facts) and records whether it agrees, urges caution or disagrees, with a rationale. In advisory mode the decision stands either way; in veto mode a disagreement stops the entry. Reviews are logged so they can be scored against outcomes." topic="page-decisions" label="reviewer" /></div>
@@ -134,6 +141,10 @@ const RULE_LABEL: Record<string, string> = {
               }
               <p class="prob-line">
                 <span class="prob" [class]="'prob tone-' + actionTone[d.action]">p = {{ d.probability | pct: 0 }}</span>
+                @if (d.probabilityCalibrated !== null && d.probabilityCalibrated !== undefined) {
+                  <span class="chip" [class.tone-good]="d.probabilityCalibrated >= d.entryP" [class.tone-neutral]="d.probabilityCalibrated < d.entryP"
+                        [title]="'Calibrated: what a raw ' + (d.probability * 100).toFixed(0) + '% has meant out of sample (' + (d.model.calibration?.fittedOn ?? 'walk-forward') + '). The action uses the raw probability; ADR-0002.'">≈ {{ d.probabilityCalibrated | pct: 0 }} calibrated</span>
+                }
                 <span class="small muted">rank {{ d.rank }} · weight {{ d.weight | pct: 1 }}</span>
                 @if (d.model.book; as bk) {
                   @if (bk.replacedBy) {
@@ -280,7 +291,21 @@ export class DecisionsPage {
   protected readonly decisions = computed<AiDecision[]>(() => valueOf(this.res)?.decisions ?? []);
   protected readonly dates = computed(() => valueOf(this.res)?.dates ?? []);
   protected readonly asOf = computed(() => valueOf(this.res)?.asOfDate ?? null);
-  protected readonly horizon = computed(() => this.decisions()[0]?.model.horizon ?? 10);
+  protected readonly horizon = computed(() => this.decisions()[0]?.model.horizon ?? 21);
+  /** ADR-0002: how many of the day's probabilities clear the entry bar raw and once calibrated; null before calibration existed. */
+  protected readonly calibrated = computed(() => {
+    const list = this.decisions().filter((d) => d.probabilityCalibrated !== null && d.probabilityCalibrated !== undefined);
+    if (!list.length) return null;
+    const entry = list[0].entryP;
+    const cal = list.map((d) => d.probabilityCalibrated!);
+    return {
+      n: list.length,
+      clear: cal.filter((p) => p >= entry).length,
+      raw: list.filter((d) => d.probability >= entry).length,
+      lo: Math.min(...cal),
+      hi: Math.max(...cal),
+    };
+  });
   /** Whether the shown day was decided by the ranking book (AI_RANK_SIZED) or stored earlier under the standard rule. */
   protected readonly isBook = computed(() => !!this.decisions()[0]?.model.book);
   protected readonly bookKey = computed(() => this.decisions()[0]?.model.book?.key ?? this.decisions()[0]?.strategyKey ?? 'AI_SIZED');

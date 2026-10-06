@@ -800,6 +800,9 @@ export interface AiDecision {
       replacedBy: string | null;
       replaces: string | null;
       features?: string;
+      /** Feature-set identifier of the model (GBM_AI_39) and its label horizon, on decisions since 2026-10-06 (ADR-0001). */
+      featureSet?: string;
+      horizon?: number;
       /** True when the language model's review vetoed this entry (CIVALPHA_LLM_REVIEW=veto): stored as STAY_OUT with weight 0. */
       vetoed?: boolean;
     };
@@ -812,7 +815,15 @@ export interface AiDecision {
       maxWeight: number;
       confidentEntryP: number;
     };
+    /**
+     * ADR-0002: the raw probability mapped through an isotonic curve fitted on the latest walk-forward's out-of-sample
+     * AI_BOOK_21 rows, i.e. what that probability has meant so far. The action is still taken on the raw probability.
+     * Null or absent on decisions made before 2026-10-06 or without an evaluation.
+     */
+    calibration?: { method: string; fittedOn: string; n: number; probability: number | null; note?: string } | null;
   };
+  /** Same value as model.calibration.probability, served by the API; null when there is none. */
+  probabilityCalibrated?: number | null;
   issuedAt: string;
   explanation: string | null;
   explanationModel: string | null;

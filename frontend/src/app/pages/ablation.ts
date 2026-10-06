@@ -20,10 +20,15 @@ const VARIANT_LABEL: Record<string, string> = {
   PLUS_POLICY_EVENTS: 'plus policy events',
 };
 
-const HORIZON_SERIES: WhiskerSeries[] = [
-  { key: '21', label: '21-day forecast target', color: 'var(--series-1)' },
-  { key: '10', label: "10-day label the book trades", color: 'var(--series-2)' },
-];
+/** One series per label horizon present in a run: the 21-day target, and on runs made before ADR-0001 (2026-10-06) the
+ * 10-day next-close label the book traded then. */
+function horizonSeries(horizons: number[]): WhiskerSeries[] {
+  return horizons.map((h, i) => ({
+    key: String(h),
+    label: h === 21 ? '21-day forecast target' : `${h}-day label the book traded before ADR-0001`,
+    color: i === 0 ? 'var(--series-1)' : 'var(--series-2)',
+  }));
+}
 const RULE_SERIES: WhiskerSeries[] = [
   { key: 'AI_GBM', label: 'Standard rule (AI_GBM)', color: 'var(--series-1)' },
   { key: 'AI_SIZED', label: 'Sized book (AI_SIZED, the recorded book)', color: 'var(--series-2)' },
@@ -41,7 +46,8 @@ const RULE_SERIES: WhiskerSeries[] = [
           <p class="muted">
             How much the recorded book's numbers move when one group of inputs is removed or added. Every variant is scored
             the way a feature-set decision is supposed to be made: walk-forward Brier skill and AUC with 95% intervals,
-            on the platform's 21-day target and on the 10-day label the book trades. The lab Sharpe of the same
+            on the platform's 21-day target (runs before ADR-0001, 2026-10-06, also on the 10-day label the book traded
+            then). The lab Sharpe of the same
             probabilities is shown beside it because it is the number that moves, and it is not a skill metric.
           </p>
         </div>
@@ -68,8 +74,8 @@ const RULE_SERIES: WhiskerSeries[] = [
         }
       </div>
       <p class="small muted">
-        Seven variants, each walk-forward twice and backtested twice: about 20 minutes on the stored data. Every variant is
-        registered as a trial, so the next lab run deflates for it.
+        Seven variants, each scored walk-forward on the 21-day target and backtested under two rules: about 15 minutes on
+        the stored data. Every variant is registered as a trial, so the next lab run deflates for it.
       </p>
       @if (notice()) {
         <div class="alert" [class.alert-error]="noticeError()" role="status">{{ notice() }}</div>
@@ -89,12 +95,12 @@ const RULE_SERIES: WhiskerSeries[] = [
         @if (headline(); as h) {
           <div class="stats wide">
             <div class="stat" [class]="'stat ' + (h.fullSkillHi > 0 && h.fullSkillLo > 0 ? 'tone-good' : 'tone-warn')">
-              <div class="stat-label">Production set, 10-day label <app-help text="Brier skill of the recorded book's own input list on the label it trades, with its 95% interval. Above zero with the whole interval above zero would mean the probabilities beat a base-rate forecast." topic="brier-skill" label="production set" /></div>
+              <div class="stat-label">Production set, {{ h.horizon }}-day label <app-help text="Brier skill of the recorded book's own input list on the label it trades, with its 95% interval. Above zero with the whole interval above zero would mean the probabilities beat a base-rate forecast." topic="brier-skill" label="production set" /></div>
               <div class="stat-value">{{ h.fullSkill | signed: 3 }}<span class="unit">Brier skill</span></div>
               <div class="stat-sub">CI {{ h.fullSkillLo | signed: 3 }} to {{ h.fullSkillHi | signed: 3 }} · AUC {{ h.fullAuc | fixed: 3 }}</div>
             </div>
             <div class="stat tone-neutral">
-              <div class="stat-label">Spread across the variants <app-help text="Lowest to highest AUC on the 10-day label across the seven input lists. A narrow spread inside every interval means the inputs do not change the forecast quality." topic="auc" label="spread" /></div>
+              <div class="stat-label">Spread across the variants <app-help text="Lowest to highest AUC on the book's label across the seven input lists. A narrow spread inside every interval means the inputs do not change the forecast quality." topic="auc" label="spread" /></div>
               <div class="stat-value">{{ h.aucLo | fixed: 3 }} – {{ h.aucHi | fixed: 3 }}<span class="unit">AUC</span></div>
               <div class="stat-sub">Brier skill {{ h.skillLo | signed: 3 }} to {{ h.skillHi | signed: 3 }} · {{ h.aboveZero }} of {{ h.n }} intervals above zero</div>
             </div>
@@ -109,7 +115,7 @@ const RULE_SERIES: WhiskerSeries[] = [
         }
 
         <div class="card">
-          <h3>Forecast quality by input list <app-help text="Dot = walk-forward number, whisker = 95% interval from a bootstrap over 21-day blocks of as-of dates. Blue is the platform's 21-day target entered at the close; orange is the 10-day label the recorded book trades, entered at the next close. A variant has shown skill only when its whole whisker sits right of the dashed line." topic="confidence-interval" label="forecast quality" /></h3>
+          <h3>Forecast quality by input list <app-help text="Dot = walk-forward number, whisker = 95% interval from a bootstrap over 21-day blocks of as-of dates. Blue is the platform's 21-day target entered at the close; on runs made before ADR-0001 (2026-10-06) orange is the 10-day label the book traded then, entered at the next close. A variant has shown skill only when its whole whisker sits right of the dashed line." topic="confidence-interval" label="forecast quality" /></h3>
           <p class="small muted">
             @if (anySkill()) {
               At least one whisker sits wholly right of the line: that variant's probabilities beat a base-rate forecast on this history.
@@ -120,11 +126,11 @@ const RULE_SERIES: WhiskerSeries[] = [
           <div class="grid-2">
             <div>
               <h4>Brier skill vs the base-rate forecast</h4>
-              <app-dot-whisker [items]="skillItems()" [series]="horizonSeries" label="Brier skill per input list and label, with 95% intervals" [refX]="0" refLabel="base-rate forecast" [format]="signed3" />
+              <app-dot-whisker [items]="skillItems()" [series]="horizonSeries()" label="Brier skill per input list and label, with 95% intervals" [refX]="0" refLabel="base-rate forecast" [format]="signed3" />
             </div>
             <div>
               <h4>AUC</h4>
-              <app-dot-whisker [items]="aucItems()" [series]="horizonSeries" label="AUC per input list and label, with 95% intervals" [refX]="0.5" refLabel="no skill" [format]="fixed3" />
+              <app-dot-whisker [items]="aucItems()" [series]="horizonSeries()" label="AUC per input list and label, with 95% intervals" [refX]="0.5" refLabel="no skill" [format]="fixed3" />
             </div>
           </div>
           <details class="chart-table">
@@ -242,7 +248,6 @@ const RULE_SERIES: WhiskerSeries[] = [
 })
 export class AblationPage {
   protected readonly api = inject(ApiService);
-  protected readonly horizonSeries = HORIZON_SERIES;
   protected readonly ruleSeries = RULE_SERIES;
   protected readonly selectedId = signal<number | null>(null);
   protected readonly jobId = signal<number | null>(null);
@@ -266,6 +271,10 @@ export class AblationPage {
   private readonly wf = computed(() => this.data()?.result.walkForward ?? []);
   private readonly lab = computed(() => this.data()?.result.lab ?? []);
   protected readonly anySkill = computed(() => this.wf().some((w) => w.brierSkillCiLow > 0));
+  protected readonly horizonSeries = computed(() => {
+    const hs = [...new Set(this.wf().map((w) => w.horizon))].sort((a, b) => b - a);   // 21 first
+    return horizonSeries(hs);
+  });
 
   protected readonly headline = computed(() => {
     const wf = this.wf();
@@ -277,6 +286,7 @@ export class AblationPage {
     const sized = this.lab().filter((l) => l.strategyKey === 'AI_SIZED');
     const sharpes = sized.map((l) => l.sharpe).filter((v): v is number => v !== null);
     return {
+      horizon: book,
       fullSkill: full.brierSkill,
       fullSkillLo: full.brierSkillCiLow,
       fullSkillHi: full.brierSkillCiHigh,

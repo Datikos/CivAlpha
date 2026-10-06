@@ -660,6 +660,8 @@ def decisions(date_: str | None = Query(None, alias="date")):
     for row in rows:   # fold the reviewer's columns into one object, null when the decision was not reviewed
         rv = {k: row.pop("review" + k[0].upper() + k[1:]) for k in ("stance", "confidence", "rationale", "flags", "veto", "model")}
         row["review"] = rv if rv["stance"] else None
+        # ADR-0002: the calibrated probability is stored inside the model JSON; null for decisions made before it existed
+        row["probabilityCalibrated"] = ((row.get("model") or {}).get("calibration") or {}).get("probability")
     return {"asOfDate": value(d), "dates": [value(x) for x in dates], "decisions": rows}
 
 

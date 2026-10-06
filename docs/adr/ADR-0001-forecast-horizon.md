@@ -1,6 +1,6 @@
 # ADR-0001: One forecast horizon for the live models, the recorded book and the lab
 
-**Status:** Accepted (2026-10-06; implemented 2026-10-06)
+**Status:** Accepted (2026-10-06; implemented 2026-10-06, all items done)
 **Date:** 2026-10-06
 **Deciders:** David Sakhelashvili (owner)
 
@@ -122,7 +122,8 @@ Phase 2, data (2026-10-06):
       0.66 to 0.84 across variants (production set 0.72) against 0.49 to 0.98 at 10 days, and the variant order changed
       (at 10 days dropping the report profile halved the Sharpe; at 21 days dropping earnings or insider inputs raises
       it). Same probabilities' quality, different winners: the lab Sharpe ranks noise.
-- [ ] Frontend guide text that still says 10 days (`guide-content.ts`): after the ablation page in progress lands.
+- [x] Frontend text that still said 10 days (`guide-content.ts`, `decisions.ts`, `compare.ts`, `accuracy.ts`); the ablation page's
+      legend and stat labels follow the horizons present in the selected run (run 1 shows both, run 2 only 21 days).
 
 Phase 3, later:
 - [ ] ADR-0002 calibration: isotonic maps on past folds in the lab and in the daily decision; what 0.55 / 0.60 then mean.

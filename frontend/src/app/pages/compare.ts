@@ -319,7 +319,7 @@ export class ComparePage {
         return { kind: 'badge', text: humanize(d.action), tone, sub: `p = ${fmtPct(d.probability, 0)} · rank ${d.rank} · ${d.asOfDate}`, value: d.probability } as Cell;
       }),
       true,
-      'The AI strategy\'s latest action and its 10-day probability.',
+      'The AI strategy\'s latest action and its 21-day probability (10-day on decisions made before 2026-10-06).',
       'page-decisions',
     );
     push(

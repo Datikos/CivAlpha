@@ -87,7 +87,7 @@ function row<T>(
 
         @if (modelRows().length) {
           <div class="card">
-            <h3>{{ modelRows().length }} models on the same folds <app-help text="Every model scored in the same walk-forward: same test blocks, same purge. The two live logistic models forecast the platform's 21-day target. The gradient-boosted model behind the AI decisions page is scored twice: on that target and on the label the book actually trades (10 trading days from the next close). The feature-set identifier names the exact input list." topic="models" label="models side by side" /></h3>
+            <h3>{{ modelRows().length }} models on the same folds <app-help text="Every model scored in the same walk-forward: same test blocks, same purge. The two live logistic models forecast the platform's 21-day target. The gradient-boosted model behind the AI decisions page is scored on the same target, which it has also traded since ADR-0001 (2026-10-06); evaluations before that also show the 10-day label it traded then. The feature-set identifier names the exact input list." topic="models" label="models side by side" /></h3>
             <p class="small muted">
               Dot = the out-of-sample number, whisker = its 95% interval from a bootstrap over 21-day blocks of as-of dates.
               A model has shown skill only when the whole whisker sits on the good side of the dashed line.

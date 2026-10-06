@@ -65,6 +65,8 @@ def test_decision_carries_a_calibrated_probability_but_acts_on_the_raw_one():
     assert np.mean([abs(d["probabilityCalibrated"] - 0.5) for d in with_cal]) < 0.05   # honest noise reads as a coin flip
     assert [d["action"] for d in with_cal] == [d["action"] for d in without]      # the action still comes from the raw p
     assert with_cal[0]["model"]["calibration"]["fittedOn"].endswith("evaluation 7")
+    # the stored JSON (model) carries the calibrated value itself: strategy_decision persists only its own columns + model
+    assert all(d["model"]["calibration"]["probability"] == d["probabilityCalibrated"] for d in with_cal)
 
 
 def test_walk_forward_reports_calibrated_metrics_per_model():

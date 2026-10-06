@@ -86,3 +86,24 @@ def test_company_tags_round_trip_through_the_api(api):
     assert r.status_code == 400 and "letters, digits" in r.json()["error"]
     assert api.put("/api/admin/universe/companies/999999/tags", json={"tags": []}).status_code == 404
     assert api.put(f"/api/admin/universe/companies/{row['id']}/tags", json={"tags": []}).json()["tags"] == []
+
+
+def test_decisions_endpoint_serves_the_stored_calibrated_probability(api):
+    """ADR-0002: the calibrated probability lives in the stored model JSON and is served as probabilityCalibrated."""
+    from civalpha.platform.decisions import DecisionService
+    from civalpha.platform.llm import LlmProvider   # the base provider is the no-op one: no explanation, no review
+
+    cid = next(c["id"] for c in api.get("/api/companies").json() if c["symbol"] == "META")
+    base = {"companyId": cid, "symbol": "META", "name": "Meta Platforms, Inc.", "strategyKey": "AI_SIZED", "action": "HOLD",
+            "probability": 0.61, "entryP": 0.55, "exitP": 0.48, "weight": 0.1, "rank": 1, "maxPositions": 8,
+            "factors": [], "ruleVotes": {}}
+    with_cal = {**base, "asOfDate": "2025-12-30",
+                "model": {"horizon": 21, "calibration": {"method": "isotonic", "fittedOn": "backtest_prediction AI_BOOK_21 of evaluation 1",
+                                                          "n": 6028, "probability": 0.503}}}
+    without = {**base, "asOfDate": "2025-12-29", "model": {"horizon": 10}}
+    DecisionService(llm=LlmProvider(), review_mode="off").persist_all([with_cal, without], lambda _m: None)
+    d = api.get("/api/decisions?date=2025-12-30").json()["decisions"]
+    assert d[0]["probability"] == 0.61 and d[0]["probabilityCalibrated"] == 0.503
+    assert d[0]["model"]["calibration"]["fittedOn"].endswith("evaluation 1")
+    old = api.get("/api/decisions?date=2025-12-29").json()["decisions"]
+    assert old[0]["probabilityCalibrated"] is None              # decisions stored before ADR-0002 have none

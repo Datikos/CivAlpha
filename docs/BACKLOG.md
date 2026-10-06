@@ -1,6 +1,6 @@
 # Backlog
 
-State on 2026-10-06 (evening): 7 open items across 2 ADRs and the October 2026 research report. Rows leave when their item is
+State on 2026-10-06 (night): 5 open items across 1 ADR and the October 2026 research report. Rows leave when their item is
 ticked in its ADR; a new item goes into an ADR first, then here. Sizes: S up to a day, M a few days, L a week or more.
 
 ## P1, before the live test resolves (2026-11-03)
@@ -14,8 +14,6 @@ ticked in its ADR; a new item goes into an ADR first, then here. Sizes: S up to 
 
 | # | Task | Ref | Needs | Size |
 |---|---|---|---|---|
-| 4 | Frontend guide text that still says 10 days | ADR-0001 Phase 2 #3 | the ablation page in progress to land | S |
-| 8 | Decisions page: show the calibrated probability and the calibration note | ADR-0002 Phase 3 #1 | frontend session | S |
 | 5 | Sizing guard: a stock with an unexplained raw-close move beyond 50% and no corporate action is quarantined from sizing | research report §Open | decision: changes the recorded book | S |
 | 6 | Append batch 2's fingerprint when its 10th as-of date is issued | docs/research/live-test-2026-10-batch2.md §5 | 10 as-of dates | S |
 | 7 | Backdate universe membership for the 312 companies added on 2026-10-05 | research report §Open | owner's call (survivorship bias) | M |

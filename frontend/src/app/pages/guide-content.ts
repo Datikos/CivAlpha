@@ -82,7 +82,7 @@ export const PAGES: PageCard[] = [
     question: 'Are the probabilities any good, and does the event data help?',
     read: [
       'The verdict at the top is the backend\'s own conclusion from a walk-forward evaluation: models trained only on the past, scored on blocks they never saw.',
-      'The three dot-and-whisker charts put every evaluated model on one line per metric: the dot is the out-of-sample Brier skill, AUC or top-10% net excess, the whisker its 95% interval, the dashed line the bar (zero, 0.5, zero). Green means the whole whisker is on the good side, red wholly on the wrong side, grey that it crosses the line. The two live logistic models and the recorded book\'s gradient-boosted model (scored on the 21-day target and on the 10-day label it trades) sit side by side; the data table below the charts has the numbers.',
+      'The three dot-and-whisker charts put every evaluated model on one line per metric: the dot is the out-of-sample Brier skill, AUC or top-10% net excess, the whisker its 95% interval, the dashed line the bar (zero, 0.5, zero). Green means the whole whisker is on the good side, red wholly on the wrong side, grey that it crosses the line. The two live logistic models and the recorded book\'s gradient-boosted model (scored on the same 21-day target; evaluations before 2026-10-06 also show the 10-day label it traded then) sit side by side; the data table below the charts has the numbers.',
       'The four tiles are the headline: best Brier score against the 0.25 of a coin flip, best AUC against 0.5, whether AUGMENTED beats BASELINE (its confidence interval must exclude zero), and the net return of a simulated trading rule with its t-statistic.',
       'The reliability diagram shows whether "60%" happened about 60% of the time. Dots on the diagonal are honest probabilities.',
       '"Act only when confident" is the abstention test: the forecasts are ranked by how far they sit from 50%, and each row shows what trading only the top 5%, 10%, 20% and so on would have earned per position after costs. A trader never acts on every stock every day; this table asks whether the model\'s surest calls are worth more than the rest.',
@@ -155,7 +155,8 @@ export const PAGES: PageCard[] = [
     area: 'strategy',
     question: 'What would the AI strategy do today, and why?',
     read: [
-      'One card per stock with its probability of beating the sector ETF over the next 10 trading days and the action: Enter (green), Exit (red), Hold or Stay out.',
+      'One card per stock with its probability of beating the sector ETF over the next 21 trading days (10 on decisions made before 2026-10-06, ADR-0001) and the action: Enter (green), Exit (red), Hold or Stay out.',
+      'Next to the probability, "≈ x% calibrated" is what that raw probability has meant out of sample: the raw number mapped through an isotonic curve fitted on the walk-forward. The "Honest probabilities" tile counts how many of the day\'s decisions would clear the entry bar on calibrated numbers. The action is still taken on the raw probability (ADR-0002).',
       'The zoned meter puts the probability against the two thresholds: red zone below the exit level, green zone at or above the entry level.',
       'Open "Why" for the factors that moved the probability (blue raises it, red lowers it) and which classic rules would also hold the stock.',
       'The recorded book is the AI_SIZED rule: fixed thresholds (enter at p ≥ 0.55 in the top 8, exit below 0.48) and a weight of 0.04 divided by the stock\'s annualized 21-day volatility, at most 20%, with the whole book capped at 100%. The model behind it leaves out the policy-event features (tariff and rate shocks), which the lab showed hurt the book. A "confident" chip marks a probability that clears the 0.60 bar of the AI_CONF rule.',
@@ -201,7 +202,7 @@ export const PAGES: PageCard[] = [
     question: 'Do the recorded book\'s numbers depend on any one group of inputs?',
     read: [
       'The study takes the book\'s input list (GBM_AI_39) and scores it six more times: without the price/technical group, without the report profile, without the insider inputs, without the earnings inputs, and with the dividend or the policy-event features added.',
-      'The first pair of charts is the honest measure: walk-forward Brier skill and AUC per input list, blue on the 21-day forecast target and orange on the 10-day label the book trades, each with a 95% interval from a bootstrap over 21-day blocks of as-of dates. Only a whisker wholly right of the dashed line would mean the probabilities know something.',
+      'The first pair of charts is the honest measure: walk-forward Brier skill and AUC per input list, on the 21-day forecast target (runs made before 2026-10-06 also show, in orange, the 10-day label the book traded then), each with a 95% interval from a bootstrap over 21-day blocks of as-of dates. Only a whisker wholly right of the dashed line would mean the probabilities know something.',
       'The second pair is the lab Sharpe and max drawdown of the same probabilities under the standard rule and under the recorded book\'s sizing. It is marked "not a skill metric": one rule on one five-year window, no interval. It is shown because it is the number that moves while the forecast quality does not.',
       'Every variant is registered as a trial, so running the study makes the Deflated Sharpe Ratio on the strategy lab stricter.',
     ],
@@ -534,7 +535,7 @@ export const FAQ: Faq[] = [
   },
   {
     q: 'What is the difference between a forecast, an AI decision and a strategy?',
-    a: 'A forecast is a probability for one stock over 21 days from a logistic model. An AI decision is the gradient-boosted strategy\'s action for today over a 10-day horizon: fixed thresholds and volatility sizing (the AI_SIZED rule). A strategy is any rule, classic or AI, backtested in the Strategy lab.',
+    a: 'A forecast is a probability for one stock over 21 days from a logistic model. An AI decision is the gradient-boosted strategy\'s action for today over the same 21-day horizon (10 days before 2026-10-06): fixed thresholds and volatility sizing (the AI_SIZED rule). A strategy is any rule, classic or AI, backtested in the Strategy lab.',
   },
   {
     q: 'Why does the AI appear several times in the Strategy lab?',
