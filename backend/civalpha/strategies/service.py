@@ -230,7 +230,10 @@ def _summary(results: list[dict], cfg: LabConfig, n: int, feature_test: dict | N
                      + (f", and 12-1 momentum sized the same way (MOM_12_1_SIZED) {mom_sized['sharpe']:.2f} with {mom_sized['maxDrawdown']*100:.1f}%" if mom_sized else "")
                      + f", against {sized['sharpe']:.2f} and {sized['maxDrawdown']*100:.1f}% for the recorded book ({BOOK_KEY}): "
                      + ("the AI's contribution beyond sizing is nil on this window." if same else
-                        f"the gap of {gap:+.2f} Sharpe is what the AI's forecast adds beyond sizing on this window, before any correction for the trials made."))
+                        f"the gap of {gap:+.2f} Sharpe to the whole-universe row is the most the AI's selection can be credited with on this window, "
+                        f"before any correction for the trials made")
+                     + (f"; a 12-1 momentum screen under the same sizing does better still ({mom_sized['sharpe']:.2f}), so the sizing, not the forecast, "
+                        f"is the part that travels." if mom_sized and not same and mom_sized["sharpe"] > sized["sharpe"] else "."))
     ev = by_key.get(AI_WITH_EVENTS_KEY)
     if base and ev:
         parts.append(f"With the policy-event features added back the standard rule gives Sharpe {ev['sharpe']:.2f} against "
