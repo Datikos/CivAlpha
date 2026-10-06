@@ -73,6 +73,18 @@ class Llm:
 
 
 @dataclass(frozen=True)
+class Jev:
+    """TypeSafe AI's Jev decision model (ADR-0003): typed answers with probabilities, used to classify 8-K text."""
+    api_key: str
+    model: str = "jev-1.13.0"            # pinned: an alias like jev-latest moves when a release ships
+    base_url: str = "https://api.typesafe.ai/v1/systemone"
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.api_key)
+
+
+@dataclass(frozen=True)
 class Prices:
     provider: str
     tiingo_api_key: str
@@ -109,6 +121,7 @@ class Settings:
     prices: Prices
     schedule: Schedule
     mcp: Mcp
+    jev: Jev = field(default_factory=lambda: Jev(api_key=""))
     extra: dict = field(default_factory=dict)
 
     @property
@@ -141,4 +154,6 @@ def load() -> Settings:
         schedule=Schedule(pipeline_cron=_env("CIVALPHA_PIPELINE_CRON", "-"), outcomes_cron=_env("CIVALPHA_OUTCOMES_CRON", "-"),
                           zone=_env("CIVALPHA_SCHEDULE_ZONE", "America/New_York")),
         mcp=Mcp(allowed_hosts=_list("CIVALPHA_MCP_ALLOWED_HOSTS"), allowed_origins=_list("CIVALPHA_MCP_ALLOWED_ORIGINS")),
+        jev=Jev(api_key=_env("TYPESAFE_API_KEY"), model=_env("CIVALPHA_JEV_MODEL", "jev-1.13.0"),
+                base_url=_env("CIVALPHA_JEV_URL", "https://api.typesafe.ai/v1/systemone")),
     )
