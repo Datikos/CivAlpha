@@ -154,7 +154,10 @@ How an event is linked to a company:
   * Test blocks of 63 trading days. Each model is trained only on samples whose 21-day label window closed
     before its block starts.
   * Reports Brier score, Brier skill, log loss, AUC, accuracy, reliability bins, and the augmented-minus-baseline
-    Brier difference with a bootstrap CI.
+    Brier difference with a bootstrap CI. Since 2026-10-06 every model's Brier skill and AUC also carry a 95% CI from a
+    bootstrap over 21-day blocks of as-of dates (`metrics.<kind>.ci`); the Accuracy page draws all evaluated models
+    (the two live logistic models and the recorded book's gradient-boosted model on both of its labels) as
+    dot-and-whisker charts for Brier skill, AUC and the top-10% net excess, each against its bar.
   * Includes a long/short simulation entered at the next close, charged 10 bp per side per leg (configurable).
     The verdict says "Profitability claim: NOT supported" unless at least 36 periods have mean net return > 0 and
     t > 2.
@@ -232,7 +235,10 @@ Brier skill and AUC with 95% CIs (bootstrap over 21-day blocks of as-of dates) o
 book's own 10-day next-close label, the way feature-set decisions are meant to be made. The lab Sharpe of `AI_GBM` and
 `AI_SIZED` on the same probabilities is a secondary column marked "not a skill metric". Every variant is a trial and
 lands in the trial registry, so the deflated Sharpe knows about it. Results: `GET /api/ablation`, MCP
-`get_feature_ablation`. There is no page for it yet; `docs/research/2026-10-forecasting-polish.md` has the first run.
+`get_feature_ablation`, and the **Feature fragility** page (`/ablation`, with a "Run the study" button): Brier skill and
+AUC per input list as dot-and-whisker charts on both labels against the base-rate and no-skill lines, the lab Sharpe and
+max drawdown of the same probabilities beside them under a "not a skill metric" badge, the variants and the data tables.
+`docs/research/2026-10-forecasting-polish.md` has the first run.
 
 ## Setup playbook: what a trader waits for, with base rates
 

@@ -117,6 +117,11 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/signals').then((m) => m.SignalsPage),
   },
   {
+    path: 'ablation',
+    title: 'Feature fragility · CivAlpha',
+    loadComponent: () => import('./pages/ablation').then((m) => m.AblationPage),
+  },
+  {
     path: 'playbook',
     title: 'Setup playbook · CivAlpha',
     loadComponent: () => import('./pages/playbook').then((m) => m.PlaybookPage),

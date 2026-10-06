@@ -82,6 +82,7 @@ export const PAGES: PageCard[] = [
     question: 'Are the probabilities any good, and does the event data help?',
     read: [
       'The verdict at the top is the backend\'s own conclusion from a walk-forward evaluation: models trained only on the past, scored on blocks they never saw.',
+      'The three dot-and-whisker charts put every evaluated model on one line per metric: the dot is the out-of-sample Brier skill, AUC or top-10% net excess, the whisker its 95% interval, the dashed line the bar (zero, 0.5, zero). Green means the whole whisker is on the good side, red wholly on the wrong side, grey that it crosses the line. The two live logistic models and the recorded book\'s gradient-boosted model (scored on the 21-day target and on the 10-day label it trades) sit side by side; the data table below the charts has the numbers.',
       'The four tiles are the headline: best Brier score against the 0.25 of a coin flip, best AUC against 0.5, whether AUGMENTED beats BASELINE (its confidence interval must exclude zero), and the net return of a simulated trading rule with its t-statistic.',
       'The reliability diagram shows whether "60%" happened about 60% of the time. Dots on the diagonal are honest probabilities.',
       '"Act only when confident" is the abstention test: the forecasts are ranked by how far they sit from 50%, and each row shows what trading only the top 5%, 10%, 20% and so on would have earned per position after costs. A trader never acts on every stock every day; this table asks whether the model\'s surest calls are worth more than the rest.',
@@ -141,6 +142,7 @@ export const PAGES: PageCard[] = [
       'The bars in the table are scaled to the column\'s largest value, so the eye can rank without reading. The ✓ marks the best cell in a column.',
       'The Excess column shows the annual return above buy & hold with its confidence interval drawn against the zero line: green when the whole interval is above zero, red when wholly below, grey when it crosses.',
       'A strategy earns "Beats buy & hold" only with three years of data, an interval above zero and a Deflated Sharpe Ratio of at least 0.95. Anything else is treated as luck.',
+      'The decision layer panel draws the AI rules as dots against buy & hold: excess return with its interval (the only one of the three with an interval), Sharpe ratio and max drawdown. A rule has beaten the reference only when its whole whisker sits right of the dashed line; the Sharpe and drawdown dots describe the window and prove nothing. The data table under the charts has the numbers.',
       'The AI family tests the decision layer on the same probabilities: "confident entries only" waits for p ≥ 0.60 (abstention), "sized by volatility" keeps the same entries but gives calm stocks more capital than volatile ones (position sizing), "book follows the ranking" lets a stock that beats the weakest holding by 0.08 take its slot, "ranking + conviction sizing" adds a tilt so surer calls get more capital, and "with policy-event features" adds the tariff and rate-shock inputs back to the model. The recorded book is "sized by volatility". The "Does confidence pay?" table ranks the AI\'s own forecasts by probability and shows the net return of acting only on the top slice.',
     ],
     caution: 'Twenty strategies tested on five years and thirty stocks will always produce one that looks great. The DSR exists to deflate exactly that.',
@@ -189,6 +191,21 @@ export const PAGES: PageCard[] = [
       'The grade is corrected for the number of features tested. "Decaying" marks an input that carried information over the whole history but lost its sign in the last 12 months: the classic trace of an edge others have found.',
     ],
     caution: 'With a few dozen stocks a monthly IC is noisy; read the month count and the right-sign share before trusting a mean.',
+  },
+  {
+    id: 'page-ablation',
+    path: '/ablation',
+    title: 'Feature fragility',
+    icon: 'diff',
+    area: 'strategy',
+    question: 'Do the recorded book\'s numbers depend on any one group of inputs?',
+    read: [
+      'The study takes the book\'s input list (GBM_AI_39) and scores it six more times: without the price/technical group, without the report profile, without the insider inputs, without the earnings inputs, and with the dividend or the policy-event features added.',
+      'The first pair of charts is the honest measure: walk-forward Brier skill and AUC per input list, blue on the 21-day forecast target and orange on the 10-day label the book trades, each with a 95% interval from a bootstrap over 21-day blocks of as-of dates. Only a whisker wholly right of the dashed line would mean the probabilities know something.',
+      'The second pair is the lab Sharpe and max drawdown of the same probabilities under the standard rule and under the recorded book\'s sizing. It is marked "not a skill metric": one rule on one five-year window, no interval. It is shown because it is the number that moves while the forecast quality does not.',
+      'Every variant is registered as a trial, so running the study makes the Deflated Sharpe Ratio on the strategy lab stricter.',
+    ],
+    caution: 'A Sharpe that halves while every skill interval overlaps is measuring which stocks a rule happened to hold. Feature-set decisions are made on the first pair of charts, never on the second.',
   },
   {
     id: 'page-playbook',

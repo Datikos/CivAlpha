@@ -233,7 +233,9 @@ the baseline; profitability is still not supported; no live forecast has resolve
   statement gets a second horizon or the book moves to 21 days; both change the recorded book and were out of scope here.
 * **Sizing guard.** An unexplained raw-close move beyond 50% (CTVA on 2026-10-01) still enters the sizing as volatility.
   `python -m civalpha.integrity` detects it; nothing acts on it. Acting would change the book.
-* **Ablation page.** The study has an API and MCP tools but no page.
+* **Ablation page.** Done 2026-10-06, after this report: the Feature fragility page (`/ablation`) draws the study as
+  dot-and-whisker charts, and the Accuracy page draws the four walk-forward models the same way (per-model CIs are
+  stored since evaluation 14).
 * **Lab summary wording.** Run 18's stored sentence credits the +0.27 Sharpe gap to the AI; the code now says it is an
   upper bound and names the momentum comparison. The next lab run carries it.
 * **Backfilled registry rows** are inferences (feature set from the AI_DIV row, git commit from commit time) and say so.

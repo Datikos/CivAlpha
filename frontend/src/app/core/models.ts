@@ -1059,6 +1059,64 @@ export interface SignalStudyRun {
   result: SignalStudyResult;
 }
 
+/** Feature fragility study (`GET /api/ablation`): the recorded book's input list minus or plus one group, scored walk-forward. */
+export interface AblationWalkForwardRow {
+  variant: string;
+  featureSet: string;
+  nFeatures: number;
+  change: string;
+  horizon: number;
+  entry: string;
+  n: number;
+  brierSkill: number;
+  brierSkillCiLow: number;
+  brierSkillCiHigh: number;
+  auc: number;
+  aucCiLow: number;
+  aucCiHigh: number;
+  top10NetExcess: number | null;
+  top10CiLow: number | null;
+  top10CiHigh: number | null;
+}
+export interface AblationLabRow {
+  variant: string;
+  featureSet: string;
+  strategyKey: string;
+  sharpe: number | null;
+  maxDrawdown: number | null;
+  cagr: number | null;
+  start: string;
+  end: string;
+  /** "not a skill metric: ..." */
+  note: string;
+}
+export interface AblationResult {
+  dataCutoff: string;
+  runAt: string;
+  headline: string;
+  config: {
+    productionFeatureSet: string;
+    groups: Record<string, string[]>;
+    additions: Record<string, string[]>;
+    walkForward: { horizon: number; sampleEvery: number; embargo: number; foldLength: number; minTrainDays: number; ciBoot: number; ciMethod: string };
+    lab: Record<string, unknown>;
+  };
+  variants: { key: string; featureSet: string; nFeatures: number; change: string; features: string[] }[];
+  walkForward: AblationWalkForwardRow[];
+  lab: AblationLabRow[];
+}
+export interface AblationRun {
+  id: number;
+  runAt: string;
+  dataCutoff: string;
+  headline: string;
+  result: AblationResult;
+}
+export interface AblationResponse {
+  run: AblationRun | null;
+  runs: { id: number; runAt: string; dataCutoff: string; headline: string }[];
+}
+
 export interface SignalStudyResponse {
   run: SignalStudyRun | null;
   runs: { id: number; runAt: string; dataCutoff: string; headline: string }[];

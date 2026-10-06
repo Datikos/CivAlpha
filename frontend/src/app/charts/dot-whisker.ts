@@ -64,9 +64,11 @@ export interface WhiskerSeries {
             (focus)="hover() === null && hover.set(0)"
             (blur)="hover.set(null)"
           >
-            @for (t of scale().ticks; track t) {
-              <line class="grid" [attr.x1]="x(t)" [attr.x2]="x(t)" [attr.y1]="m.top" [attr.y2]="h() - m.bottom" />
-              <text class="tick" [attr.x]="x(t)" [attr.y]="h() - m.bottom + 14" text-anchor="middle">{{ format()(t) }}</text>
+            @for (t of ticks(); track t.v) {
+              <line class="grid" [attr.x1]="x(t.v)" [attr.x2]="x(t.v)" [attr.y1]="m.top" [attr.y2]="h() - m.bottom" />
+              @if (t.labelled) {
+                <text class="tick" [attr.x]="x(t.v)" [attr.y]="h() - m.bottom + 14" text-anchor="middle">{{ format()(t.v) }}</text>
+              }
             }
             @if (refX() !== null) {
               <line class="ref" [attr.x1]="x(refX()!)" [attr.x2]="x(refX()!)" [attr.y1]="m.top - 2" [attr.y2]="h() - m.bottom" stroke-dasharray="4 3" />
@@ -134,7 +136,7 @@ export class DotWhisker {
   protected readonly w = hostWidth(560);
   protected readonly hover = signal<number | null>(null);
 
-  protected readonly labelW = computed(() => Math.round(Math.min(220, Math.max(100, this.w() * 0.32))));
+  protected readonly labelW = computed(() => Math.round(Math.min(230, Math.max(100, this.w() * 0.42))));
   protected readonly hasIntervals = computed(() => this.items().some((i) => isNum(i.lo) && isNum(i.hi)));
 
   private readonly rowKeys = computed(() => {
@@ -170,6 +172,14 @@ export class DotWhisker {
     const xm = this.xMin();
     const xM = this.xMax();
     return niceTicks(xm ?? lo - pad, xM ?? hi + pad, 5);
+  });
+
+  /** Every grid tick, labelled only as densely as the formatted labels fit (about 64px each). */
+  protected readonly ticks = computed(() => {
+    const ticks = this.scale().ticks;
+    const plotW = this.w() - this.m.right - this.labelW();
+    const every = Math.max(1, Math.ceil(ticks.length / Math.max(1, Math.floor(plotW / 64))));
+    return ticks.map((v, i) => ({ v, labelled: i % every === 0 }));
   });
 
   protected x(v: number): number {

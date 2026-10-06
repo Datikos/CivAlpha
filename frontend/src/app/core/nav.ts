@@ -107,6 +107,13 @@ export const NAV_GROUPS: NavGroup[] = [
         keywords: 'information coefficient IC decay features edge',
       },
       {
+        path: '/ablation',
+        label: 'Feature fragility',
+        icon: 'diff',
+        exact: false,
+        keywords: 'ablation feature set inputs groups remove add robustness book model',
+      },
+      {
         path: '/playbook',
         label: 'Setup playbook',
         icon: 'zap',

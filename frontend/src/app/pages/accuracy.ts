@@ -5,7 +5,7 @@ import { DotWhisker, WhiskerItem } from '../charts/dot-whisker';
 import { LineChart, LineSeries } from '../charts/line-chart';
 import { ReliabilityChart, ReliabilitySeries } from '../charts/reliability-chart';
 import { apiUrl, valueOf } from '../core/api';
-import { FORMAT_PIPES, fmtFixed, fmtNum, fmtPct, fmtSigned, fmtSignedPct, humanize } from '../core/format';
+import { FORMAT_PIPES, fmtFixed, fmtNum, fmtPct, fmtSigned, fmtSignedPct } from '../core/format';
 import { AccuracyResponse, ForecastSummary, LiveTestModel, MODEL_KINDS, ModelKind, ModelMetrics, TradingStats, modelLabel } from '../core/models';
 import { CoverageTable } from '../shared/coverage-table';
 import { Icon } from '../shared/icon';
@@ -536,7 +536,7 @@ export class AccuracyPage {
       const top = (e.trading[k]?.coverage ?? []).find((c) => Math.abs(c.coverage - 0.1) < 1e-9);
       return {
         kind: k,
-        label: live.includes(k) ? `${humanize(k)} (live)` : `Book model, ${horizon}-day`,
+        label: k.startsWith('AI_BOOK') ? `Book, ${horizon}-day${live.includes(k) ? ' (live)' : ''}` : `${modelLabel(k)} (live)`,
         featureSet: spec?.featureSet ?? '',
         nFeatures: spec?.nFeatures ?? 0,
         algorithm: spec?.algorithm ?? '',
@@ -637,7 +637,7 @@ export class AccuracyPage {
 
   protected readonly metricRows = computed<MetricRow[]>(() => {
     const m = this.ev()?.metrics ?? {};
-    const g = (key: keyof ModelMetrics) => (k: ModelKind) => m[k]?.[key];
+    const g = (key: Exclude<keyof ModelMetrics, 'ci'>) => (k: ModelKind) => m[k]?.[key];
     return [
       row('n', 'n', 'out-of-sample predictions', 'walk-forward', g('n'), (v) => fmtNum(v), null),
       row('brier', 'Brier score', 'lower is better; 0.25 = coin flip', 'brier', g('brier'), (v) => fmtFixed(v, 4), false, {

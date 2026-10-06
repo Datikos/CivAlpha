@@ -209,8 +209,9 @@ target: `probLow` = `probHigh` = `probability`, no interval; its explanation fac
 ```json
 { "evaluation": { "id": 1, "runAt": "...", "dataCutoff": "2026-09-30",
     "config": {"horizon": 21, "sampleEvery": 5, "embargo": 21, "foldLength": 63, "minTrainDays": 504, "costBpsPerSide": 10},
-    "metrics": {"BASELINE": {"n": 3000, "brier": 0.249, "logLoss": 0.69, "auc": 0.52, "accuracy": 0.51, "baseRate": 0.49, "brierSkill": 0.002},
-                "AUGMENTED": {"...": 0}},
+    "metrics": {"BASELINE": {"n": 3000, "brier": 0.249, "logLoss": 0.69, "auc": 0.52, "accuracy": 0.51, "baseRate": 0.49, "brierSkill": 0.002,
+                             "ci": {"brierSkill": [-0.004, 0.008], "auc": [0.50, 0.54], "block": 21, "nBoot": 500}},
+                "AUGMENTED": {"...": 0}, "AI_BOOK_21": {"...": 0}, "AI_BOOK_10": {"...": 0}},
     "comparison": {"brierDiff": -0.004, "ciLow": -0.007, "ciHigh": -0.001, "aucDiff": 0.03, "note": "negative brierDiff = augmented better"},
     "calibration": {"BASELINE": [{"binLow": 0.0, "binHigh": 0.1, "meanPredicted": 0.07, "observedRate": 0.1, "count": 12}], "AUGMENTED": []},
     "trading": {"BASELINE": {"periods": 30, "meanGross": 0.002, "meanNet": 0.001, "tStatNet": 0.4, "hitRate": 0.52,
@@ -346,7 +347,10 @@ book label entered at the next close): `variant` (`FULL`, `NO_PRICE_TECHNICAL`, 
 `brierSkill` / `auc` with `*CiLow` / `*CiHigh` from a bootstrap over 21-day blocks of as-of dates, and the top-10% net excess.
 `run.result.lab` has the lab Sharpe and max drawdown of `AI_GBM` and `AI_SIZED` on each variant's probabilities; its `note` says it is
 not a skill metric. Every variant is registered in `trial_registry` (source `ablation`). `POST /api/admin/ablation/study` → job
-`FEATURE_ABLATION`.
+`FEATURE_ABLATION`. The Feature fragility page (`/ablation`) reads these two endpoints.
+
+`metrics.<kind>.ci` on `GET /api/accuracy` (since 2026-10-06; absent on evaluations stored before): 95% intervals of
+`brierSkill` and `auc` per model, `[low, high]`, from `nBoot` draws of a bootstrap over `block`-day blocks of as-of dates.
 
 `GET /api/signals` — the latest signal-health study (`run`, null before the first one) and earlier `runs`; `GET /api/signals/{id}`
 one run. `run.result.features[]`: `feature`, `label`, `kind`, `series` (monthly `{month, ic, n}`), `months`, `meanIc`, `stdIc`, `icIr`

@@ -373,6 +373,7 @@ interface Col {
     }
   `,
   styles: `
+    .grid-3 h4 { margin: 0.25rem 0 0.35rem; font-size: 0.9rem; }
     .chart-head { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
     .chart-head select { margin-left: 0.4rem; }
     .ref-row td { background: var(--surface-2); }
@@ -464,13 +465,13 @@ export class StrategiesPage {
   protected readonly decisionLayer = computed(() => {
     const byKey = new Map(this.results().map((s) => [s.strategyKey, s]));
     const spec = [
-      { key: AI_KEY, label: 'Standard rule', note: 'enter at p ≥ 0.55, equal slices' },
-      { key: 'AI_CONF', label: 'Confident entries only', note: 'abstain unless p ≥ 0.60' },
-      { key: 'AI_SIZED', label: 'Sized by volatility', note: 'the recorded book: same trades, 0.04 / volatility each' },
-      { key: 'AI_RANK', label: 'Book follows the ranking', note: 'replace the weakest holding when beaten by 0.08' },
-      { key: 'AI_RANK_VOL', label: 'Ranking + volatility sizing', note: 'the swap rule alone: no conviction tilt' },
-      { key: 'AI_RANK_SIZED', label: 'Ranking + conviction sizing', note: 'volatility size × conviction tilt' },
-      { key: 'AI_WITH_EVENTS', label: 'With policy-event features', note: 'standard rule, model also sees tariff/rate shocks' },
+      { key: AI_KEY, label: 'Standard rule', short: 'Standard rule', note: 'enter at p ≥ 0.55, equal slices' },
+      { key: 'AI_CONF', label: 'Confident entries only', short: 'Confident only', note: 'abstain unless p ≥ 0.60' },
+      { key: 'AI_SIZED', label: 'Sized by volatility', short: 'Sized by volatility', note: 'the recorded book: same trades, 0.04 / volatility each' },
+      { key: 'AI_RANK', label: 'Book follows the ranking', short: 'Ranking book', note: 'replace the weakest holding when beaten by 0.08' },
+      { key: 'AI_RANK_VOL', label: 'Ranking + volatility sizing', short: 'Ranking + vol size', note: 'the swap rule alone: no conviction tilt' },
+      { key: 'AI_RANK_SIZED', label: 'Ranking + conviction sizing', short: 'Ranking + tilt', note: 'volatility size × conviction tilt' },
+      { key: 'AI_WITH_EVENTS', label: 'With policy-event features', short: 'With policy events', note: 'standard rule, model also sees tariff/rate shocks' },
     ];
     const rows = spec
       .map((x) => {
@@ -489,19 +490,19 @@ export class StrategiesPage {
     const ref = byKey.get(REFERENCE_KEY)?.metrics;
     return { rows, ref: { sharpe: ref?.sharpe ?? null, maxDd: ref?.maxDrawdown ?? null } };
   });
-  private layerDetails(x: { note: string; sharpe: number | null; maxDd: number | null; exposure: number | null; trades: number }): string[] {
-    return [x.note, `Sharpe ${fmtFixed(x.sharpe, 2)} · max drawdown ${fmtPct(x.maxDd, 1)} · invested ${fmtPct(x.exposure, 0)} · ${x.trades} trades`];
+  private layerDetails(x: { label: string; note: string; sharpe: number | null; maxDd: number | null; exposure: number | null; trades: number }): string[] {
+    return [x.label, x.note, `Sharpe ${fmtFixed(x.sharpe, 2)} · max drawdown ${fmtPct(x.maxDd, 1)} · invested ${fmtPct(x.exposure, 0)} · ${x.trades} trades`];
   }
   protected readonly layerExcessItems = computed<WhiskerItem[]>(() =>
     (this.decisionLayer()?.rows ?? [])
       .filter((x) => x.excess !== null && x.excess !== undefined)
-      .map((x) => ({ row: x.key, label: x.label, value: x.excess!, lo: x.excessLo, hi: x.excessHi, details: this.layerDetails(x) })),
+      .map((x) => ({ row: x.key, label: x.short, value: x.excess!, lo: x.excessLo, hi: x.excessHi, details: this.layerDetails(x) })),
   );
   protected readonly layerSharpeItems = computed<WhiskerItem[]>(() =>
-    (this.decisionLayer()?.rows ?? []).filter((x) => x.sharpe !== null).map((x) => ({ row: x.key, label: x.label, value: x.sharpe!, details: this.layerDetails(x) })),
+    (this.decisionLayer()?.rows ?? []).filter((x) => x.sharpe !== null).map((x) => ({ row: x.key, label: x.short, value: x.sharpe!, details: this.layerDetails(x) })),
   );
   protected readonly layerDdItems = computed<WhiskerItem[]>(() =>
-    (this.decisionLayer()?.rows ?? []).filter((x) => x.maxDd !== null).map((x) => ({ row: x.key, label: x.label, value: x.maxDd!, details: this.layerDetails(x) })),
+    (this.decisionLayer()?.rows ?? []).filter((x) => x.maxDd !== null).map((x) => ({ row: x.key, label: x.short, value: x.maxDd!, details: this.layerDetails(x) })),
   );
   protected readonly signedPct1 = (v: number) => fmtSignedPct(v, 1);
   protected readonly pct1 = (v: number) => fmtPct(v, 1);
