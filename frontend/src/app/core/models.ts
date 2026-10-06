@@ -720,6 +720,13 @@ export interface StrategyRun {
     ai: Record<string, unknown>;
     /** Abstention on the AI's own out-of-sample forecasts (long only, costs on the stock alone). */
     aiCoverage?: CoverageLevel[];
+    /** The same curve on probabilities calibrated on earlier folds (ADR-0002). */
+    aiCoverageCalibrated?: CoverageLevel[];
+    /** The strategy whose decisions are recorded daily (AI_SIZED since 2026-10-06). */
+    bookKey?: string;
+    /** Out-of-sample forecast quality of the AI with and without the dividend signals on the same rows. */
+    dividendFeatureTest?: { rows: number; brierDiff?: number; ciLow?: number; ciHigh?: number;
+                            withoutDividends?: { brier: number; auc: number }; withDividends?: { brier: number; auc: number } };
   };
   summary: string;
 }

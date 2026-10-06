@@ -139,6 +139,8 @@ export const PAGES: PageCard[] = [
     question: 'Does any classic trading rule, or the AI, beat simply holding everything?',
     read: [
       'Every strategy is backtested on the same stocks, the same out-of-sample window and the same costs, then judged against equal-weight buy & hold.',
+      'Start with "What the lab found": one card per question (does anything beat buy & hold, does the AI add anything beyond sizing, do its thresholds mean anything once probabilities are honest, do its surest calls pay, does any way of acting help, do extra inputs help). The badge is the short answer, the lines are the numbers behind it, the link opens the section with the detail. The full text the backend stored with the run is under "Full text summary".',
+      'The tile "The recorded AI book" is the rule whose decisions are stored daily (AI_SIZED), not the plain AI rule.',
       'The bars in the table are scaled to the column\'s largest value, so the eye can rank without reading. The ✓ marks the best cell in a column.',
       'The Excess column shows the annual return above buy & hold with its confidence interval drawn against the zero line: green when the whole interval is above zero, red when wholly below, grey when it crosses.',
       'A strategy earns "Beats buy & hold" only with three years of data, an interval above zero and a Deflated Sharpe Ratio of at least 0.95. Anything else is treated as luck.',

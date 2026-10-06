@@ -6,7 +6,7 @@ import { DotWhisker, WhiskerItem } from '../charts/dot-whisker';
 import { LineChart, LineSeries } from '../charts/line-chart';
 import { apiUrl, valueOf } from '../core/api';
 import { FORMAT_PIPES, fmtFixed, fmtPct, fmtSignedPct } from '../core/format';
-import { StrategiesResponse, StrategyResult } from '../core/models';
+import { CoverageLevel, StrategiesResponse, StrategyResult } from '../core/models';
 import { createSort } from '../core/sort';
 import { CoverageTable } from '../shared/coverage-table';
 import { Icon } from '../shared/icon';
@@ -37,6 +37,16 @@ export function supported(verdict: string): boolean {
 
 /** Growth of 1 shown as cumulative return. */
 export const equityFormat = (v: number) => fmtSignedPct(v - 1, 0);
+
+interface Finding {
+  q: string;
+  answer: string;
+  tone: 'good' | 'warn' | 'bad' | 'neutral';
+  lines: string[];
+  link?: { label: string; to: string[]; fragment?: string };
+}
+
+const fmtSigned4 = (v: number) => (v >= 0 ? '+' : '') + v.toFixed(4);
 
 interface Col {
   key: string;
@@ -75,7 +85,7 @@ interface Col {
 
     @if (res.hasValue()) {
       @if (run(); as r) {
-        <app-verdict [tone]="runTone()">{{ r.summary }}</app-verdict>
+        <app-verdict [tone]="runTone()">{{ shortVerdict() }}</app-verdict>
         <p class="small muted">
           Backtest #{{ r.id }} run {{ r.runAt | utc }} · scored {{ r.oosStart }} to {{ r.dataCutoff }}
           · costs {{ r.config.costBpsPerSide }} bp per side on traded amount · {{ r.config.execution }}
@@ -99,14 +109,42 @@ interface Col {
               <div class="stat-sub"><a [routerLink]="['/strategies', h.bestKey]">{{ h.bestName }}</a> · {{ h.bestSupported ? 'beats buy & hold' : 'not supported once luck is accounted for' }}</div>
             </div>
             <div class="stat" [class]="'stat ' + (h.aiSupported ? 'tone-good' : 'tone-warn')">
-              <div class="stat-label">The AI strategy</div>
+              <div class="stat-label">The recorded AI book <app-help text="The AI rule whose decisions are stored every day on the AI decisions page. Its return above equal-weight buy and hold, per year, with the 95% interval and the Deflated Sharpe Ratio (0.95 needed)." topic="excess" label="recorded book" /></div>
               <div class="stat-value"><app-delta [value]="h.aiExcess" kind="pct" [digits]="1" /><span class="unit">vs buy &amp; hold, a year</span></div>
-              <div class="stat-sub">CI {{ h.aiLo | signedPct: 1 }} to {{ h.aiHi | signedPct: 1 }} · DSR {{ h.aiDsr | fixed: 2 }}</div>
+              <div class="stat-sub"><a [routerLink]="['/strategies', h.aiKey]">{{ h.aiKey }}</a> · CI {{ h.aiLo | signedPct: 1 }} to {{ h.aiHi | signedPct: 1 }} · DSR {{ h.aiDsr | fixed: 2 }}</div>
             </div>
           </div>
         }
 
-        <div class="card">
+        @if (findings().length) {
+          <div class="card">
+            <h3>What the lab found <app-help text="One card per question the lab answers, worked out from the rows of this backtest. The badge is the short answer; the lines under it are the numbers behind it. Green means the evidence supports the idea after the honesty checks, amber that it does not or is within noise, red that it points the wrong way." topic="page-strategies" label="findings" /></h3>
+            <div class="findings">
+              @for (f of findings(); track f.q) {
+                <article class="finding" [class]="'finding tone-' + f.tone">
+                  <header>
+                    <span class="badge" [class]="'badge tone-' + f.tone">{{ f.answer }}</span>
+                    <h4>{{ f.q }}</h4>
+                  </header>
+                  <ul>
+                    @for (line of f.lines; track $index) {
+                      <li>{{ line }}</li>
+                    }
+                  </ul>
+                  @if (f.link) {
+                    <a class="small" [routerLink]="f.link.to" [fragment]="f.link.fragment">{{ f.link.label }} →</a>
+                  }
+                </article>
+              }
+            </div>
+            <details class="full-summary">
+              <summary class="small">Full text summary stored with backtest #{{ r.id }}</summary>
+              <p class="small">{{ r.summary }}</p>
+            </details>
+          </div>
+        }
+
+        <div class="card" id="comparison">
           <div class="card-head">
             <h3>Comparison (out of sample, after costs)</h3>
             <span class="small muted">click a header to sort · tick up to {{ MAX }} to compare</span>
@@ -256,7 +294,7 @@ interface Col {
           />
         </div>
 
-        <div class="card">
+        <div class="card" id="confidence">
           <h3>Does confidence pay? <app-help text="The AI's own out-of-sample forecasts ranked by probability. Each row buys only the top slice at the next close and holds for the AI's horizon; costs are charged on the stock alone (buy and sell). If the surest 10% do not earn more than everything, waiting for a higher probability cannot help." topic="abstention" label="abstention" /></h3>
             <p class="small muted">
               The AI's forecasts, long only: what acting on the most confident share would have earned per position over
@@ -267,11 +305,15 @@ interface Col {
               letting a stronger candidate replace the weakest holding would cost.
             </p>
           <app-coverage-table [rows]="r.config.aiCoverage ?? []" positionLabel="a stock" />
+          @if (r.config.aiCoverageCalibrated?.length) {
+            <h4 class="sub-head">The same forecasts on calibrated probabilities <app-help text="Each fold's probabilities mapped through an isotonic curve fitted on earlier folds only, so a stated 60% is what 60% has meant so far (ADR-0002). If the surest calls only pay on raw probabilities, the edge was overconfidence choosing its own winners." topic="calibration" label="calibrated coverage" /></h4>
+            <app-coverage-table [rows]="r.config.aiCoverageCalibrated!" positionLabel="a stock" />
+          }
         </div>
 
         @if (decisionLayer(); as dl) {
-          <div class="card">
-            <h3>The decision layer <app-help text="Ways to act on the same probabilities. The standard rule enters at p ≥ 0.55 with equal slices; abstention waits for p ≥ 0.60; sizing keeps the standard entries but gives each position 0.04 / its annualized volatility, capped at 20%; the ranking rule replaces the weakest holding when an outsider beats it by 0.08, shown with volatility sizing alone and with a conviction tilt of (p − 0.5) / 0.05. The last row is the standard rule on a model that also sees the policy-event features, which the book dropped after this row underperformed; sized by volatility is the recorded book." topic="decision-layer" label="decision layer" /></h3>
+          <div class="card" id="decision-layer">
+            <h3>The decision layer <app-help text="Ways to act on the same probabilities. The standard rule enters at p ≥ 0.55 with equal slices; abstention waits for p ≥ 0.60; sizing keeps the standard entries but gives each position 0.04 / its annualized volatility, capped at 20%; the ranking rule replaces the weakest holding when an outsider beats it by 0.08, shown with volatility sizing alone and with a conviction tilt of (p − 0.5) / 0.05. The last row is the standard rule on a model that also sees the policy-event features (dropped on 2026-10-06 on a 10-day lab Sharpe that reversed at 21 days: a Sharpe is not a skill test); sized by volatility is the recorded book." topic="decision-layer" label="decision layer" /></h3>
             <p class="small muted">
               Same probabilities, different ways to act on them. Each dot is one rule; the dashed line is equal-weight buy &amp;
               hold. Only the excess return carries an interval: a rule has beaten the reference only when its whole whisker
@@ -386,6 +428,20 @@ interface Col {
     .filters { margin-bottom: 0.75rem; align-items: center; }
     .chip { cursor: pointer; font: inherit; font-size: 0.78rem; }
     .btn.disabled { opacity: 0.5; pointer-events: none; }
+    .findings { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 0.75rem; }
+    .finding { border: 1px solid var(--border); border-left: 4px solid var(--border); border-radius: 10px; padding: 0.75rem 0.9rem;
+               background: var(--surface); display: flex; flex-direction: column; gap: 0.4rem; }
+    .finding.tone-good { border-left-color: var(--good, #1baf7a); }
+    .finding.tone-warn { border-left-color: var(--warn, #d9a200); }
+    .finding.tone-bad { border-left-color: var(--bad, #d0453a); }
+    .finding header { display: flex; flex-direction: column; align-items: flex-start; gap: 0.35rem; }
+    .finding h4 { margin: 0; font-size: 0.95rem; line-height: 1.3; }
+    .finding ul { margin: 0; padding-left: 1.05rem; font-size: 0.86rem; }
+    .finding li + li { margin-top: 0.2rem; }
+    .finding a { margin-top: auto; }
+    .full-summary { margin-top: 0.9rem; }
+    .full-summary p { margin: 0.5rem 0 0; max-width: 110ch; }
+    .sub-head { margin: 1rem 0 0.4rem; font-size: 0.92rem; }
   `,
 })
 export class StrategiesPage {
@@ -441,8 +497,10 @@ export class StrategiesPage {
     const ref = list.find((s) => s.strategyKey === REFERENCE_KEY);
     const active = list.filter((s) => s.family !== 'BENCHMARK');
     const best = [...active].sort((a, b) => (b.metrics.sharpe ?? -Infinity) - (a.metrics.sharpe ?? -Infinity))[0];
-    const ai = list.find((s) => s.strategyKey === AI_KEY);
+    const aiKey = this.run()?.config.bookKey ?? 'AI_SIZED';
+    const ai = list.find((s) => s.strategyKey === aiKey) ?? list.find((s) => s.strategyKey === AI_KEY);
     return {
+      aiKey: ai?.strategyKey ?? aiKey,
       n: list.length,
       years: list[0].metrics.years,
       supported: active.filter((s) => supported(s.verdict)).length,
@@ -459,6 +517,133 @@ export class StrategiesPage {
       aiDsr: ai?.metrics.deflatedSharpe ?? null,
       aiSupported: ai ? supported(ai.verdict) : false,
     };
+  });
+
+  /** One sentence: does anything beat buy & hold, after how many trials, and what came closest. */
+  protected readonly shortVerdict = computed(() => {
+    const r = this.run();
+    const h = this.headline();
+    if (!r || !h) return '';
+    const trials = r.config.nTrials ?? r.config.nCandidates;
+    const head = h.supported
+      ? `${h.supported} of ${r.config.nCandidates} strategies beat equal-weight buy & hold after costs and after correcting for ${trials} trials. This is a backtest, not live evidence.`
+      : `No strategy beat equal-weight buy & hold once the test accounts for the ${trials} strategy and feature-set variants tried on this history; the differences are consistent with luck.`;
+    return `${head} Highest Sharpe: ${h.bestName} (${fmtFixed(h.bestSharpe, 2)}) against ${fmtFixed(h.refSharpe, 2)} for buy & hold.`;
+  });
+
+  /** The questions the lab answers, each with a short answer, a tone and the numbers behind it. Built from this run's rows. */
+  protected readonly findings = computed<Finding[]>(() => {
+    const r = this.run();
+    const list = this.results();
+    if (!r || !list.length) return [];
+    const by = new Map(list.map((s) => [s.strategyKey, s.metrics]));
+    const sh = (k: string) => fmtFixed(by.get(k)?.sharpe, 2);
+    const dd = (k: string) => fmtPct(by.get(k)?.maxDrawdown, 1);
+    const inv = (k: string) => fmtPct(by.get(k)?.exposure, 0);
+    const out: Finding[] = [];
+    const h = this.headline()!;
+    const trials = r.config.nTrials ?? r.config.nCandidates;
+
+    out.push({
+      q: 'Does any strategy beat buy & hold?',
+      answer: h.supported ? `Yes, ${h.supported}` : 'No',
+      tone: h.supported ? 'good' : 'warn',
+      lines: [
+        `${h.supported} of ${r.config.nCandidates} active strategies pass all three checks: 3+ years, excess CI above zero, Deflated Sharpe ≥ 0.95.`,
+        `The Deflated Sharpe counts ${trials} trials: every strategy and input-list variant ever backtested here.`,
+        `Best Sharpe ${fmtFixed(h.bestSharpe, 2)} (${h.bestName}) vs ${fmtFixed(h.refSharpe, 2)} for buy & hold.`,
+      ],
+      link: { label: 'Comparison table', to: ['/strategies'], fragment: 'comparison' },
+    });
+
+    const book = r.config.bookKey ?? 'AI_SIZED';
+    if (by.has(book) && by.has('EW_SIZED')) {
+      const gap = (by.get(book)!.sharpe ?? 0) - (by.get('EW_SIZED')!.sharpe ?? 0);
+      const mom = by.get('MOM_12_1_SIZED')?.sharpe ?? null;
+      const momBetter = mom !== null && mom > (by.get(book)!.sharpe ?? 0);
+      const nil = Math.abs(gap) < 0.1 || momBetter;
+      out.push({
+        q: 'Does the AI forecast add anything beyond position sizing?',
+        answer: nil ? 'No' : `+${fmtFixed(gap, 2)} Sharpe, untested`,
+        tone: nil ? 'warn' : 'neutral',
+        lines: [
+          `Recorded book (${book}): Sharpe ${sh(book)}, max drawdown ${dd(book)}.`,
+          `Whole universe, same volatility sizing, no forecast (EW_SIZED): ${sh('EW_SIZED')}, ${dd('EW_SIZED')}.`,
+          ...(mom !== null ? [`12-1 momentum, same sizing (MOM_12_1_SIZED): ${sh('MOM_12_1_SIZED')}, ${dd('MOM_12_1_SIZED')}.`] : []),
+          nil ? 'The sizing explains the book; the forecast does not add to it on this window.' : 'A gap this size is within what the trial count allows by luck.',
+        ],
+        link: { label: book, to: ['/strategies', book] },
+      });
+    }
+
+    if (by.has(AI_KEY) && by.has('AI_GBM_CAL')) {
+      const raw = by.get(AI_KEY)!, cal = by.get('AI_GBM_CAL')!;
+      out.push({
+        q: 'Do the AI\'s thresholds mean anything once its probabilities are honest?',
+        answer: 'Overconfident',
+        tone: 'warn',
+        lines: [
+          `Raw probabilities clear the 0.55 entry often: invested ${inv(AI_KEY)} of the time, ${raw.trades} trades, Sharpe ${sh(AI_KEY)}.`,
+          `Calibrated on earlier folds: invested ${inv('AI_GBM_CAL')}, ${cal.trades} trades, Sharpe ${sh('AI_GBM_CAL')}.`,
+          'The thresholds were set against the model\'s overconfidence, not against information (ADR-0002).',
+        ],
+        link: { label: 'Calibrated rule', to: ['/strategies', 'AI_GBM_CAL'] },
+      });
+    }
+
+    const cov = (c?: CoverageLevel[]) => c?.find((x) => Math.abs(x.coverage - 0.1) < 1e-9) ?? null;
+    const rawTop = cov(r.config.aiCoverage), calTop = cov(r.config.aiCoverageCalibrated);
+    if (rawTop) {
+      const ci = (x: CoverageLevel) => `${fmtSignedPct(x.meanNet, 2)} per position (CI ${fmtSignedPct(x.ciLow, 2)} to ${fmtSignedPct(x.ciHigh, 2)})`;
+      const rawPos = rawTop.ciLow > 0, calPos = calTop ? calTop.ciLow > 0 : null;
+      out.push({
+        q: 'Do the AI\'s most confident calls pay?',
+        answer: calTop ? (calPos ? 'Yes, after costs' : rawPos ? 'Only before calibration' : 'Within noise') : rawPos ? 'Yes, raw only' : 'Within noise',
+        tone: calTop ? (calPos ? 'good' : 'warn') : rawPos ? 'neutral' : 'warn',
+        lines: [
+          `Top 10% on raw probabilities: ${ci(rawTop)}, ${fmtPct(rawTop.accuracy, 0)} right.`,
+          ...(calTop ? [`Top 10% on calibrated probabilities: ${ci(calTop)}, ${fmtPct(calTop.accuracy, 0)} right.`] : []),
+          'One window, overlapping holding periods, not pre-registered: the live test is where this gets checked.',
+        ],
+        link: { label: 'Does confidence pay?', to: ['/strategies'], fragment: 'confidence' },
+      });
+    }
+
+    const layer = this.decisionLayer();
+    if (layer) {
+      const better = layer.rows.filter((x) => (x.excessLo ?? -1) > 0);
+      out.push({
+        q: 'Does any way of acting on the forecast help?',
+        answer: better.length ? `${better.length} rule${better.length > 1 ? 's' : ''} above zero` : 'Within noise',
+        tone: better.length ? 'neutral' : 'warn',
+        lines: [
+          ...layer.rows.slice(0, 6).map((x) => `${x.short}: ${fmtFixed(x.sharpe, 2)} Sharpe · ${fmtPct(x.maxDd, 1)} drawdown`),
+          better.length ? `Excess CI above zero: ${better.map((x) => x.short).join(', ')}.` : 'No rule\'s excess-return interval sits above zero.',
+        ],
+        link: { label: 'The decision layer', to: ['/strategies'], fragment: 'decision-layer' },
+      });
+    }
+
+    const div = r.config.dividendFeatureTest;
+    const withEv = by.get('AI_WITH_EVENTS');
+    if ((div && div.ciLow !== undefined) || withEv) {
+      const lines: string[] = [];
+      if (div && div.ciLow !== undefined && div.ciHigh !== undefined && div.withoutDividends && div.withDividends) {
+        lines.push(`Dividend signals: AUC ${fmtFixed(div.withoutDividends.auc, 3)} without, ${fmtFixed(div.withDividends.auc, 3)} with; Brier difference CI ${fmtSigned4(div.ciLow)} to ${fmtSigned4(div.ciHigh)}.`);
+      }
+      if (withEv && by.has(AI_KEY)) {
+        lines.push(`Policy-event features: lab Sharpe ${sh('AI_WITH_EVENTS')} with, ${sh(AI_KEY)} without. A Sharpe, not a skill test: the walk-forward on Model accuracy decides.`);
+      }
+      const divHelps = div && div.ciHigh !== undefined && div.ciHigh < 0;
+      out.push({
+        q: 'Do extra inputs help the AI (dividends, policy events)?',
+        answer: divHelps ? 'Dividends help' : 'No evidence',
+        tone: divHelps ? 'good' : 'warn',
+        lines,
+        link: { label: 'Feature fragility', to: ['/ablation'] },
+      });
+    }
+    return out;
   });
 
   /** The AI rules that share one set of probabilities and differ only in how they act on them. */
