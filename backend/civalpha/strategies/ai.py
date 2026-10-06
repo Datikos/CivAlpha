@@ -453,7 +453,10 @@ def ai_strategies(cfg: AiConfig, weights: pd.DataFrame, fund_weights: pd.DataFra
 
 # --------------------------------------------------------------------------- explanation
 def explain(model: AiModel, x: np.ndarray, medians: np.ndarray, top: int = 5, features: list[str] = AI_FEATURES) -> list[dict]:
-    """Per-feature effect: how much the probability moves if this feature were at its training median."""
+    """Per-feature effect: how much the probability moves if this feature were at its training median.
+
+    A missing input (NaN) is reported with value None, imputed=True and an `imputation` note; its contribution is real
+    (the trees treat absence as information), so it is kept rather than zeroed."""
     base = float(model.predict_proba(x[None, :])[0, 1])
     n = len(features)
     probe = np.repeat(x[None, :], n, axis=0)
@@ -461,6 +464,18 @@ def explain(model: AiModel, x: np.ndarray, medians: np.ndarray, top: int = 5, fe
     alt = model.predict_proba(probe)[:, 1]
     contrib = base - alt
     order = np.argsort(-np.abs(contrib), kind="stable")[:top]
+    missing = np.isnan(x)
     return [{"feature": features[i], "label": feature_label(features[i]), "kind": feature_kind(features[i]),
-             "value": None if np.isnan(x[i]) else float(x[i]), "median": None if np.isnan(medians[i]) else float(medians[i]),
-             "contribution": float(contrib[i]), "direction": "UP" if contrib[i] > 0 else "DOWN"} for i in order]
+             "value": None if missing[i] else float(x[i]), "median": None if np.isnan(medians[i]) else float(medians[i]),
+             "contribution": float(contrib[i]), "direction": "UP" if contrib[i] > 0 else "DOWN",
+             "imputed": bool(missing[i]), "imputation": _imputation(model, i) if missing[i] else None} for i in order]
+
+
+def _imputation(model: AiModel, i: int) -> str:
+    """How a missing value entered the model, so the explanation never shows a null value next to a non-zero contribution.
+    Missing values are not filled before training: HistGradientBoostingClassifier learns, per split, which branch the
+    missing values take (native handling), so the contribution of a missing feature is the effect of *having no value*
+    against the training median. A feature with no values at all in the training window is set to 0 and ignored."""
+    if i < len(model.empty) and model.empty[i]:
+        return "constant 0: the feature had no values in the training window"
+    return "missing-value branch: the trees learned where samples without this value go; the contribution is the effect of having no value, versus the training median"

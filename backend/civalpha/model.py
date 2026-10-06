@@ -81,7 +81,8 @@ class LogitModel:
             factors.append({"feature": f, "value": None if v is None or (isinstance(v, float) and math.isnan(v)) else float(v),
                             "z": float(z), "coefficient": float(c), "contribution": float(k),
                             "direction": "UP" if k > 0 else ("DOWN" if k < 0 else "NEUTRAL"),
-                            "imputed": v is None or (isinstance(v, float) and math.isnan(v))})
+                            "imputed": v is None or (isinstance(v, float) and math.isnan(v)),
+                            "imputation": ("training median" if v is None or (isinstance(v, float) and math.isnan(v)) else None)})
         factors.sort(key=lambda x: -abs(x["contribution"]))
         return {"intercept": self.params["intercept"], "baseRate": self.params["base_rate"], "factors": factors}
 

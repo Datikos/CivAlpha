@@ -28,7 +28,7 @@ class PriceBarRow:
 class ActionRow:
     symbol: str
     ex_date: date
-    type: str               # SPLIT | SPLIT_INFO | CASH_DIVIDEND
+    type: str               # SPLIT | SPLIT_INFO | CASH_DIVIDEND | SPIN_OFF (per-share value of the shares distributed)
     value: Decimal
     announced_at: datetime | None
 

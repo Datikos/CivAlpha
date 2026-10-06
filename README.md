@@ -131,7 +131,10 @@ How an event is linked to a company:
   * `fedfunds_chg_x_lev`: FEDFUNDS as published at the cutoff.
 * **Model:** L2 logistic regression on clipped, standardized features.
   * The explanation is each feature's coefficient × its standardized value (log-odds), and each factor links to
-    its sources.
+    its sources. A missing input is filled with the training median before standardizing, and the factor is marked
+    `imputed` so a contribution is never shown next to an empty value. (The strategy lab's gradient-boosted model does
+    not fill missing values: its trees route them on a learned branch, and its explanation marks such a factor `imputed`
+    with that note, since the contribution measures the effect of having no value.)
   * The interval is the 10th–90th percentile across 30 date-block bootstrap refits. It reflects estimation
     uncertainty only.
 * **No look-ahead.** All inputs for as-of time `T` are read point-in-time (`backend/civalpha/pit.py`):
@@ -500,7 +503,12 @@ docs/      api.md (REST contract and MCP tools)
 * **Prices.** The Yahoo and Tiingo adapters were built against their documented response formats but could not
   be exercised against the live services from the build environment. The trading calendar comes from benchmark
   bars. Yahoo's closes are split-adjusted: a newly reported split triggers a full re-download of that symbol, so
-  stored bars stay consistent. Corrections are versioned: the replaced
+  stored bars stay consistent. Neither provider reports spin-offs: the parent's close drops by the value distributed
+  and nothing in the feed explains it (CTVA lost 84% on 2026-10-01 when it distributed Vylor one-for-one). Such a
+  distribution is recorded by hand as a `SPIN_OFF` corporate action whose value is the per-share market value of the
+  shares received at the ex-date close; the total-return index treats it like a cash dividend. `python -m
+  civalpha.integrity` scans every series for 21-day volatility above 200%, one-day total returns beyond 50%, and
+  raw-close moves beyond 50% with no recorded action (the signature of a missing adjustment). Corrections are versioned: the replaced
   values move to `price_bar_revision`. Features always use the latest corrected prices, while forecasts
   already issued keep the feature values they were computed with.
 * **SEC.**

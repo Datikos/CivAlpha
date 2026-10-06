@@ -312,7 +312,7 @@ export class DecisionsPage {
       label: f.label,
       value: f.contribution,
       details: [
-        `value ${f.value === null ? 'missing' : fmtNum(f.value, 3)}`,
+        `value ${f.value === null ? `missing — ${f.imputation ?? 'imputed'}` : fmtNum(f.value, 3)}`,
         `typical ${f.median === null ? '—' : fmtNum(f.median, 3)}`,
       ],
     }));

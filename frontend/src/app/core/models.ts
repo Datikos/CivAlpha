@@ -449,6 +449,9 @@ export interface Factor {
   direction: 'UP' | 'DOWN' | string;
   kind: string;
   provenance: Provenance[];
+  /** true when the input had no value and the model used its training median; `imputation` says so */
+  imputed?: boolean;
+  imputation?: string | null;
 }
 
 export interface ForecastSource {
@@ -733,6 +736,9 @@ export interface DecisionFactor {
   /** change in probability versus the feature at its training median */
   contribution: number;
   direction: 'UP' | 'DOWN';
+  /** true when the input had no value; the trees route missing values on their own branch, see `imputation` */
+  imputed?: boolean;
+  imputation?: string | null;
 }
 
 export interface AiDecision {

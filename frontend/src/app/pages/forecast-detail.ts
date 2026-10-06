@@ -244,7 +244,13 @@ import { VIZ } from '../shared/viz';
                       <span class="chip">{{ x.kind | human }}</span>
                     }
                   </td>
-                  <td class="num">{{ x.value | fixed: 4 }}</td>
+                  <td class="num">
+                    @if (x.imputed) {
+                      <span class="chip" title="No value at the cutoff; the model used its training median, so this contribution comes from the median, not from the stock">imputed · {{ x.imputation ?? 'training median' }}</span>
+                    } @else {
+                      {{ x.value | fixed: 4 }}
+                    }
+                  </td>
                   <td class="num">{{ x.z | signed: 2 }}</td>
                   <td class="num">{{ x.coefficient | signed: 3 }}</td>
                   <td class="num">

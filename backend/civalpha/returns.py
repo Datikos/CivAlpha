@@ -1,7 +1,9 @@
 """Total-return indices and the forecast target.
 
-Prices are stored raw (unadjusted). Splits and cash dividends are applied from the corporate-action table
-on their ex-dates, so adjusting never needs information from after the date being computed.
+Prices are stored raw (unadjusted). Splits, cash dividends and spin-offs are applied from the corporate-action table
+on their ex-dates, so adjusting never needs information from after the date being computed. A SPIN_OFF row carries
+the per-share value of what was distributed (shares received per old share x their close on the ex-date) and is
+treated like a cash dividend of that amount; without it the parent's price drop looks like a crash (CTVA, 2026-10-01).
 
 Target (fixed for the MVP):
     y(t) = 1  if  TR_stock(t+21)/TR_stock(t) > TR_bench(t+21)/TR_bench(t)
@@ -14,6 +16,7 @@ import numpy as np
 import pandas as pd
 
 HORIZON = 21
+DISTRIBUTIONS = ("CASH_DIVIDEND", "SPIN_OFF")   # per-share value distributed on the ex-date; both enter the total return the same way
 
 
 def total_return_index(closes: pd.Series, actions: pd.DataFrame | None, calendar: pd.DatetimeIndex) -> np.ndarray:
@@ -35,7 +38,7 @@ def total_return_index(closes: pd.Series, actions: pd.DataFrame | None, calendar
                 continue
             if a.action_type == "SPLIT":
                 split[i] *= float(a.value)
-            elif a.action_type == "CASH_DIVIDEND":
+            elif a.action_type in DISTRIBUTIONS:
                 div[i] += float(a.value)
     gross = np.full(len(calendar), np.nan)
     gross[1:] = (vals[1:] * split[1:] + div[1:]) / vals[:-1]

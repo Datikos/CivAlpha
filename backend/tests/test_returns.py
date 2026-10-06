@@ -13,6 +13,16 @@ def test_split_and_dividend_are_applied_on_ex_date():
     assert np.allclose(tr, [1.0, 1.02, 1.02 * (25.5 * 4 / 102), 1.02 * (25.5 * 4 / 102) * (25.5 / 25.5)])
 
 
+def test_spin_off_counts_as_a_distribution_of_its_market_value():
+    # parent closes 77.65 -> 12.57 on the ex-date; holders also received one share of the spun-off company worth 68.26
+    cal = pd.DatetimeIndex(pd.to_datetime(["2026-09-30", "2026-10-01", "2026-10-02"]))
+    closes = pd.Series([77.65, 12.57, 11.92], index=cal)
+    actions = pd.DataFrame({"ex_date": pd.to_datetime(["2026-10-01"]), "action_type": ["SPIN_OFF"], "value": [68.26]})
+    tr = total_return_index(closes, actions, cal)
+    assert np.allclose(tr, [1.0, (12.57 + 68.26) / 77.65, (12.57 + 68.26) / 77.65 * 11.92 / 12.57])
+    assert total_return_index(closes, None, cal)[1] < 0.2   # without the action the same day is an 84% loss
+
+
 def test_unadjusted_split_would_look_like_a_crash_without_actions():
     cal = pd.DatetimeIndex(pd.to_datetime(["2024-01-02", "2024-01-03"]))
     tr = total_return_index(pd.Series([100.0, 25.0], index=cal), None, cal)
