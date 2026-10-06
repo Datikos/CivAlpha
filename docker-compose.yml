@@ -50,7 +50,7 @@ services:
       context: .
       dockerfile: backend/Dockerfile
       args:
-        GIT_COMMIT: ${GIT_COMMIT:-unknown}   # GIT_COMMIT=$(git rev-parse HEAD) docker compose build api
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}   # docker compose build --build-arg GIT_COMMIT=$(git rev-parse HEAD) api
     image: civalpha-app:local
     environment: *app-env
     command: ["sh", "-c", "python -m civalpha.platform.migrate && exec uvicorn civalpha.platform.app:app --host 0.0.0.0 --port 8000 --workers 2 --proxy-headers"]

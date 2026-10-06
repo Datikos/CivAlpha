@@ -4,7 +4,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 CIVALPHA_MIGRATIONS_DIR=/app/db
 WORKDIR /app
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-# GIT_COMMIT=$(git rev-parse HEAD) docker compose build api: recorded in the trial registry with every backtest.
+# docker compose build --build-arg GIT_COMMIT=$(git rev-parse HEAD) api: recorded in the trial registry with every backtest.
 # Declared after the dependency layer so a new commit hash does not reinstall the requirements.
 ARG GIT_COMMIT=unknown
 ENV CIVALPHA_GIT_COMMIT=$GIT_COMMIT
