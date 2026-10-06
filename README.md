@@ -208,6 +208,15 @@ An input that carried information over the whole history but lost its sign in th
 DECAYING: edges decay as others find them, and this is how the platform notices. Code:
 `backend/civalpha/strategies/signals.py`; `backend/tests/test_signals.py`.
 
+## Calibration study (research only)
+
+`python -m civalpha.calibration [evaluation_id]` (from `backend/` with its virtualenv, or inside the api container) takes
+the stored walk-forward predictions of one evaluation and maps each fold's probabilities through an isotonic curve fitted
+on the earlier folds only. It prints, per model, the reliability bins, Brier, Brier skill, AUC, expected calibration
+error and the most confident decile's hit rate and net excess before and after, with a block-bootstrap CI of the Brier
+difference. The first three folds have no map and are left out on both sides. It changes nothing: the live models are
+not calibrated. The first run (2026-10-06) is in `docs/research/2026-10-forecasting-polish.md`.
+
 ## Feature fragility: how much the numbers move when an input group goes
 
 **MCP `run_feature_ablation` / `POST /api/admin/ablation/study`** takes the recorded book's input list (`GBM_AI_39`) and
