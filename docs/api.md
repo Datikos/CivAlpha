@@ -336,6 +336,15 @@ day in New York); other codes (grants A, exercises M, tax withholding F, gifts G
 the SEC's quarterly insider-transactions data sets for the lookback window plus each company's Form 4 XML filings newer than
 the latest data set. 404 for an unknown symbol.
 
+`GET /api/ablation` — the latest feature fragility study (`run`, null before the first one) and earlier `runs`; `GET /api/ablation/{id}`
+one run. `run.result.walkForward` has one row per variant and label horizon (21-day forecast target entered at close(t); 10-day
+book label entered at the next close): `variant` (`FULL`, `NO_PRICE_TECHNICAL`, `NO_REPORT_PROFILE`, `NO_INSIDER`, `NO_EARNINGS`,
+`PLUS_DIVIDENDS`, `PLUS_POLICY_EVENTS`), `featureSet` (identifier of the input list, e.g. `GBM_AI_39`, `GBM_AI_25_no_price_technical`),
+`brierSkill` / `auc` with `*CiLow` / `*CiHigh` from a bootstrap over 21-day blocks of as-of dates, and the top-10% net excess.
+`run.result.lab` has the lab Sharpe and max drawdown of `AI_GBM` and `AI_SIZED` on each variant's probabilities; its `note` says it is
+not a skill metric. Every variant is registered in `trial_registry` (source `ablation`). `POST /api/admin/ablation/study` → job
+`FEATURE_ABLATION`.
+
 `GET /api/signals` — the latest signal-health study (`run`, null before the first one) and earlier `runs`; `GET /api/signals/{id}`
 one run. `run.result.features[]`: `feature`, `label`, `kind`, `series` (monthly `{month, ic, n}`), `months`, `meanIc`, `stdIc`, `icIr`
 (mean / std), `tStat` (over months), `signHitRate`, `recentIc` (last 12 months), `earlierIc`, `trend`, `decaying`, `grade`

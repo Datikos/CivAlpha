@@ -208,6 +208,17 @@ An input that carried information over the whole history but lost its sign in th
 DECAYING: edges decay as others find them, and this is how the platform notices. Code:
 `backend/civalpha/strategies/signals.py`; `backend/tests/test_signals.py`.
 
+## Feature fragility: how much the numbers move when an input group goes
+
+**MCP `run_feature_ablation` / `POST /api/admin/ablation/study`** takes the recorded book's input list (`GBM_AI_39`) and
+scores it walk-forward six more times: without the price/technical group, without the report profile, without the
+insider inputs, without the earnings inputs, and with the dividend or the policy-event features added. Each variant gets
+Brier skill and AUC with 95% CIs (bootstrap over 21-day blocks of as-of dates) on the 21-day forecast target and on the
+book's own 10-day next-close label, the way feature-set decisions are meant to be made. The lab Sharpe of `AI_GBM` and
+`AI_SIZED` on the same probabilities is a secondary column marked "not a skill metric". Every variant is a trial and
+lands in the trial registry, so the deflated Sharpe knows about it. Results: `GET /api/ablation`, MCP
+`get_feature_ablation`. There is no page for it yet; `docs/research/2026-10-forecasting-polish.md` has the first run.
+
 ## Setup playbook: what a trader waits for, with base rates
 
 A discretionary trader does not forecast every stock every day; they wait for a situation. The **Playbook** page

@@ -204,6 +204,27 @@ def calibration_bins(df: pd.DataFrame, n_bins: int = 10) -> list[dict]:
     return out
 
 
+def metric_cis(df: pd.DataFrame, block: int = 21, n_boot: int = 500, seed: int = 11) -> dict:
+    """95% CIs of Brier skill (vs the training base rate, as classification_metrics) and AUC for one model's predictions,
+    from a bootstrap over blocks of `block` consecutive as-of dates."""
+    p, y = df["probability"].to_numpy(float), df["outcome"].to_numpy(float)
+    base, idx = df["train_base_rate"].to_numpy(float), df["idx"].to_numpy()
+    dates = np.unique(idx)
+    groups = [np.flatnonzero(idx == d) for d in dates]
+    rng = np.random.default_rng(seed)
+    n_blocks = max(1, len(dates) // block)
+    skills, aucs = [], []
+    for _ in range(n_boot):
+        starts = rng.integers(0, max(1, len(dates) - block + 1), size=n_blocks)
+        sel = np.concatenate([groups[(s + k) % len(dates)] for s in starts for k in range(block)])
+        ref = brier(base[sel], y[sel])
+        skills.append(1 - brier(p[sel], y[sel]) / ref if ref > 0 else 0.0)
+        if len(np.unique(y[sel])) == 2:
+            aucs.append(float(roc_auc_score(y[sel], p[sel])))
+    ci = lambda v: [float(np.percentile(v, 2.5)), float(np.percentile(v, 97.5))] if v else [float("nan")] * 2  # noqa: E731
+    return {"brierSkill": ci(skills), "auc": ci(aucs), "block": block, "nBoot": n_boot}
+
+
 def compare_models(P: pd.DataFrame, cfg: EvalConfig) -> dict:
     a = P[P.model_kind == "AUGMENTED"].set_index(["company_id", "idx"]).sort_index()
     b = P[P.model_kind == "BASELINE"].set_index(["company_id", "idx"]).sort_index()

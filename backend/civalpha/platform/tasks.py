@@ -65,6 +65,15 @@ def signal_study(params: dict, log: Log) -> None:
     log(str(signals.study(engine())["headline"]))
 
 
+def feature_ablation(params: dict, log: Log) -> None:
+    from ..strategies import ablation
+    _benchmarks(log)
+    res = ablation.study(engine(), with_lab=bool(params.get("withLab", True)), progress=log)
+    log(str(res["headline"]))
+    if "trialsCounted" in res:
+        log(f"trial registry: {res['trialsRegistered']} variants registered, {res['trialsCounted']} trials counted for the deflated Sharpe")
+
+
 def setup_study(params: dict, log: Log) -> None:
     _benchmarks(log)
     log(str(setups.study(engine())["headline"]))
@@ -163,6 +172,7 @@ TASKS = {
     "DOUBLER_STUDY": doubler_study,
     "SETUP_STUDY": setup_study,
     "SIGNAL_STUDY": signal_study,
+    "FEATURE_ABLATION": feature_ablation,
     "ISSUE_FORECASTS": issue_forecasts,
     "PRICE_SYNC": price_sync,
     "RESOLVE_OUTCOMES": resolve_outcomes,

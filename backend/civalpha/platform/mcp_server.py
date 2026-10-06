@@ -426,6 +426,23 @@ def build() -> MCPServer:
                 "transactions": [_pick(t, "ownerName", "relationship", "title", "transDate", "filedDate", "transCode", "codeLabel",
                                        "acquired", "shares", "price", "value", "sharesAfter", "signal") for t in r["transactions"]]}
 
+    # ------------------------------------------------------------------ feature fragility
+    @tool_read
+    @_domain
+    def get_feature_ablation() -> dict:
+        """Feature fragility: the recorded book's model (GBM_AI_39) with one input group dropped or one added, scored
+        walk-forward on the 21-day forecast target and on the book's own 10-day label. `walkForward` rows carry Brier skill
+        and AUC with 95% CIs (bootstrap over 21-day blocks of as-of dates); `lab` rows carry the lab Sharpe of the standard
+        rule and the sized book on the same probabilities, which is NOT a skill metric. Quote the spread, not a winner."""
+        r = read.feature_ablation()
+        run = r.get("run")
+        if not run:
+            return {"run": None, "note": "No feature fragility study yet: run_feature_ablation makes one."}
+        res = run["result"]
+        return {"runId": run["id"], "runAt": run["runAt"], "dataCutoff": res["dataCutoff"], "headline": res["headline"],
+                "productionFeatureSet": res["config"]["productionFeatureSet"], "variants": res["variants"],
+                "walkForward": res["walkForward"], "lab": res["lab"], "labNote": res["config"]["lab"]["note"]}
+
     # ------------------------------------------------------------------ signal health
     @tool_read
     @_domain
@@ -718,6 +735,15 @@ def build() -> MCPServer:
         """Run the signal-health study (monthly IC per model input) on the stored data and store it. Read it with
         get_signal_health."""
         return _action(ctx, admin.signal_study, wait_seconds)
+
+    @tool_action
+    @_domain
+    def run_feature_ablation(ctx: Context, wait_seconds: int = 0) -> dict:
+        """Run the feature fragility study: the recorded book's model with one input group removed at a time (price/technical,
+        report profile, insider, earnings) and with dividends or policy events added, each scored walk-forward (Brier skill,
+        AUC, CIs) on the 21-day target and the book's 10-day label, plus lab Sharpe as a non-skill column. Registers every
+        variant as a trial. Read it with get_feature_ablation."""
+        return _action(ctx, admin.feature_ablation, wait_seconds)
 
     @tool_action
     @_domain

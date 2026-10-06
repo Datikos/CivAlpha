@@ -695,6 +695,22 @@ def signal_study_run(run_id: int):
     return camel(r)
 
 
+@router.get("/ablation")
+def feature_ablation():
+    """Latest feature fragility study (null `run` until one has been made) and the list of earlier runs."""
+    runs = camel_all(db().all("SELECT id, run_at, data_cutoff, headline FROM feature_ablation_run ORDER BY id DESC LIMIT 20"))
+    latest = db().one("SELECT id, run_at, data_cutoff, headline, result FROM feature_ablation_run ORDER BY id DESC LIMIT 1")
+    return {"run": camel(latest) if latest else None, "runs": runs}
+
+
+@router.get("/ablation/{run_id}")
+def feature_ablation_run(run_id: int):
+    r = db().one("SELECT id, run_at, data_cutoff, headline, result FROM feature_ablation_run WHERE id = :id", id=run_id)
+    if r is None:
+        raise NotFound(f"no feature ablation study {run_id}")
+    return camel(r)
+
+
 @router.get("/setups")
 def setup_study():
     """Latest setup playbook (null `run` until one has been made) and the list of earlier runs."""

@@ -232,18 +232,19 @@ def _eval_cfg(cfg: AiConfig) -> EvalConfig:
 
 
 # --------------------------------------------------------------------------- the book in the forecast walk-forward
-def attach_book_features(bundle, panel: pd.DataFrame, cfg: AiConfig | None = None) -> pd.DataFrame:
+def attach_book_features(bundle, panel: pd.DataFrame, cfg: AiConfig | None = None, extra: list[str] | None = None) -> pd.DataFrame:
     """Add the recorded book's inputs and its own label to a walk-forward panel from features.build_panel.
 
     The panel already has the BASELINE features; this adds the rest of AI_FEATURES (technical indicators, report profile,
     insider and earnings-calendar columns) on the same (idx, company_id) rows, plus `label_<h>` / `excess_<h>`: the book's
-    label, the excess return over the sector ETF from the next close to h trading days later (h = cfg.horizon)."""
+    label, the excess return over the sector ETF from the next close to h trading days later (h = cfg.horizon). `extra` names
+    further dataset columns to carry over (the dividend features, for the ablation study)."""
     cfg = cfg or AiConfig()
     mp = MarketPanel.from_bundle(bundle)
     label_cols = [c for c in ("label", "stock_return", "benchmark_return", "excess_return", "exec_excess_return") if c in panel.columns]
     mp.use_features(panel.drop(columns=label_cols))
     data = dataset(mp, cfg)
-    extra = [f for f in AI_FEATURES if f not in panel.columns]
+    extra = [f for f in list(AI_FEATURES) + list(extra or []) if f not in panel.columns]
     d = data[["idx", "company_id", *extra, "label", "fwd_excess"]].rename(columns={"label": f"label_{cfg.horizon}", "fwd_excess": f"excess_{cfg.horizon}"})
     return panel.merge(d, on=["idx", "company_id"], how="left")
 

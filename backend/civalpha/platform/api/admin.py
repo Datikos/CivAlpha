@@ -66,6 +66,11 @@ def signal_study():
     return _submit("SIGNAL_STUDY")
 
 
+@router.post("/ablation/study")
+def feature_ablation():
+    return _submit("FEATURE_ABLATION")
+
+
 @router.post("/setups/study")
 def setup_study():
     return _submit("SETUP_STUDY")
