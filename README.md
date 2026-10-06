@@ -129,7 +129,13 @@ How an event is linked to a company:
   * `trade_shock`: Σ over recent official tariff events of sign × severity × decay × exposure weight.
   * `rate_shock`: Σ over recent rate decisions of −Δrate × decay × leverage relative to the universe.
   * `fedfunds_chg_x_lev`: FEDFUNDS as published at the cutoff.
-* **Model:** L2 logistic regression on clipped, standardized features.
+* **Book model (`AI_BOOK_21`, since 2026-10-06):** the recorded book's input list (`GBM_AI_39`: the baseline features
+  plus the technical indicators, the filed report profile, insider counts and the earnings calendar) and its gradient-
+  boosted algorithm, issued live on the same 21-day target so the book's model has a live record next to the two
+  logistic models. Raw, uncalibrated point probabilities with no interval; the walk-forward and the calibration study
+  (`docs/research/2026-10-forecasting-polish.md`) say what to expect of them. Pre-registered as batch 2 of the live
+  test (`docs/research/live-test-2026-10-batch2.md`). This is not the label the book trades (10 days from the next close).
+* **Model:** L2 logistic regression on clipped, standardized features (the two logistic models).
   * The explanation is each feature's coefficient × its standardized value (log-odds), and each factor links to
     its sources. A missing input is filled with the training median before standardizing, and the factor is marked
     `imputed` so a contribution is never shown next to an empty value. (The strategy lab's gradient-boosted model does

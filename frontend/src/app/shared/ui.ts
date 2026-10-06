@@ -89,7 +89,7 @@ export class ModelTag {
 }
 
 export function modelColor(kind: ModelKind | string): string {
-  return kind === 'AUGMENTED' ? 'var(--series-2)' : 'var(--series-1)';
+  return kind === 'AUGMENTED' ? 'var(--series-2)' : kind === 'AI_BOOK_21' ? 'var(--series-3)' : 'var(--series-1)';
 }
 
 /** Minimal view of a resource for status display. */

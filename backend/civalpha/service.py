@@ -17,6 +17,8 @@ log = logging.getLogger(__name__)
 
 TARGET = ("P(total return of {sym} over the next {h} trading days > total return of sector benchmark {bench}), "
           "measured from the close of {d} to the close {h} trading days later")
+BOOK_KIND = "AI_BOOK_21"                                  # the recorded book's model issued live on the 21-day target
+LIVE_KINDS = ["BASELINE", "AUGMENTED", BOOK_KIND]
 
 
 # --------------------------------------------------------------------------- evaluation
@@ -41,7 +43,7 @@ def issue(engine, as_of: str | None = None, as_of_dates: list[str] | None = None
           kinds: list[str] | None = None, n_boot: int = 30) -> dict:
     """Compute forecasts. Either a single cutoff `as_of` (timestamp; default now) or several historical
     as-of dates (replay: cutoff = close of each date). Returns payloads; the backend persists them."""
-    kinds = kinds or ["BASELINE", "AUGMENTED"]
+    kinds = kinds or LIVE_KINDS
     bundle = db.load_bundle(engine)
     sources = db.load_event_sources(engine)
     providers = db.price_providers(engine)
@@ -65,7 +67,15 @@ def issue(engine, as_of: str | None = None, as_of_dates: list[str] | None = None
         rows = pd.DataFrame(build_rows(bundle, idx, as_of=cutoff, company_ids=company_ids, with_provenance=True, with_labels=False))
         if rows.empty:
             continue
+        if BOOK_KIND in kinds:
+            book = book_forecasts(bundle, panel, rows, idx)
+            mv_id = db.insert_model_version(engine, BOOK_KIND, book["algorithm"], book["features"], book["trainedThrough"],
+                                            cutoff.to_pydatetime(), book["nTrain"], book["modelParams"], book["codeVersion"])
+            for i, r in rows.iterrows():
+                out.append(_book_payload(bundle, providers, mv_id, r, book, i, d, cutoff))
         for kind in kinds:
+            if kind == BOOK_KIND:
+                continue
             model = LogitModel(FEATURES[kind], n_boot=n_boot).fit(train, train["label"].astype(bool), groups=train["idx"])
             trained_through = bundle.calendar[int(train["idx"].max())].date()
             mv_id = db.insert_model_version(engine, kind, ALGORITHM, FEATURES[kind], trained_through, cutoff.to_pydatetime(),
@@ -78,19 +88,82 @@ def issue(engine, as_of: str | None = None, as_of_dates: list[str] | None = None
     return {"forecasts": out}
 
 
+# --------------------------------------------------------------------------- the recorded book's model, live
+def book_forecasts(bundle: DataBundle, panel: pd.DataFrame, rows: pd.DataFrame, idx: int) -> dict:
+    """Train the recorded book's model (strategies.ai.AI_FEATURES, gradient boosting) on the platform's 21-day target up to
+    calendar index `idx` and score the live feature rows. Raw, uncalibrated probabilities with no interval (the trees give
+    a point estimate); the explanation is the per-feature effect against the training median with imputed inputs flagged.
+
+    Training rows are the walk-forward panel (every 7th day) whose 21-day label closed by `idx`, exactly what the live
+    logistic models train on; the book's own inputs are attached to both the panel and the live rows on the same
+    (idx, company_id) keys. Returns a dict with probabilities and factors aligned to `rows`."""
+    from .strategies.ai import (AI_FEATURE_SET, AI_FEATURES, ALGORITHM as BOOK_ALGORITHM, CODE_VERSION as BOOK_CODE_VERSION, AiConfig,
+                                attach_book_features, explain, new_model)
+    live = rows.assign(_live=True)
+    full = attach_book_features(bundle, pd.concat([panel, live], ignore_index=True))
+    train = full[(full["idx"] + HORIZON <= idx) & full["label"].notna() & full["_live"].isna()]
+    scored = full[full["_live"] == True].set_index("company_id").loc[rows["company_id"].to_numpy()]  # noqa: E712 - keep rows' order
+    if len(train) < 200 or train["label"].nunique() < 2:
+        raise ValueError(f"not enough labelled history to train the book's model ({len(train)} samples)")
+    cfg = AiConfig(horizon=HORIZON)
+    model = new_model(cfg).fit(train[AI_FEATURES].to_numpy(float), train["label"].astype(int).to_numpy())
+    X = scored[AI_FEATURES].to_numpy(float)
+    p = model.predict_proba(X)[:, 1]
+    medians = train[AI_FEATURES].median().to_numpy(float)
+    trained_through = bundle.calendar[int(train["idx"].max())].date()
+    return {"kind": BOOK_KIND, "featureSet": AI_FEATURE_SET, "features": list(AI_FEATURES), "algorithm": BOOK_ALGORITHM,
+            "codeVersion": BOOK_CODE_VERSION, "nTrain": int(len(train)), "trainedThrough": trained_through,
+            "baseRate": float(train["label"].astype(float).mean()), "probability": p, "X": X,
+            "factors": [explain(model, X[i], medians, top=8) for i in range(len(X))],
+            "modelParams": {"featureSet": AI_FEATURE_SET, "config": cfg.params(), "calibration": "none (raw probability)",
+                            "medians": {f: (None if np.isnan(m) else float(m)) for f, m in zip(AI_FEATURES, medians)}}}
+
+
+def _fact_filings(bundle: DataBundle, r) -> list[dict]:
+    filings = bundle.filings.set_index("accession_no") if len(bundle.filings) else None
+    out = []
+    for acc in r["_fact_accessions"]:
+        if filings is not None and acc in filings.index:
+            f = filings.loc[acc]
+            out.append({"type": "FILING", "id": int(f["id"]), "label": f"{f['form_type']} {acc}", "url": f"/filings/{int(f['id'])}",
+                        "publishedAt": pd.Timestamp(f["accepted_at"]).isoformat()})
+    return out
+
+
+def _book_payload(bundle, providers, mv_id, r, book: dict, i: int, d, cutoff) -> dict:
+    comp = bundle.companies.set_index("id").loc[int(r["company_id"])]
+    fact_filings = _fact_filings(bundle, r)
+    prices = {"type": "PRICES", "id": None, "label": f"Daily closes of {comp['symbol']} and {comp['benchmark_symbol']} through {d.date()}", "url": None}
+    factors = []
+    for f in book["factors"][i]:
+        prov = fact_filings if f["kind"] == "FUNDAMENTAL" else [prices] if f["kind"] in ("PRICE", "TECHNICAL") else []
+        factors.append({"feature": f["feature"], "label": f["label"], "kind": f["kind"], "value": f["value"], "median": f["median"],
+                        "z": None, "coefficient": None, "contribution": f["contribution"], "direction": f["direction"],
+                        "imputed": f["imputed"], "imputation": f["imputation"], "provenance": prov})
+    p = float(book["probability"][i])
+    src = [{"kind": "FILING", "label": x["label"], "url": x["url"], "accessionNo": x["label"].split(" ")[-1], "publishedAt": x["publishedAt"]} for x in fact_filings]
+    src.append({"kind": "PRICES", "label": f"Daily prices ({', '.join(providers)}) for {comp['symbol']} and {comp['benchmark_symbol']} through {d.date()}",
+                "url": None, "accessionNo": None, "publishedAt": None})
+    feats = {k: (None if np.isnan(v) else float(v)) for k, v in zip(book["features"], book["X"][i])}
+    return db._clean({
+        "companyId": int(r["company_id"]), "symbol": comp["symbol"], "benchmarkSymbol": comp["benchmark_symbol"],
+        "modelKind": BOOK_KIND, "modelVersionId": mv_id, "probability": p, "probLow": p, "probHigh": p,
+        "horizonTradingDays": HORIZON, "asOfDate": str(d.date()), "asOf": cutoff.isoformat(),
+        "target": TARGET.format(sym=comp["symbol"], h=HORIZON, bench=comp["benchmark_symbol"], d=d.date()),
+        "uncertaintyNote": (f"No interval: the recorded book's gradient-boosted model ({book['featureSet']}) gives a raw, uncalibrated point "
+                            f"probability. Trained on {book['nTrain']} labelled samples through {book['trainedThrough']}; the walk-forward "
+                            f"on the accuracy page shows how far to trust it. Single 21-day outcomes remain close to a coin flip."),
+        "features": feats, "explanation": {"intercept": None, "baseRate": book["baseRate"], "factors": factors}, "sources": src,
+    })
+
+
 def _payload(bundle, engine, sources, providers, kind, mv_id, model, r, p, lo, hi, d, cutoff, n_train, trained_through) -> dict:
     comp = bundle.companies.set_index("id").loc[int(r["company_id"])]
     expl = model.explain(r[model.features])
     ev_prov = r["_event_provenance"] if kind == "AUGMENTED" else []
     passage_ids = sorted({x["passage_id"] for e in ev_prov for x in e.get("exposures", []) if x.get("passage_id")})
     passages = db.load_passages(engine, passage_ids).set_index("id") if passage_ids else None
-    filings = bundle.filings.set_index("accession_no") if len(bundle.filings) else None
-    fact_filings = []
-    for acc in r["_fact_accessions"]:
-        if filings is not None and acc in filings.index:
-            f = filings.loc[acc]
-            fact_filings.append({"type": "FILING", "id": int(f["id"]), "label": f"{f['form_type']} {acc}", "url": f"/filings/{int(f['id'])}",
-                                 "publishedAt": pd.Timestamp(f["accepted_at"]).isoformat()})
+    fact_filings = _fact_filings(bundle, r)
     for f in expl["factors"]:
         f["label"] = FEATURE_LABELS.get(f["feature"], f["feature"])
         f["kind"] = FEATURE_KIND.get(f["feature"], "OTHER")

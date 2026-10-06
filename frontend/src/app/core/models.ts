@@ -1,7 +1,12 @@
 // Types mirror docs/api.md (REST API v1). Fields are camelCase JSON.
 
-export type ModelKind = 'BASELINE' | 'AUGMENTED';
-export const MODEL_KINDS: readonly ModelKind[] = ['BASELINE', 'AUGMENTED'];
+export type ModelKind = 'BASELINE' | 'AUGMENTED' | 'AI_BOOK_21';
+/** The live forecast models: the two logistic models and, since 2026-10-06, the recorded book's gradient-boosted model on the 21-day target. */
+export const MODEL_KINDS: readonly ModelKind[] = ['BASELINE', 'AUGMENTED', 'AI_BOOK_21'];
+export const MODEL_LABEL: Record<ModelKind, string> = { BASELINE: 'Baseline', AUGMENTED: 'Augmented', AI_BOOK_21: 'Book model' };
+export function modelLabel(kind: ModelKind | string): string {
+  return MODEL_LABEL[kind as ModelKind] ?? kind;
+}
 
 export interface Meta {
   llmEnabled: boolean;
@@ -504,6 +509,8 @@ export interface ModelMetrics {
   accuracy: number;
   baseRate: number;
   brierSkill: number;
+  /** 95% intervals from a bootstrap over 21-day blocks of as-of dates; stored since 2026-10-06, absent on older evaluations. */
+  ci?: { brierSkill: [number, number]; auc: [number, number]; block: number; nBoot: number };
 }
 
 export interface CalibrationBin {

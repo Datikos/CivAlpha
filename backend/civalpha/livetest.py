@@ -3,7 +3,8 @@
 Everything here is fixed by that document: the population query, the metrics, the bootstrap and the verdict rule. Change
 the document first, in a dated section, and only then this file. Run against the platform's database with
 
-    python -m civalpha.livetest            # JSON report per model
+    python -m civalpha.livetest            # batch 1 (the two logistic models), JSON report per model
+    python -m civalpha.livetest 2          # batch 2 (the recorded book's model, AI_BOOK_21)
 
 The functions take plain DataFrames so the arithmetic is testable without a database.
 """
@@ -17,7 +18,7 @@ import pandas as pd
 from sklearn.metrics import roc_auc_score
 
 REGISTERED_ON = "2026-10-06"
-REGISTRATION_CUTOFF = "2026-10-06 11:00:00+00"      # versions issued at or after this instant are not part of the test
+REGISTRATION_CUTOFF = "2026-10-06 11:00:00+00"      # batch 1: versions issued at or after this instant are not part of the test
 AS_OF_DATES = ("2026-10-02", "2026-10-05")
 MODELS = ("BASELINE", "AUGMENTED")
 EXPECTED_PER_MODEL = 702
@@ -41,6 +42,32 @@ SELECT s.*, o.outcome, o.excess_return::float8 AS excess_return, o.window_end_da
 FROM scored s LEFT JOIN forecast_outcome o ON o.forecast_id = s.id
 ORDER BY s.model_kind, s.as_of_date, s.company_id
 """
+
+# Batch 2 (docs/research/live-test-2026-10-batch2.md): the recorded book's model issued live on the 21-day target, its
+# first BATCH2_DATES distinct as-of dates, each series at its highest version issued within BATCH2_ISSUE_DAYS calendar days
+# of the as-of date. The fingerprint is appended to the document when the population closes.
+BATCH2_MODEL = "AI_BOOK_21"
+BATCH2_FIRST_AS_OF = "2026-10-05"
+BATCH2_DATES = 10
+BATCH2_ISSUE_DAYS = 3
+BATCH2_SQL = f"""
+WITH dates AS (
+  SELECT DISTINCT as_of_date FROM forecast
+  WHERE issue_mode = 'LIVE' AND model_kind = '{BATCH2_MODEL}' AND as_of_date >= DATE '{BATCH2_FIRST_AS_OF}'
+  ORDER BY as_of_date LIMIT {BATCH2_DATES}),
+scored AS (
+  SELECT DISTINCT ON (f.series_key) f.id, f.series_key, f.company_id, f.symbol, f.model_kind, f.as_of_date, f.probability::float8 AS p,
+         f.model_version_id, f.version, f.issued_at
+  FROM forecast f JOIN dates d ON d.as_of_date = f.as_of_date
+  WHERE f.issue_mode = 'LIVE' AND f.model_kind = '{BATCH2_MODEL}'
+    AND f.issued_at < (f.as_of_date + {BATCH2_ISSUE_DAYS})::timestamptz
+  ORDER BY f.series_key, f.version DESC)
+SELECT s.*, o.outcome, o.excess_return::float8 AS excess_return, o.window_end_date
+FROM scored s LEFT JOIN forecast_outcome o ON o.forecast_id = s.id
+ORDER BY s.as_of_date, s.company_id
+"""
+BATCHES = {"1": {"sql": POPULATION_SQL, "models": MODELS, "fingerprint": FINGERPRINT},
+           "2": {"sql": BATCH2_SQL, "models": (BATCH2_MODEL,), "fingerprint": None}}
 
 
 def fingerprint(rows: pd.DataFrame) -> dict:
@@ -141,12 +168,18 @@ def paired_difference(a: pd.DataFrame, b: pd.DataFrame, n_boot: int = N_BOOT, se
             "maxAbsProbDiff": float(np.abs(j["p_a"] - j["p_b"]).max())}
 
 
-def report(rows: pd.DataFrame) -> dict:
+def report(rows: pd.DataFrame, batch: str = "1") -> dict:
+    b = BATCHES[batch]
     fp = fingerprint(rows)
-    out = {"registeredOn": REGISTERED_ON, "registrationCutoff": REGISTRATION_CUTOFF, "fingerprintMatches": fp == FINGERPRINT,
-           "fingerprint": fp, "models": {}}
+    out = {"batch": batch, "registeredOn": REGISTERED_ON, "fingerprint": fp,
+           "fingerprintMatches": (fp == b["fingerprint"]) if b["fingerprint"] else None, "models": {}}
+    if batch == "1":
+        out["registrationCutoff"] = REGISTRATION_CUTOFF
+    else:
+        out["asOfDates"] = sorted(str(d) for d in rows["as_of_date"].unique()) if len(rows) else []
+        out["populationClosed"] = len(out["asOfDates"]) >= BATCH2_DATES
     by = {k: g for k, g in rows.groupby("model_kind")}
-    for kind in MODELS:
+    for kind in b["models"]:
         g = by.get(kind)
         out["models"][kind] = score_model(g) if g is not None else {"issued": 0, "verdict": "PENDING"}
     if "AUGMENTED" in by and "BASELINE" in by:
@@ -158,9 +191,10 @@ def main() -> None:
     from sqlalchemy import text
 
     from civalpha.platform.sql import engine
+    batch = sys.argv[1] if len(sys.argv) > 1 else "1"
     with engine().connect() as c:
-        rows = pd.read_sql(text(POPULATION_SQL), c)
-    json.dump(report(rows), sys.stdout, indent=2, default=str)
+        rows = pd.read_sql(text(BATCHES[batch]["sql"]), c)
+    json.dump(report(rows, batch), sys.stdout, indent=2, default=str)
     print()
 
 

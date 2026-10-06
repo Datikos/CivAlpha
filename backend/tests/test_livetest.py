@@ -66,3 +66,13 @@ def test_paired_difference_is_zero_for_identical_models():
     b["model_kind"] = "AUGMENTED"
     d = livetest.paired_difference(b, a, n_boot=20)
     assert d["n"] == 80 and d["brierDiff"] == 0.0 and d["maxAbsProbDiff"] == 0.0
+
+
+def test_batch_2_reports_the_book_model_and_closes_at_ten_dates():
+    rows = _rows(n_companies=20)
+    rows["model_kind"] = "AI_BOOK_21"
+    r = livetest.report(rows, batch="2")
+    assert set(r["models"]) == {"AI_BOOK_21"} and r["fingerprintMatches"] is None
+    assert r["asOfDates"] == list(livetest.AS_OF_DATES) and r["populationClosed"] is False
+    assert "augmentedMinusBaseline" not in r
+    assert "LIMIT 10" in livetest.BATCH2_SQL and "AI_BOOK_21" in livetest.BATCH2_SQL

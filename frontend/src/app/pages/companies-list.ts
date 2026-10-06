@@ -5,7 +5,7 @@ import { RouterLink } from '@angular/router';
 import { apiUrl, valueOf } from '../core/api';
 import { FORMAT_PIPES } from '../core/format';
 import { latestByModel } from '../core/forecast-utils';
-import { CompanySummary, DividendStatus, ForecastSummary, MODEL_KINDS } from '../core/models';
+import { CompanySummary, DividendStatus, ForecastSummary, MODEL_KINDS, ModelKind } from '../core/models';
 import { createSort } from '../core/sort';
 import { Icon } from '../shared/icon';
 import { SortTh } from '../shared/sort-th';
@@ -17,7 +17,7 @@ const MAX_COMPARE = 3;
 
 interface Row {
   c: CompanySummary;
-  fc: { kind: 'BASELINE' | 'AUGMENTED'; f: ForecastSummary | null; ref: { id: number; asOfDate: string } | null; lean: Lean | null }[];
+  fc: { kind: ModelKind; f: ForecastSummary | null; ref: { id: number; asOfDate: string } | null; lean: Lean | null }[];
   excess21d: number | null;
 }
 
@@ -124,6 +124,7 @@ interface Row {
                 <th sortKey="yield" [sort]="sort">Dividend <app-help text="From recorded cash dividends: the payment frequency when regular, irregular or suspended otherwise, with the trailing 12-month yield." topic="reported-estimated" label="dividend status" /></th>
                 <th sortKey="pBase" [sort]="sort">Baseline forecast <app-help text="Latest probability that the stock beats its sector ETF over 21 trading days, from the model that sees prices and fundamentals only." topic="models" label="baseline forecast" /></th>
                 <th sortKey="pAug" [sort]="sort">Augmented forecast <app-help text="The same probability from the model that also sees policy events weighted by the company's documented exposure." topic="models" label="augmented forecast" /></th>
+                <th sortKey="pBook" [sort]="sort">Book model forecast <app-help text="The same 21-day probability from the recorded book's gradient-boosted model (39 inputs: prices, technical indicators, the filed report profile, insiders, earnings). Raw and uncalibrated, no interval." topic="models" label="book model forecast" /></th>
               </tr>
             </thead>
             <tbody>
@@ -313,6 +314,7 @@ export class CompaniesPage {
       yield: (r) => r.c.dividend?.trailingYield ?? null,
       pBase: (r) => r.fc[0].f?.probability ?? null,
       pAug: (r) => r.fc[1].f?.probability ?? null,
+      pBook: (r) => r.fc[2]?.f?.probability ?? null,
     });
   });
 

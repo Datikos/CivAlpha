@@ -179,7 +179,10 @@ Forecast summary object:
 
 `GET /api/forecasts/current` — latest version per company and model for the most recent as-of date. Array of summaries.
 
-`GET /api/forecasts/history?symbol=AAPL&modelKind=AUGMENTED` — all forecasts (all versions), newest first.
+`GET /api/forecasts/history?symbol=AAPL&modelKind=AUGMENTED` — all forecasts (all versions), newest first. `modelKind` is
+`BASELINE`, `AUGMENTED` or, since 2026-10-06, `AI_BOOK_21` (the recorded book's gradient-boosted model on the 21-day
+target: `probLow` = `probHigh` = `probability`, no interval; its explanation factors carry `z` and `coefficient` null,
+`median` and `imputed` instead).
 
 `GET /api/forecasts/{id}`
 ```json

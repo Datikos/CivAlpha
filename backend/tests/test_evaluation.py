@@ -33,6 +33,9 @@ def test_walk_forward_on_noise_finds_no_skill_and_claims_no_profit():
     assert "NOT supported" in res["verdict"] or res["trading"]["AUGMENTED"].get("periods", 0) == 0
     for k in ("BASELINE", "AUGMENTED"):
         assert sum(x["count"] for x in res["calibration"][k]) == res["metrics"][k]["n"]
+        ci = res["metrics"][k]["ci"]          # every model carries a 95% CI of Brier skill and AUC (the accuracy page's whiskers)
+        assert ci["brierSkill"][0] <= res["metrics"][k]["brierSkill"] <= ci["brierSkill"][1]
+        assert ci["auc"][0] <= res["metrics"][k]["auc"] <= ci["auc"][1]
 
 
 def test_trading_costs_are_charged_per_leg_and_side():

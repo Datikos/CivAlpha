@@ -1,11 +1,12 @@
 import { httpResource } from '@angular/common/http';
 import { Component, computed, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
+import { DotWhisker, WhiskerItem } from '../charts/dot-whisker';
 import { LineChart, LineSeries } from '../charts/line-chart';
 import { ReliabilityChart, ReliabilitySeries } from '../charts/reliability-chart';
 import { apiUrl, valueOf } from '../core/api';
-import { FORMAT_PIPES, fmtFixed, fmtNum, fmtPct, fmtSigned, fmtSignedPct } from '../core/format';
-import { AccuracyResponse, ForecastSummary, LiveTestModel, MODEL_KINDS, ModelKind, ModelMetrics, TradingStats } from '../core/models';
+import { FORMAT_PIPES, fmtFixed, fmtNum, fmtPct, fmtSigned, fmtSignedPct, humanize } from '../core/format';
+import { AccuracyResponse, ForecastSummary, LiveTestModel, MODEL_KINDS, ModelKind, ModelMetrics, TradingStats, modelLabel } from '../core/models';
 import { CoverageTable } from '../shared/coverage-table';
 import { Icon } from '../shared/icon';
 import { UI, modelColor } from '../shared/ui';
@@ -40,15 +41,18 @@ function row<T>(
   const raw = MODEL_KINDS.map((k) => get(k));
   const values = raw.map((v) => (v === undefined || v === null ? '—' : fmt(v)));
   let better = -1;
-  if (higherIsBetter !== null && typeof raw[0] === 'number' && typeof raw[1] === 'number' && raw[0] !== raw[1]) {
-    better = (raw[1] > raw[0]) === higherIsBetter ? 1 : 0;
+  if (higherIsBetter !== null) {
+    const nums = raw.map((v, i) => (typeof v === 'number' && Number.isFinite(v) ? { v, i } : null)).filter((x) => x !== null);
+    if (nums.length > 1 && new Set(nums.map((x) => x.v)).size > 1) {
+      better = nums.reduce((b, x) => ((x.v > b.v) === higherIsBetter ? x : b)).i;
+    }
   }
   return { key, label, hint, topic, values, raw: raw as (number | null | undefined)[], better, ...extra };
 }
 
 @Component({
   selector: 'app-accuracy',
-  imports: [RouterLink, ReliabilityChart, LineChart, Icon, CoverageTable, ...UI, ...VIZ, ...FORMAT_PIPES],
+  imports: [RouterLink, ReliabilityChart, LineChart, DotWhisker, Icon, CoverageTable, ...UI, ...VIZ, ...FORMAT_PIPES],
   template: `
     <div class="page-head">
       <div class="page-title">
@@ -63,6 +67,7 @@ function row<T>(
       </div>
       <div class="page-actions">
         <a routerLink="/guide" fragment="page-accuracy" class="btn btn-help"><app-icon name="help" [size]="16" /> How to read this</a>
+        <a class="btn" routerLink="/ablation">Feature fragility →</a>
       </div>
     </div>
 
@@ -80,32 +85,59 @@ function row<T>(
           {{ e.config.minTrainDays }} days · costs {{ e.config.costBpsPerSide }} bps per side
         </p>
 
-        @if (bookModels().length) {
+        @if (modelRows().length) {
           <div class="card">
-            <h3>The recorded book's model on the same folds <app-help text="The gradient-boosted model behind the AI decisions page, scored in the same walk-forward as the two live models: same test blocks, same purge. Once on the platform's 21-day forecast target and once on the label the book actually trades (10 trading days from the next close). The feature-set identifier names the exact input list." topic="models" label="book model" /></h3>
-            <div class="table-wrap">
-              <table class="table compact">
-                <thead>
-                  <tr>
-                    <th>Model</th><th>Feature set</th><th>Label</th><th class="num">n</th>
-                    <th class="num">Brier skill</th><th class="num">AUC</th><th class="num">Top-10% net excess</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  @for (m of bookModels(); track m.kind) {
-                    <tr>
-                      <td class="mono">{{ m.kind }}</td>
-                      <td><span class="mono">{{ m.featureSet }}</span><div class="small muted">{{ m.nFeatures }} inputs · {{ m.algorithm }}</div></td>
-                      <td>{{ m.horizon }} days from {{ m.entry }}</td>
-                      <td class="num">{{ m.n }}</td>
-                      <td class="num"><app-delta [value]="m.brierSkill" kind="fixed" [digits]="3" /></td>
-                      <td class="num">{{ m.auc | fixed: 3 }}</td>
-                      <td class="num">@if (m.top10 === null) { — } @else { <app-delta [value]="m.top10" kind="pct" [digits]="2" /> }</td>
-                    </tr>
-                  }
-                </tbody>
-              </table>
+            <h3>{{ modelRows().length }} models on the same folds <app-help text="Every model scored in the same walk-forward: same test blocks, same purge. The two live logistic models forecast the platform's 21-day target. The gradient-boosted model behind the AI decisions page is scored twice: on that target and on the label the book actually trades (10 trading days from the next close). The feature-set identifier names the exact input list." topic="models" label="models side by side" /></h3>
+            <p class="small muted">
+              Dot = the out-of-sample number, whisker = its 95% interval from a bootstrap over 21-day blocks of as-of dates.
+              A model has shown skill only when the whole whisker sits on the good side of the dashed line.
+            </p>
+            <div class="grid-3">
+              <div>
+                <h4>Brier skill <app-help text="1 minus Brier score over the Brier score of always forecasting the training base rate. Above zero beats that naive forecast; the interval must sit wholly above zero to count." topic="brier-skill" label="Brier skill" /></h4>
+                <app-dot-whisker [items]="skillItems()" label="Brier skill per model with 95% interval" [refX]="0" refLabel="base-rate forecast" betterIs="higher" [format]="signed3" />
+              </div>
+              <div>
+                <h4>AUC <app-help text="How well the model ranks outperformers above underperformers. 0.5 is no skill, 1.0 is perfect ranking." topic="auc" label="AUC" /></h4>
+                <app-dot-whisker [items]="aucItems()" label="AUC per model with 95% interval" [refX]="0.5" refLabel="no skill" betterIs="higher" [format]="fixed3" />
+              </div>
+              <div>
+                <h4>Top-10% net excess per position <app-help text="What acting only on the surest 10% of the model's forecasts would have earned per position after costs, with its bootstrap interval. The confident slice is where a usable edge would show first." topic="abstention" label="top-10% net excess" /></h4>
+                <app-dot-whisker [items]="top10Items()" label="Net excess return per position of the top-10% most confident forecasts, with 95% interval" [refX]="0" refLabel="zero" betterIs="higher" [format]="signedPct2" />
+              </div>
             </div>
+            @if (!hasModelCis()) {
+              <p class="small muted" style="margin-top: 0.5rem">
+                This evaluation stored no intervals for Brier skill and AUC (kept since 2026-10-06); re-run the evaluation on
+                the Data &amp; pipeline page to see the whiskers.
+              </p>
+            }
+            <details class="chart-table">
+              <summary>Data table ({{ modelRows().length }} models)</summary>
+              <div class="table-wrap">
+                <table class="table compact">
+                  <thead>
+                    <tr>
+                      <th>Model</th><th>Feature set</th><th>Label</th><th class="num">n</th>
+                      <th class="num">Brier skill (95% CI)</th><th class="num">AUC (95% CI)</th><th class="num">Top-10% net excess (95% CI)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (m of modelRows(); track m.kind) {
+                      <tr>
+                        <td class="mono">{{ m.kind }}</td>
+                        <td><span class="mono">{{ m.featureSet }}</span><div class="small muted">{{ m.nFeatures }} inputs · {{ m.algorithm }}</div></td>
+                        <td>{{ m.horizon }} days from {{ m.entry }}</td>
+                        <td class="num">{{ m.n | num }}</td>
+                        <td class="num"><app-delta [value]="m.brierSkill" kind="fixed" [digits]="3" />@if (m.skillCi) { <div class="small muted">{{ m.skillCi[0] | signed: 3 }} to {{ m.skillCi[1] | signed: 3 }}</div> }</td>
+                        <td class="num">{{ m.auc | fixed: 3 }}@if (m.aucCi) { <div class="small muted">{{ m.aucCi[0] | fixed: 3 }} to {{ m.aucCi[1] | fixed: 3 }}</div> }</td>
+                        <td class="num">@if (m.top10 === null) { — } @else { <app-delta [value]="m.top10" kind="pct" [digits]="2" /><div class="small muted">{{ m.top10Lo | signedPct: 2 }} to {{ m.top10Hi | signedPct: 2 }}</div> }</td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+            </details>
           </div>
         }
 
@@ -481,6 +513,7 @@ function row<T>(
     .ci-point { width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; background: var(--tone-mark); box-shadow: 0 0 0 2px var(--chart-surface); }
     .ci-axis { display: flex; justify-content: space-between; }
     td .meter { display: block; width: auto; margin: 0.3rem 0 0; }
+    .grid-3 h4 { margin: 0.25rem 0 0.35rem; font-size: 0.9rem; }
   `,
 })
 export class AccuracyPage {
@@ -490,30 +523,53 @@ export class AccuracyPage {
     return this.ev()?.config.models?.[k]?.featureSet ?? '';
   }
 
-  /** Models evaluated besides the two live ones (the recorded book's model), with the numbers the table shows. */
-  protected readonly bookModels = computed(() => {
+  /** Every model of the evaluation, live ones first, with the numbers the charts and the table show. */
+  protected readonly modelRows = computed(() => {
     const e = this.ev();
     if (!e) return [];
-    return Object.keys(e.metrics)
-      .filter((k) => !(MODEL_KINDS as readonly string[]).includes(k))
-      .map((k) => {
-        const m = e.metrics[k]!;
-        const spec = e.config.models?.[k];
-        const top = (e.trading[k]?.coverage ?? []).find((c) => Math.abs(c.coverage - 0.1) < 1e-9);
-        return {
-          kind: k,
-          featureSet: spec?.featureSet ?? '',
-          nFeatures: spec?.nFeatures ?? 0,
-          algorithm: spec?.algorithm ?? '',
-          horizon: spec?.horizon ?? e.config.horizon,
-          entry: spec?.entry ?? '',
-          n: m.n,
-          brierSkill: m.brierSkill,
-          auc: m.auc,
-          top10: top ? top.meanNet : null,
-        };
-      });
+    const live = MODEL_KINDS as readonly string[];
+    const kinds = [...live.filter((k) => !!e.metrics[k]), ...Object.keys(e.metrics).filter((k) => !live.includes(k))];
+    return kinds.map((k) => {
+      const m = e.metrics[k]!;
+      const spec = e.config.models?.[k];
+      const horizon = spec?.horizon ?? e.config.horizon;
+      const top = (e.trading[k]?.coverage ?? []).find((c) => Math.abs(c.coverage - 0.1) < 1e-9);
+      return {
+        kind: k,
+        label: live.includes(k) ? `${humanize(k)} (live)` : `Book model, ${horizon}-day`,
+        featureSet: spec?.featureSet ?? '',
+        nFeatures: spec?.nFeatures ?? 0,
+        algorithm: spec?.algorithm ?? '',
+        horizon,
+        entry: spec?.entry ?? '',
+        n: m.n,
+        brierSkill: m.brierSkill,
+        skillCi: m.ci?.brierSkill ?? null,
+        auc: m.auc,
+        aucCi: m.ci?.auc ?? null,
+        top10: top ? top.meanNet : null,
+        top10Lo: top ? top.ciLow : null,
+        top10Hi: top ? top.ciHigh : null,
+      };
+    });
   });
+  protected readonly hasModelCis = computed(() => this.modelRows().some((m) => !!m.skillCi));
+  private modelDetails(m: { featureSet: string; nFeatures: number; algorithm: string; horizon: number; entry: string; n: number }): string[] {
+    return [`${m.featureSet} · ${m.nFeatures} inputs · ${m.algorithm}`, `label: ${m.horizon} trading days from ${m.entry}`, `n = ${fmtNum(m.n)}`];
+  }
+  protected readonly skillItems = computed<WhiskerItem[]>(() =>
+    this.modelRows().map((m) => ({ row: m.kind, label: m.label, value: m.brierSkill, lo: m.skillCi?.[0], hi: m.skillCi?.[1], details: this.modelDetails(m) })),
+  );
+  protected readonly aucItems = computed<WhiskerItem[]>(() =>
+    this.modelRows().map((m) => ({ row: m.kind, label: m.label, value: m.auc, lo: m.aucCi?.[0], hi: m.aucCi?.[1], details: this.modelDetails(m) })),
+  );
+  protected readonly top10Items = computed<WhiskerItem[]>(() =>
+    this.modelRows()
+      .filter((m) => m.top10 !== null)
+      .map((m) => ({ row: m.kind, label: m.label, value: m.top10!, lo: m.top10Lo, hi: m.top10Hi, details: this.modelDetails(m) })),
+  );
+  protected readonly signed3 = (v: number) => fmtSigned(v, 3);
+  protected readonly signedPct2 = (v: number) => fmtSignedPct(v, 2);
   protected readonly Math = Math;
   protected readonly verdictToneOf = verdictTone;
   protected readonly res = httpResource<AccuracyResponse>(() => apiUrl.accuracy());
@@ -621,7 +677,7 @@ export class AccuracyPage {
     const cal = this.ev()?.calibration ?? {};
     return MODEL_KINDS.filter((k) => (cal[k] ?? []).length > 0).map((k) => ({
       key: k,
-      label: k === 'BASELINE' ? 'Baseline' : 'Augmented',
+      label: modelLabel(k),
       color: modelColor(k),
       bins: cal[k] ?? [],
     }));
@@ -675,7 +731,7 @@ export class AccuracyPage {
     const series = (pick: (v: { brier: number; hitRate: number }) => number): LineSeries[] =>
       MODEL_KINDS.map((k) => ({
         key: k,
-        label: k === 'BASELINE' ? 'Baseline' : 'Augmented',
+        label: modelLabel(k),
         color: modelColor(k),
         points: months.filter((m) => m.byModel[k]).map((m) => ({ x: Date.parse(m.month + '-15T00:00:00Z'), y: pick(m.byModel[k]!) })),
       })).filter((s) => s.points.length);

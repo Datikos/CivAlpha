@@ -2,9 +2,10 @@ import { httpResource } from '@angular/common/http';
 import { Component, computed, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
+import { DotWhisker, WhiskerItem } from '../charts/dot-whisker';
 import { LineChart, LineSeries } from '../charts/line-chart';
 import { apiUrl, valueOf } from '../core/api';
-import { FORMAT_PIPES, fmtPct, fmtSignedPct } from '../core/format';
+import { FORMAT_PIPES, fmtFixed, fmtPct, fmtSignedPct } from '../core/format';
 import { StrategiesResponse, StrategyResult } from '../core/models';
 import { createSort } from '../core/sort';
 import { CoverageTable } from '../shared/coverage-table';
@@ -51,7 +52,7 @@ interface Col {
 
 @Component({
   selector: 'app-strategies',
-  imports: [RouterLink, FormsModule, LineChart, Icon, SortTh, CoverageTable, ...UI, ...VIZ, ...FORMAT_PIPES],
+  imports: [RouterLink, FormsModule, LineChart, DotWhisker, Icon, SortTh, CoverageTable, ...UI, ...VIZ, ...FORMAT_PIPES],
   template: `
     <div class="page-head">
       <div class="page-title">
@@ -268,35 +269,58 @@ interface Col {
           <app-coverage-table [rows]="r.config.aiCoverage ?? []" positionLabel="a stock" />
         </div>
 
-        <div class="grid-2">
-          @if (decisionLayer(); as dl) {
-            <div class="card">
-              <h3>The decision layer <app-help text="Ways to act on the same probabilities. The standard rule enters at p ≥ 0.55 with equal slices; abstention waits for p ≥ 0.60; sizing keeps the standard entries but gives each position 0.04 / its annualized volatility, capped at 20%; the ranking rule replaces the weakest holding when an outsider beats it by 0.08, shown with volatility sizing alone and with a conviction tilt of (p − 0.5) / 0.05. The last row is the standard rule on a model that also sees the policy-event features, which the book dropped after this row underperformed; sized by volatility is the recorded book." topic="decision-layer" label="decision layer" /></h3>
+        @if (decisionLayer(); as dl) {
+          <div class="card">
+            <h3>The decision layer <app-help text="Ways to act on the same probabilities. The standard rule enters at p ≥ 0.55 with equal slices; abstention waits for p ≥ 0.60; sizing keeps the standard entries but gives each position 0.04 / its annualized volatility, capped at 20%; the ranking rule replaces the weakest holding when an outsider beats it by 0.08, shown with volatility sizing alone and with a conviction tilt of (p − 0.5) / 0.05. The last row is the standard rule on a model that also sees the policy-event features, which the book dropped after this row underperformed; sized by volatility is the recorded book." topic="decision-layer" label="decision layer" /></h3>
+            <p class="small muted">
+              Same probabilities, different ways to act on them. Each dot is one rule; the dashed line is equal-weight buy &amp;
+              hold. Only the excess return carries an interval: a rule has beaten the reference only when its whole whisker
+              sits right of the line.
+            </p>
+            <div class="grid-3">
+              <div>
+                <h4>Excess return vs buy &amp; hold, a year <app-help text="Annualized return above equal-weight buy & hold with a 95% block-bootstrap interval. Green when the whole interval is above zero, red when wholly below, grey when it crosses." topic="excess" label="excess return" /></h4>
+                <app-dot-whisker [items]="layerExcessItems()" label="Excess return of each decision-layer rule over buy and hold, with 95% interval" [refX]="0" refLabel="buy &amp; hold" betterIs="higher" [format]="signedPct1" />
+              </div>
+              <div>
+                <h4>Sharpe ratio <app-help text="Return per unit of risk, annualized, over cash. No interval is computed for it; read it as a description of the window, not as evidence." topic="sharpe" label="Sharpe ratio" /></h4>
+                <app-dot-whisker [items]="layerSharpeItems()" label="Sharpe ratio of each decision-layer rule against buy and hold" [refX]="dl.ref.sharpe" [refLabel]="'buy &amp; hold ' + (dl.ref.sharpe | fixed: 2)" [betterIs]="null" [format]="fixed2" />
+              </div>
+              <div>
+                <h4>Max drawdown <app-help text="Largest peak-to-trough fall of the equity curve; closer to zero is better. Sizing changes this most, because it changes how much of the capital is at risk." topic="max-drawdown" label="max drawdown" /></h4>
+                <app-dot-whisker [items]="layerDdItems()" label="Maximum drawdown of each decision-layer rule against buy and hold" [refX]="dl.ref.maxDd" [refLabel]="'buy &amp; hold ' + (dl.ref.maxDd | pct: 1)" [betterIs]="null" [format]="pct1" />
+              </div>
+            </div>
+            <details class="chart-table">
+              <summary>Data table ({{ dl.rows.length }} rules)</summary>
               <div class="table-wrap">
                 <table class="table compact">
                   <thead>
-                    <tr><th>Rule</th><th class="num">Sharpe</th><th class="num">Max DD</th><th class="num">Invested</th><th class="num">Trades</th><th class="num">Excess</th></tr>
+                    <tr><th>Rule</th><th class="num">Sharpe</th><th class="num">Max DD</th><th class="num">Invested</th><th class="num">Trades</th><th class="num">Excess (95% CI)</th></tr>
                   </thead>
                   <tbody>
-                    @for (x of dl; track x.key) {
+                    @for (x of dl.rows; track x.key) {
                       <tr>
                         <td><a [routerLink]="['/strategies', x.key]">{{ x.label }}</a><div class="small muted">{{ x.note }}</div></td>
                         <td class="num" [style.font-weight]="x.bestSharpe ? 650 : 400">{{ x.sharpe | fixed: 2 }}@if (x.bestSharpe) { <span class="badge-best" title="Best of the decision-layer rules">✓</span> }</td>
                         <td class="num" [style.font-weight]="x.bestDd ? 650 : 400">{{ x.maxDd | pct: 1 }}@if (x.bestDd) { <span class="badge-best" title="Best of the decision-layer rules">✓</span> }</td>
                         <td class="num">{{ x.exposure | pct: 0 }}</td>
                         <td class="num">{{ x.trades | num }}</td>
-                        <td class="num"><app-delta [value]="x.excess" kind="pct" [digits]="1" /></td>
+                        <td class="num"><app-delta [value]="x.excess" kind="pct" [digits]="1" /><div class="small muted">{{ x.excessLo | signedPct: 1 }} to {{ x.excessHi | signedPct: 1 }}</div></td>
                       </tr>
                     }
                   </tbody>
                 </table>
               </div>
-              <p class="small muted" style="margin-top: 0.5rem">
-                Sizing and abstention cannot create an edge the probabilities lack; they change how much of one is kept
-                and how much pain comes with it. Differences without a "Beats buy &amp; hold" badge are still noise.
-              </p>
-            </div>
-          }
+            </details>
+            <p class="small muted" style="margin-top: 0.5rem">
+              Sizing and abstention cannot create an edge the probabilities lack; they change how much of one is kept
+              and how much pain comes with it. Differences without a "Beats buy &amp; hold" badge are still noise.
+            </p>
+          </div>
+        }
+
+        <div class="grid-2">
           <div class="card">
             <h3>How to read this</h3>
             <ul class="small notes">
@@ -452,7 +476,9 @@ export class StrategiesPage {
       .map((x) => {
         const r = byKey.get(x.key);
         const m = r?.metrics;
-        return r && m ? { ...x, sharpe: m.sharpe, maxDd: m.maxDrawdown, exposure: m.exposure, trades: m.trades, excess: m.excessReturn, bestSharpe: false, bestDd: false } : null;
+        return r && m
+          ? { ...x, sharpe: m.sharpe, maxDd: m.maxDrawdown, exposure: m.exposure, trades: m.trades, excess: m.excessReturn, excessLo: m.excessCiLow, excessHi: m.excessCiHigh, bestSharpe: false, bestDd: false }
+          : null;
       })
       .filter((x): x is NonNullable<typeof x> => x !== null);
     if (rows.length < 2) return null;
@@ -460,8 +486,26 @@ export class StrategiesPage {
     const bestD = rows.reduce((a, b) => ((b.maxDd ?? -Infinity) > (a.maxDd ?? -Infinity) ? b : a));
     bestS.bestSharpe = true;
     bestD.bestDd = true;
-    return rows;
+    const ref = byKey.get(REFERENCE_KEY)?.metrics;
+    return { rows, ref: { sharpe: ref?.sharpe ?? null, maxDd: ref?.maxDrawdown ?? null } };
   });
+  private layerDetails(x: { note: string; sharpe: number | null; maxDd: number | null; exposure: number | null; trades: number }): string[] {
+    return [x.note, `Sharpe ${fmtFixed(x.sharpe, 2)} · max drawdown ${fmtPct(x.maxDd, 1)} · invested ${fmtPct(x.exposure, 0)} · ${x.trades} trades`];
+  }
+  protected readonly layerExcessItems = computed<WhiskerItem[]>(() =>
+    (this.decisionLayer()?.rows ?? [])
+      .filter((x) => x.excess !== null && x.excess !== undefined)
+      .map((x) => ({ row: x.key, label: x.label, value: x.excess!, lo: x.excessLo, hi: x.excessHi, details: this.layerDetails(x) })),
+  );
+  protected readonly layerSharpeItems = computed<WhiskerItem[]>(() =>
+    (this.decisionLayer()?.rows ?? []).filter((x) => x.sharpe !== null).map((x) => ({ row: x.key, label: x.label, value: x.sharpe!, details: this.layerDetails(x) })),
+  );
+  protected readonly layerDdItems = computed<WhiskerItem[]>(() =>
+    (this.decisionLayer()?.rows ?? []).filter((x) => x.maxDd !== null).map((x) => ({ row: x.key, label: x.label, value: x.maxDd!, details: this.layerDetails(x) })),
+  );
+  protected readonly signedPct1 = (v: number) => fmtSignedPct(v, 1);
+  protected readonly pct1 = (v: number) => fmtPct(v, 1);
+  protected readonly fixed2 = (v: number) => fmtFixed(v, 2);
 
   protected readonly cols: Col[] = [
     { key: 'cagr', label: 'CAGR', hint: 'compound annual growth, after costs', topic: 'cagr', get: (r) => r.metrics.cagr, fmt: (v) => fmtSignedPct(v, 1), higherIsBetter: true, view: 'signed-bar' },

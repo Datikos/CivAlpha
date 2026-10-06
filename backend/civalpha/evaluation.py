@@ -5,7 +5,8 @@ days. A model for a block is trained only on samples whose label window had clos
 starts (sample index + horizon < block start), i.e. overlapping labels are purged. Every sample is
 predicted exactly once, by a model that never saw its period.
 
-Reported: Brier score, log loss, AUC, accuracy, calibration bins, Brier skill vs the training base rate,
+Reported: Brier score, log loss, AUC, accuracy, calibration bins, Brier skill vs the training base rate (both
+with a 95% CI from a bootstrap over 21-day blocks of as-of dates, under `metrics[kind]["ci"]`),
 the paired augmented-vs-baseline Brier difference with a date-block bootstrap CI, a long/short
 simulation after transaction costs on non-overlapping 21-day periods entered at the next close, and a
 coverage curve: what acting only on the most confident forecasts would have earned after costs.
@@ -154,6 +155,8 @@ def run_walk_forward(panel: pd.DataFrame, calendar: pd.DatetimeIndex, cfg: EvalC
     P = pd.concat(preds, ignore_index=True)
     kinds = [sp.kind for sp in specs if (P.model_kind == sp.kind).any()]
     metrics = {k: classification_metrics(P[P.model_kind == k]) for k in kinds}
+    for k in kinds:   # 95% CIs of Brier skill and AUC per model, so the accuracy page can draw whiskers, not only points
+        metrics[k]["ci"] = metric_cis(P[P.model_kind == k], n_boot=cfg.ci_boot)
     calib = {k: calibration_bins(P[P.model_kind == k]) for k in kinds}
     comparison = compare_models(P, cfg) if all(k in kinds for k in KINDS) else {"n": 0}
     comparison.update(fold_consistency(fold_out))

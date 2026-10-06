@@ -6,7 +6,7 @@ import { dateMs } from '../../charts/chart-utils';
 import { apiUrl, valueOf } from '../../core/api';
 import { FORMAT_PIPES, fmtPct } from '../../core/format';
 import { compareForecastsDesc } from '../../core/forecast-utils';
-import { ForecastSummary, MODEL_KINDS } from '../../core/models';
+import { ForecastSummary, MODEL_KINDS, modelLabel } from '../../core/models';
 import { ForecastTable } from '../../shared/forecast-table';
 import { UI, modelColor } from '../../shared/ui';
 import { CompanyContext } from './company-context';
@@ -76,7 +76,7 @@ export class CompanyForecasts {
       }
       return {
         key: kind,
-        label: kind === 'BASELINE' ? 'Baseline' : 'Augmented',
+        label: modelLabel(kind),
         color: modelColor(kind),
         points: [...latestPerDay.values()].map((f) => ({
           x: dateMs(f.asOfDate),
