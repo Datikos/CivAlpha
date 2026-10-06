@@ -106,7 +106,23 @@ Phase 1, code (2026-10-06):
 - [x] Docs: README (strategy lab table, decision layer, forecasting), `docs/api.md`, MCP descriptions.
 
 Phase 2, data (2026-10-06):
-- [x] Rebuild api/worker; run the lab and `evaluate_models`; record the calibrated rows here.
+- [x] Rebuild api/worker; run the lab (run 20, job 168, 5.6 minutes; registry 73 trials) and `evaluate_models`
+      (evaluation 16, job 169). *Found while implementing:*
+
+      | Row (21-day label, run 20) | Sharpe | Max DD | Invested | Trades | Excess vs buy & hold |
+      |---|---|---|---|---|---|
+      | AI_GBM (raw) | 0.79 | -40.1% | 98% | 166 | +2.2% |
+      | AI_GBM_CAL | 0.62 | -27.1% | 44% | 68 | -8.7% |
+      | AI_SIZED (raw, the book) | 0.72 | -27.9% | 90% | 166 | -5.2% |
+      | AI_SIZED_CAL | 0.60 | -20.0% | 40% | 68 | -11.8% |
+
+      With honest probabilities the 0.55 entry clears on 44% of days instead of 98% and trades drop from 166 to 68:
+      the thresholds were calibrated to overconfidence, not to information. The calibrated abstention curve says the
+      same: the raw top-10% coverage row read +1.73% per position (CI +0.25% to +2.92%); calibrated it is +0.42%
+      (CI -1.46% to +1.98%), within noise. The walk-forward's calibrated metrics for AI_BOOK_21 match the research
+      study (Brier skill -0.025 -> -0.007, CI of the difference -0.0085 to -0.0028, AUC 0.491, spread 0.091 -> 0.038,
+      confident decile 50%). Decisions from the next trading day carry `probabilityCalibrated` fitted on evaluation
+      16's 6,028 rows.
 
 Phase 3, later:
 - [ ] Decisions page: show the calibrated probability and the calibration note (after the ablation page lands).
