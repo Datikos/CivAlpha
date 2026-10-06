@@ -511,6 +511,31 @@ export interface ModelMetrics {
   brierSkill: number;
   /** 95% intervals from a bootstrap over 21-day blocks of as-of dates; stored since 2026-10-06, absent on older evaluations. */
   ci?: { brierSkill: [number, number]; auc: [number, number]; block: number; nBoot: number };
+  /** The same model after an isotonic map fitted on earlier folds only (ADR-0002), with the raw numbers on the same rows
+   *  (the first 3 folds have no map and are left out of both). Null when too few folds; absent on older evaluations. */
+  calibrated?: CalibratedMetrics | null;
+}
+export interface CalibratedMetrics {
+  n: number;
+  method: string;
+  brier: number;
+  brierSkill: number;
+  auc: number;
+  ece: number;
+  spread: number;
+  confidentHitRate: number;
+  confidentMeanNetExcess: number;
+  rawBrierSkill?: number;
+  rawAuc?: number;
+  rawEce: number;
+  rawSpread: number;
+  rawConfidentHitRate?: number;
+  rawConfidentMeanNetExcess?: number;
+  /** Brier(calibrated) − Brier(raw) on the same rows; negative means calibration helped. */
+  brierDiff: number;
+  brierDiffCi95: [number, number];
+  reliability?: CalibrationBin[];
+  rawReliability?: CalibrationBin[];
 }
 
 export interface CalibrationBin {

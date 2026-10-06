@@ -165,7 +165,7 @@ How an event is linked to a company:
     before its block starts.
   * Reports Brier score, Brier skill, log loss, AUC, accuracy, reliability bins, and the augmented-minus-baseline
     Brier difference with a bootstrap CI; and, per model, the same numbers after an isotonic map fitted on earlier folds
-    (`metrics.<model>.calibrated`, ADR-0002): how much of a model's Brier score is overconfidence rather than information. Since 2026-10-06 every model's Brier skill and AUC also carry a 95% CI from a
+    (`metrics.<model>.calibrated`, ADR-0002, with the raw numbers on the same rows and both reliability diagrams): how much of a model's Brier score is overconfidence rather than information. The Accuracy page draws it: the Brier change per model with its interval, the spread and the confident-decile hit rate raw against calibrated, and one model's reliability diagram before and after. Since 2026-10-06 every model's Brier skill and AUC also carry a 95% CI from a
     bootstrap over 21-day blocks of as-of dates (`metrics.<kind>.ci`); the Accuracy page draws all evaluated models
     (the two live logistic models and the recorded book's gradient-boosted model on both of its labels) as
     dot-and-whisker charts for Brier skill, AUC and the top-10% net excess, each against its bar.

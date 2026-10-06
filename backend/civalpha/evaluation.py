@@ -173,7 +173,12 @@ def run_walk_forward(panel: pd.DataFrame, calendar: pd.DatetimeIndex, cfg: EvalC
         metrics[k]["calibrated"] = ({kk: cal["after"][kk] for kk in ("brier", "brierSkill", "auc", "ece", "spread")}
                                     | {"confidentHitRate": cal["after"]["confident"]["hitRate"],
                                        "confidentMeanNetExcess": cal["after"]["confident"]["meanNetExcess"],
+                                       # the raw numbers on the same rows (folds 0..2 left out), so before and after compare
+                                       "rawBrierSkill": cal["before"]["brierSkill"], "rawAuc": cal["before"]["auc"],
                                        "rawEce": cal["before"]["ece"], "rawSpread": cal["before"]["spread"],
+                                       "rawConfidentHitRate": cal["before"]["confident"]["hitRate"],
+                                       "rawConfidentMeanNetExcess": cal["before"]["confident"]["meanNetExcess"],
+                                       "reliability": cal["after"]["reliability"], "rawReliability": cal["before"]["reliability"],
                                        "brierDiff": cal["brierDiff"], "brierDiffCi95": cal["brierDiffCi95"], "n": cal["n"],
                                        "method": "isotonic on earlier folds, first 3 folds left out"}) if cal.get("n") else None
     models = {k: by_kind[k].info() for k in kinds}

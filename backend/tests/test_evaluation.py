@@ -36,6 +36,10 @@ def test_walk_forward_on_noise_finds_no_skill_and_claims_no_profit():
         ci = res["metrics"][k]["ci"]          # every model carries a 95% CI of Brier skill and AUC (the accuracy page's whiskers)
         assert ci["brierSkill"][0] <= res["metrics"][k]["brierSkill"] <= ci["brierSkill"][1]
         assert ci["auc"][0] <= res["metrics"][k]["auc"] <= ci["auc"][1]
+        cal = res["metrics"][k]["calibrated"]  # raw and calibrated numbers on the same rows, with both reliability diagrams
+        assert cal["n"] < res["metrics"][k]["n"] and cal["brierDiffCi95"][0] <= cal["brierDiff"] <= cal["brierDiffCi95"][1]
+        assert sum(b["count"] for b in cal["reliability"]) == cal["n"] == sum(b["count"] for b in cal["rawReliability"])
+        assert {"rawBrierSkill", "rawAuc", "rawConfidentHitRate", "rawConfidentMeanNetExcess", "rawSpread", "rawEce"} <= set(cal)
 
 
 def test_trading_costs_are_charged_per_leg_and_side():

@@ -1,7 +1,8 @@
 import { httpResource } from '@angular/common/http';
 import { Component, computed, signal } from '@angular/core';
+import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
-import { DotWhisker, WhiskerItem } from '../charts/dot-whisker';
+import { DotWhisker, WhiskerItem, WhiskerSeries } from '../charts/dot-whisker';
 import { LineChart, LineSeries } from '../charts/line-chart';
 import { ReliabilityChart, ReliabilitySeries } from '../charts/reliability-chart';
 import { apiUrl, valueOf } from '../core/api';
@@ -52,7 +53,7 @@ function row<T>(
 
 @Component({
   selector: 'app-accuracy',
-  imports: [RouterLink, ReliabilityChart, LineChart, DotWhisker, Icon, CoverageTable, ...UI, ...VIZ, ...FORMAT_PIPES],
+  imports: [RouterLink, FormsModule, ReliabilityChart, LineChart, DotWhisker, Icon, CoverageTable, ...UI, ...VIZ, ...FORMAT_PIPES],
   template: `
     <div class="page-head">
       <div class="page-title">
@@ -132,6 +133,68 @@ function row<T>(
                         <td class="num"><app-delta [value]="m.brierSkill" kind="fixed" [digits]="3" />@if (m.skillCi) { <div class="small muted">{{ m.skillCi[0] | signed: 3 }} to {{ m.skillCi[1] | signed: 3 }}</div> }</td>
                         <td class="num">{{ m.auc | fixed: 3 }}@if (m.aucCi) { <div class="small muted">{{ m.aucCi[0] | fixed: 3 }} to {{ m.aucCi[1] | fixed: 3 }}</div> }</td>
                         <td class="num">@if (m.top10 === null) { — } @else { <app-delta [value]="m.top10" kind="pct" [digits]="2" /><div class="small muted">{{ m.top10Lo | signedPct: 2 }} to {{ m.top10Hi | signedPct: 2 }}</div> }</td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          </div>
+        }
+
+        @if (calRows().length) {
+          <div class="card">
+            <h3>What the probabilities are worth after calibration <app-help text="Each model's out-of-sample probabilities mapped through an isotonic curve fitted on earlier folds only, so a stated 60% becomes what 60% has meant so far (ADR-0002). The first three folds have no map and are left out of both sides, so raw and calibrated are compared on the same rows. A Brier change whose whole whisker sits left of zero means the model was overconfident: calibration fixed its scores without adding information." topic="calibration" label="calibration" /></h3>
+            <p class="small muted">
+              Honest probabilities cannot know more than the model does. If calibration helps the Brier score but the spread
+              collapses and the confident decile falls to a coin flip, the confidence was the overconfidence.
+            </p>
+            <div class="grid-3">
+              <div>
+                <h4>Brier change from calibration <app-help text="Brier(calibrated) minus Brier(raw) on the same rows with a 95% interval from a bootstrap over 21-day blocks of as-of dates. Left of zero: calibration helped." topic="brier" label="Brier change" /></h4>
+                <app-dot-whisker [items]="calDiffItems()" label="Change in Brier score from calibration per model, with 95% interval" [refX]="0" refLabel="no change" betterIs="lower" [format]="signed4" />
+              </div>
+              <div>
+                <h4>Spread of the probabilities <app-help text="Standard deviation of the probabilities before and after the map. A spread that shrinks towards zero says the model's confidence was not backed by outcomes." topic="calibration" label="spread" /></h4>
+                <app-dot-whisker [items]="calSpreadItems()" [series]="calSeries" label="Standard deviation of the probabilities per model, raw and calibrated" [refX]="null" [betterIs]="null" [format]="fixed3" />
+              </div>
+              <div>
+                <h4>Confident decile hit rate <app-help text="How often the 10% of forecasts farthest from 50% were right, raw and calibrated, on the same rows. 50% is a coin flip." topic="abstention" label="confident decile" /></h4>
+                <app-dot-whisker [items]="calHitItems()" [series]="calSeries" label="Hit rate of the most confident 10% per model, raw and calibrated" [refX]="0.5" refLabel="coin flip" [betterIs]="null" [format]="pct0" />
+              </div>
+            </div>
+            @if (calRel(); as rel) {
+              <div class="cal-rel">
+                <div class="chart-head">
+                  <h4>Reliability before and after <app-help text="Mean predicted probability against the observed rate per bin, for one model, raw and calibrated on the same rows. Dots on the diagonal are honest." topic="calibration" label="reliability before and after" /></h4>
+                  <label class="field small">Model
+                    <select [ngModel]="calPick()" (ngModelChange)="calPick.set($event)">
+                      @for (r of calRows(); track r.kind) { <option [value]="r.kind">{{ r.label }}</option> }
+                    </select>
+                  </label>
+                </div>
+                <app-reliability-chart [series]="rel" label="Reliability diagram, raw vs calibrated" />
+              </div>
+            }
+            <details class="chart-table">
+              <summary>Data table ({{ calRows().length }} models, same rows before and after)</summary>
+              <div class="table-wrap">
+                <table class="table compact">
+                  <thead>
+                    <tr><th>Model</th><th class="num">n</th><th class="num">Brier skill</th><th class="num">AUC</th><th class="num">Spread</th><th class="num">ECE</th><th class="num">Confident 10% hit</th><th class="num">Confident 10% net excess</th><th class="num">Brier change (95% CI)</th></tr>
+                  </thead>
+                  <tbody>
+                    @for (r of calRows(); track r.kind) {
+                      <tr>
+                        <td>{{ r.label }}<div class="small muted">{{ r.c.method }}</div></td>
+                        <td class="num">{{ r.c.n | num }}</td>
+                        <td class="num">{{ r.c.rawBrierSkill | signed: 3 }} → {{ r.c.brierSkill | signed: 3 }}</td>
+                        <td class="num">{{ r.c.rawAuc | fixed: 3 }} → {{ r.c.auc | fixed: 3 }}</td>
+                        <td class="num">{{ r.c.rawSpread | fixed: 3 }} → {{ r.c.spread | fixed: 3 }}</td>
+                        <td class="num">{{ r.c.rawEce | fixed: 3 }} → {{ r.c.ece | fixed: 3 }}</td>
+                        <td class="num">{{ r.c.rawConfidentHitRate | pct: 0 }} → {{ r.c.confidentHitRate | pct: 0 }}</td>
+                        <td class="num">{{ r.c.rawConfidentMeanNetExcess | signedPct: 2 }} → {{ r.c.confidentMeanNetExcess | signedPct: 2 }}</td>
+                        <td class="num"><app-delta [value]="r.c.brierDiff" kind="fixed" [digits]="4" [invert]="true" /><div class="small muted">{{ r.c.brierDiffCi95[0] | signed: 4 }} to {{ r.c.brierDiffCi95[1] | signed: 4 }}</div></td>
                       </tr>
                     }
                   </tbody>
@@ -513,7 +576,9 @@ function row<T>(
     .ci-point { width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; background: var(--tone-mark); box-shadow: 0 0 0 2px var(--chart-surface); }
     .ci-axis { display: flex; justify-content: space-between; }
     td .meter { display: block; width: auto; margin: 0.3rem 0 0; }
-    .grid-3 h4 { margin: 0.25rem 0 0.35rem; font-size: 0.9rem; }
+    .grid-3 h4, .cal-rel h4 { margin: 0.25rem 0 0.35rem; font-size: 0.9rem; }
+    .cal-rel { margin-top: 1rem; max-width: 640px; }
+    .cal-rel .chart-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 1rem; flex-wrap: wrap; }
   `,
 })
 export class AccuracyPage {
@@ -550,6 +615,7 @@ export class AccuracyPage {
         top10: top ? top.meanNet : null,
         top10Lo: top ? top.ciLow : null,
         top10Hi: top ? top.ciHigh : null,
+        calibrated: m.calibrated ?? null,
       };
     });
   });
@@ -568,6 +634,45 @@ export class AccuracyPage {
       .filter((m) => m.top10 !== null)
       .map((m) => ({ row: m.kind, label: m.label, value: m.top10!, lo: m.top10Lo, hi: m.top10Hi, details: this.modelDetails(m) })),
   );
+  /** Models with a stored calibration block (ADR-0002), live ones first, as the models chart orders them. */
+  protected readonly calRows = computed(() => this.modelRows().flatMap((m) => (m.calibrated ? [{ kind: m.kind, label: m.label, c: m.calibrated }] : [])));
+  protected readonly calSeries: WhiskerSeries[] = [
+    { key: 'raw', label: 'Raw', color: 'var(--series-1)' },
+    { key: 'cal', label: 'Calibrated on earlier folds', color: 'var(--series-2)' },
+  ];
+  protected readonly calDiffItems = computed<WhiskerItem[]>(() =>
+    this.calRows().map((r) => ({ row: r.kind, label: r.label, value: r.c.brierDiff, lo: r.c.brierDiffCi95[0], hi: r.c.brierDiffCi95[1], details: [`${fmtNum(r.c.n)} rows · ${r.c.method}`, `Brier skill ${fmtSigned(r.c.rawBrierSkill ?? null, 3)} → ${fmtSigned(r.c.brierSkill, 3)}`] })),
+  );
+  protected readonly calSpreadItems = computed<WhiskerItem[]>(() =>
+    this.calRows().flatMap((r) => [
+      { row: r.kind, label: r.label, series: 'raw', value: r.c.rawSpread, details: [`ECE ${fmtFixed(r.c.rawEce, 3)}`] },
+      { row: r.kind, label: r.label, series: 'cal', value: r.c.spread, details: [`ECE ${fmtFixed(r.c.ece, 3)}`] },
+    ]),
+  );
+  protected readonly calHitItems = computed<WhiskerItem[]>(() =>
+    this.calRows().flatMap((r) =>
+      r.c.rawConfidentHitRate === undefined
+        ? []
+        : [
+            { row: r.kind, label: r.label, series: 'raw', value: r.c.rawConfidentHitRate, details: [`net excess ${fmtSignedPct(r.c.rawConfidentMeanNetExcess ?? null, 2)} per position`] },
+            { row: r.kind, label: r.label, series: 'cal', value: r.c.confidentHitRate, details: [`net excess ${fmtSignedPct(r.c.confidentMeanNetExcess, 2)} per position`] },
+          ],
+    ),
+  );
+  /** Which model's reliability diagram to show before and after: the book's model when evaluated, else the first. */
+  protected readonly calPick = signal<string | null>(null);
+  protected readonly calRel = computed<ReliabilitySeries[] | null>(() => {
+    const rows = this.calRows();
+    const pick = this.calPick() ?? rows.find((r) => r.kind.startsWith('AI_BOOK'))?.kind ?? rows[0]?.kind;
+    const r = rows.find((x) => x.kind === pick);
+    if (!r || !r.c.reliability || !r.c.rawReliability) return null;
+    return [
+      { key: 'raw', label: `${r.label}, raw`, color: 'var(--series-1)', bins: r.c.rawReliability },
+      { key: 'cal', label: `${r.label}, calibrated`, color: 'var(--series-2)', bins: r.c.reliability },
+    ];
+  });
+  protected readonly signed4 = (v: number) => fmtSigned(v, 4);
+  protected readonly pct0 = (v: number) => fmtPct(v, 0);
   protected readonly signed3 = (v: number) => fmtSigned(v, 3);
   protected readonly signedPct2 = (v: number) => fmtSignedPct(v, 2);
   protected readonly Math = Math;
@@ -637,7 +742,7 @@ export class AccuracyPage {
 
   protected readonly metricRows = computed<MetricRow[]>(() => {
     const m = this.ev()?.metrics ?? {};
-    const g = (key: Exclude<keyof ModelMetrics, 'ci'>) => (k: ModelKind) => m[k]?.[key];
+    const g = (key: Exclude<keyof ModelMetrics, 'ci' | 'calibrated'>) => (k: ModelKind) => m[k]?.[key];
     return [
       row('n', 'n', 'out-of-sample predictions', 'walk-forward', g('n'), (v) => fmtNum(v), null),
       row('brier', 'Brier score', 'lower is better; 0.25 = coin flip', 'brier', g('brier'), (v) => fmtFixed(v, 4), false, {
@@ -703,7 +808,6 @@ export class AccuracyPage {
   protected readonly includeReplay = signal(false);
   protected readonly historyRes = httpResource<ForecastSummary[]>(() => apiUrl.forecastsHistory());
   protected readonly fixed3 = (v: number) => fmtFixed(v, 3);
-  protected readonly pct0 = (v: number) => fmtPct(v, 0);
   protected readonly monthly = computed(() => {
     const list = valueOf(this.historyRes);
     if (!list) return null;
