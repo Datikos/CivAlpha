@@ -66,7 +66,7 @@ def test_explanation_contributions_reconstruct_the_probability():
 
 
 def test_fold_consistency_sign_test():
-    folds = [{"brier": {"BASELINE": 0.25, "AUGMENTED": a}} for a in (0.24, 0.24, 0.24, 0.24, 0.24, 0.26, 0.25)]
+    folds = [{"brier": {"BASELINE": 0.25, "AUGMENTED": a, "AI_BOOK_21": 0.3}} for a in (0.24, 0.24, 0.24, 0.24, 0.24, 0.26, 0.25)]
     c = fold_consistency(folds)
     assert c["foldsAugmentedBetter"] == 5 and c["foldsCompared"] == 6  # the tie is dropped
     assert abs(c["signTestP"] - 2 * (1 + 6) / 64) < 1e-12               # P(X<=1), X~Bin(6, 1/2), two-sided

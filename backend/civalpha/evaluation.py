@@ -229,7 +229,7 @@ def compare_models(P: pd.DataFrame, cfg: EvalConfig) -> dict:
 
 def fold_consistency(folds: list[dict]) -> dict:
     """How often the augmented model beats the baseline fold by fold, with a two-sided sign test (ties dropped)."""
-    diffs = [f["brier"]["AUGMENTED"] - f["brier"]["BASELINE"] for f in folds if len(f.get("brier", {})) == 2]
+    diffs = [f["brier"]["AUGMENTED"] - f["brier"]["BASELINE"] for f in folds if set(KINDS) <= set(f.get("brier", {}))]
     wins = sum(d < 0 for d in diffs)
     losses = sum(d > 0 for d in diffs)
     n = wins + losses
