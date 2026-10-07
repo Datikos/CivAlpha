@@ -8,12 +8,12 @@ import {
   withViewTransitions,
 } from '@angular/router';
 import { routes } from './app.routes';
-import { adminTokenInterceptor } from './core/admin-token';
+import { adminTokenInterceptor, authRedirectInterceptor } from './core/admin-token';
 
 export const appConfig: ApplicationConfig = {
   providers: [
     provideBrowserGlobalErrorListeners(),
-    provideHttpClient(withFetch(), withInterceptors([adminTokenInterceptor])),
+    provideHttpClient(withFetch(), withInterceptors([adminTokenInterceptor, authRedirectInterceptor])),
     provideRouter(
       routes,
       withComponentInputBinding(),

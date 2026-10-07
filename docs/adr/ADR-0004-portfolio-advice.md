@@ -1,6 +1,6 @@
 # ADR-0004: Advise on the owner's own holdings with risk rules and a graded model opinion, recorded and scored
 
-**Status:** Proposed (2026-10-07)
+**Status:** Accepted (2026-10-07, "start it now for the one portfolio"; implemented 2026-10-07)
 **Date:** 2026-10-07
 **Deciders:** David Sakhelashvili (owner)
 
@@ -42,7 +42,8 @@ What the platform can say about a stock, and how well, on 2026-10-07:
 1. **The owner enters his holdings; the platform starts empty.** Migration `V18__portfolio.sql` adds `holding`
    (`id`, `symbol`, `company_id` null when the symbol is not in the universe, `shares` numeric > 0, `avg_cost_usd`
    numeric >= 0, `opened_on` date, `note`, `created_at`, `updated_at`; one row per symbol, unique on `symbol`) and
-   `portfolio` (one row: `cash_usd` numeric >= 0, `updated_at`). USD only, long only, one portfolio. No seed rows, no
+   `portfolio` (`id`, `name`, `cash_usd` numeric >= 0, `updated_at`; one row named `default` until ADR-0005). USD only,
+   long only, one portfolio. No seed rows, no
    demo portfolio, no brokerage import.
 2. **Every holding gets exactly one action per trading day**, from this list, decided in this order (first match wins):
 
@@ -74,8 +75,8 @@ What the platform can say about a stock, and how well, on 2026-10-07:
    screen produces buy ideas.
 6. **Advice is recorded append-only and scored.** Table `holding_advice` (V18): as-of date, symbol, the holding as it
    was (shares, value, weight), action, layer, the rule that fired, target weight, shares to trade, `review_on`, model
-   block (probability raw and calibrated, rank, thresholds, forecast id, live-test verdict), code version; unique on
-   (as-of, symbol); a trigger rejects UPDATE and DELETE like `decision`'s. Table `holding_advice_outcome` (V18) stores
+   block (probability raw and calibrated, rank, thresholds, decision id, live-test verdict), code version; unique on
+   (portfolio, as-of, `basis`, symbol), where `basis` hashes the holdings and cash; a trigger rejects UPDATE and DELETE like `decision`'s. Table `holding_advice_outcome` (V18) stores
    the resolved 21-day stock return, sector-ETF return and excess return per advice row, filled by the existing
    outcome resolution through `returns.excess_label`. The page shows, per action, the count and the mean excess return
    with a 95% bootstrap CI once 30 rows have resolved. Rows of one portfolio are correlated; the page calls this a track
@@ -85,9 +86,11 @@ What the platform can say about a stock, and how well, on 2026-10-07:
    nothing.
 8. **Holdings are private.** `protected_request` treats `/api/portfolio/**` as protected for every method, GET
    included. The MCP portfolio tools follow the same token rule. Holdings, values and advice are never put into a
-   language-model prompt (the reviewer brief stays per symbol), never written to a log line at INFO, never exported.
+   language-model prompt (the reviewer brief stays per symbol), never written to a log line at INFO (job logs carry
+   counts; symbols travel in request bodies, so access logs record no holding), never exported.
    Without `CIVALPHA_ADMIN_TOKEN` the README warns that the portfolio is readable by anyone who reaches the port.
-9. **Surfaces.** API: `GET/PUT/DELETE /api/portfolio/holdings[/{symbol}]`, `PUT /api/portfolio/cash`,
+9. **Surfaces.** API: `GET/PUT /api/portfolio/holdings`, `POST /api/portfolio/holdings/remove` (symbols in the body,
+   never in the path, so access logs do not record them), `PUT /api/portfolio/cash`,
    `GET /api/portfolio/advice?date=`, `POST /api/portfolio/advice`, `GET /api/portfolio/track-record`. MCP:
    `get_portfolio_advice`, `set_holding`, `remove_holding`. UI: a "Portfolio" page (holdings editor; one card per
    holding with the action chip, weight vs target bar, probability with the live-test grade, review date, the trigger;
@@ -151,34 +154,53 @@ price targets and stop-losses, holding periods beyond 21 trading days, an LLM re
 ## Action items
 
 ### Phase 1: store
-1. [ ] `db/migration/V18__portfolio.sql`: `holding`, `portfolio`, `holding_advice` (+ append-only trigger),
+1. [x] `db/migration/V18__portfolio.sql`: `portfolio`, `holding`, `holding_advice` (+ append-only trigger),
    `holding_advice_outcome`.
-2. [ ] `platform/app.py`: `protected_request` covers `/api/portfolio/**` on every method; test `PortfolioAuthTest`.
+   *Found while implementing:* `portfolio` is a table with `id` and `name`, not a single row, and every table carries
+   `portfolio_id`, so several portfolios (ADR-0005, multi-tenant) need no reshaping. The single portfolio is the row
+   named `default`, created by the owner's first holding or cash entry. `holding_advice` is unique on (portfolio,
+   as-of, `basis`, symbol): `basis` hashes the holdings and cash, so an edit during a day adds rows instead of being
+   refused by the append-only trigger; the page and the track record read the day's newest basis.
+2. [x] `platform/app.py`: `protected_request` covers `/api/portfolio/**` on every method; the frontend interceptor
+   (`core/admin-token.ts`) sends the token on portfolio reads too. Tests `test_portfolio_is_protected_on_every_method`,
+   `test_portfolio_api_needs_the_token_and_round_trips`.
 
 ### Phase 2: advice
-3. [ ] `civalpha/portfolio.py`: `advise(engine, as_of)` builds rows from `holding`, prices, `AI_BOOK_21` forecasts,
-   `ai.sized_weight`, integrity and candidate flags, earnings dates; the rule order of Decision 2; `review_on` from the
-   trading calendar.
-4. [ ] Tests named after the scenarios: `test_concentration_trims_to_cap`, `test_broken_series_reviews_before_model`,
-   `test_sell_shown_as_opinion_while_live_test_pending`, `test_add_limited_by_cash`, `test_not_covered_symbol`,
-   `test_advice_idempotent_per_day`, `test_advice_rows_append_only`.
-5. [ ] Pipeline step after decisions (`platform/pipeline.py`); outcome resolution of `holding_advice` in
-   `service.resolve_outcomes`; test `test_advice_outcome_resolves_after_21_days`.
+3. [x] `platform/portfolio.py`: `advise_holding` (the rules, pure) and `PortfolioService` (holdings, `advise`,
+   `advice`, `ideas`, `resolve_outcomes`, `track_record`).
+   *Found while implementing:* the model inputs come from the recorded book's decision rows (`strategy_decision`, one
+   per universe member per day, served by `/api/decisions`), not from the `AI_BOOK_21` forecast rows: the decision row
+   carries the probability the book acts on, its rank, thresholds, calibrated probability and the 21-day volatility it
+   sized with, so the advice and the book never disagree on a number. The grade is still `AI_BOOK_21`'s live-test
+   verdict (same model, `GBM_AI_39`, issued live on the 21-day target); `read.live_test_of(kind)` now serves both the
+   Accuracy page and the advice. The REVIEW rule reads raw closes and corporate actions of the held companies only
+   (no full-bundle integrity scan on the request path) and the decision row's `vol21` against
+   `integrity.VOL_THRESHOLD` (2.0). `review_on` is as-of + 21 weekdays: exchange holidays ahead are not stored, so the
+   window can end a day or two later. The earnings-date note of the Context was not built: Decision 2 has no earnings
+   rule, and the setup playbook grades the results-day setups mostly as noise.
+4. [x] Tests in `backend/tests/test_portfolio.py` (18): `test_concentration_trims_to_the_volatility_size`,
+   `test_over_risk_size_trims_below_the_cap`, `test_broken_series_reviews_before_risk_and_model`,
+   `test_sell_is_shown_as_opinion_while_the_live_test_is_pending`, `test_add_is_limited_by_cash`,
+   `test_hysteresis_band_holds_between_add_and_trim`, `test_not_covered_symbol_is_valued_at_cost`,
+   `test_advice_idempotent_per_portfolio_state`, `test_advice_rows_are_append_only`,
+   `test_removed_holding_leaves_the_page_but_not_the_record`, `test_buy_ideas_are_the_books_positions_not_held`, and others.
+5. [x] Advice after the decisions in the pipeline (`platform/pipeline.py`, its own step guard) and in the decisions job
+   (`platform/tasks.py`); outcome resolution of `holding_advice` in the pipeline's outcomes step, loading the bundle
+   only when a row is pending; test `test_advice_outcome_resolves_after_21_trading_days`. Logs carry counts only.
 
 ### Phase 3: surfaces
-6. [ ] API in `platform/api/portfolio.py` (Decision 9); `docs/api.md`.
-7. [ ] MCP tools `get_portfolio_advice`, `set_holding`, `remove_holding` in `platform/mcp_server.py`.
-8. [ ] `frontend/src/app/pages/portfolio.ts`: holdings editor, holding cards, buy ideas, track-record chart (shared
-   dot-and-whisker chart); guide entry in `guide-content.ts`; menu entry.
+6. [x] API in `platform/api/portfolio.py` (Decision 9); `docs/api.md` section "Portfolio".
+7. [x] MCP tools `get_portfolio_advice`, `refresh_portfolio_advice`, `set_holding`, `remove_holding`.
+   *Found while implementing:* the refresh is its own action tool so `get_portfolio_advice` stays read-only.
+8. [x] `frontend/src/app/pages/portfolio.ts` (`/portfolio`, menu "My portfolio" under Strategy, icon `wallet`):
+   tiles, the live-test banner, one card per holding, buy ideas, holdings editor with cash, track-record chart
+   (`app-dot-whisker`); guide entry `page-portfolio`.
 
 ### Phase 4: docs
-9. [ ] README: decision list status, the privacy warning without `CIVALPHA_ADMIN_TOKEN`, the "what the tests prove"
-   rows; `docs/BACKLOG.md` rows for the open items.
+9. [x] README: decision list, data-model row, section "My portfolio", MCP tools, the admin-token rule and the privacy
+   warning, the tests list, the limitation note.
 
 ## Open questions for the owner
 
-1. **Headline of the model layer before the live test passes.** (a) `HOLD` headline, model `SELL`/`ADD` shown as
-   opinion until `AI_BOOK_21` passes (recommended, Decision 4); (b) model actions are headline from day one, labelled
-   unproven.
-2. **Reading holdings needs the admin token** (Decision 8). (a) yes, GET included (recommended); (b) keep GETs public
-   as today and rely on the localhost bind.
+Answered 2026-10-07 by "start it now" on the recommendation: 1 (a), the headline stays `HOLD` until the live test
+passes; 2 (a), reading holdings needs the admin token. Several portfolios are the next decision (ADR-0005).

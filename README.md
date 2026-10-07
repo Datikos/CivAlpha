@@ -75,7 +75,8 @@ Design decisions with alternatives are written down before they are built, in `d
 |---|---|---|
 | ADR-0001 | One forecast horizon for the live models, the recorded book and the lab (21 trading days) | Accepted, implemented 2026-10-06 |
 | ADR-0002 | Calibrate the book's probabilities before judging its thresholds | Accepted, implemented 2026-10-06 |
-| ADR-0004 | Advise on the owner's own holdings with risk rules and a graded model opinion, recorded and scored | Proposed 2026-10-07 |
+| ADR-0004 | Advise on the owner's own holdings with risk rules and a graded model opinion, recorded and scored | Accepted, implemented 2026-10-07 |
+| ADR-0005 | Several people, each with their own portfolio, behind real sign-in | Accepted, implemented 2026-10-07 |
 
 ## Architecture
 
@@ -126,6 +127,8 @@ no Kafka, Redis, graph database or Kubernetes. Forecasts and AI decisions are ap
 | Exposure | `company_exposure` | Each exposure records a target (country, product or interest rate), a channel and a share. `basis` is `DIRECTLY_REPORTED` or `ESTIMATED`, with a confidence and a method (`XBRL_DIMENSION`, `XBRL_RATIO`, `RULE_KEYWORD`, `SECTOR_MAP`, `LLM`). Each one links to a filing plus a passage or fact, and becomes available at `available_at` (the filing's acceptance time). |
 | Models | `model_version`, `forecast`, `forecast_outcome`, `model_evaluation`, `backtest_prediction` | A database trigger rejects `UPDATE` and `DELETE` on `forecast`. Outcomes are stored in a separate table. |
 | Strategies | `strategy_run`, `strategy_result`, `strategy_trade`, `strategy_decision`, `decision_explanation` | Backtest runs, decisions and explanations are written by the worker; decisions are append-only (trigger); language-model explanations live in their own table. |
+| Accounts | `app_user`, `user_session`, `api_token`, `login_attempt`, `audit_event` | ADR-0005. Passwords as scrypt hashes, session cookies and personal tokens as SHA-256 digests; none is ever returned, logged or audited. `audit_event` records who changed which holding, cash amount, portfolio, account, password or token, with before and after. |
+| Portfolio | `portfolio`, `holding`, `holding_advice`, `holding_advice_outcome` | The owner's holdings and cash (empty on a fresh installation). Advice is append-only (trigger), one row per holding, day and portfolio state (`basis`, a hash of holdings and cash); outcomes in their own table. Every row carries `portfolio_id`. |
 
 How an event is linked to a company:
 **event → target (country, sector, product or cost) → company exposure → supporting filing passage or XBRL fact**.
@@ -396,6 +399,39 @@ cost after fees shows next to the other rules. The code is `backend/civalpha/str
 rare, a halving is as common on the same stock-days, and a universe without delisted names overstates the base rate:
 the page says so.
 
+## My portfolio: what to do with the stocks you hold (ADR-0004)
+
+The **My portfolio** page (`/portfolio`) takes your holdings (symbol, shares, average cost in USD) and your cash, and
+gives each holding one action per trading day, built on the recorded book's decisions for that day. The first rule
+that fires decides:
+
+| Action | When | Layer |
+|---|---|---|
+| Not covered | the symbol is not in the universe, has no close that day, or the book made no decision on it | data |
+| Check the data | 21-day volatility above 200%, a raw one-day move of 30% or more in the last 45 days with no corporate action, or an unreviewed 8-K that reads like a split or spin-off (ADR-0003) in the last 120 days | data |
+| Trim | weight above 20%, or above 1.5 × the volatility size min(0.20, 0.04 / 21-day volatility); sell down to the volatility size | risk |
+| Sell | the book's probability below 0.48 | model |
+| Add | probability at least 0.55 and weight below 0.67 × the volatility size; buy up to it within your cash | model |
+| Hold | nothing fired | — |
+
+* **How long:** every action carries a review date 21 weekdays ahead (the forecast window) and the triggers that
+  would change it sooner. Nothing is said beyond 21 trading days: no price targets, no stop prices.
+* **Evidence:** data and risk actions are risk control and need no forecast skill. Sell and Add are the model's
+  opinion: the headline stays Hold until the book model (`AI_BOOK_21`) passes the pre-registered live test; until
+  then the card shows "model says sell, unproven".
+* **When:** advice is made after every pipeline run and every AI-decisions job, and by **Refresh advice**. Editing
+  a holding during a day adds new rows; old rows are never changed.
+* **Track record:** every advice row is scored with the stock's return minus its sector ETF's over the 21 trading
+  days after it; the page shows the mean per action with a 95% interval (bootstrap over symbols) from 30 resolved
+  rows. Rows of one portfolio overlap in time, so it is a track record, not a test.
+* **Buy ideas:** the recorded book's positions you do not own, sized as the book sizes them.
+* **Privacy:** in token mode holdings need the admin token on every request, reads included; in accounts mode each
+  person sees only their own portfolios and can keep several (ADR-0005). Holdings are never sent to a language model,
+  never written to the job log (counts only), and symbols never appear in a URL path.
+
+Code: `backend/civalpha/platform/portfolio.py`, `backend/civalpha/platform/api/portfolio.py`,
+`frontend/src/app/pages/portfolio.ts`; `backend/tests/test_portfolio.py`.
+
 ## Sources and credentials
 
 | Source | Default | To enable | Notes |
@@ -464,6 +500,10 @@ jobs and ask where the evidence points. The server is `backend/civalpha/platform
 * **`set_company_tags(symbol, tags)`:** replaces a stock's user-defined tags (a theme, a watchlist), so an assistant
   can categorize the universe; `list_companies` and `get_company` return them. Removing or editing companies otherwise
   and adding events stay in the UI and the REST API.
+* **Portfolio tools:** `get_portfolio_advice`, `refresh_portfolio_advice`, `set_holding`, `remove_holding` (ADR-0004),
+  each with an optional `portfolio_id`. Token mode: same admin-token rule as the job tools. Accounts mode: the
+  assistant sends a personal token (My account page) and acts on that person's portfolios; job tools need the owner.
+  They return holdings to the assistant that calls them.
 * Resources `civalpha://about` and `civalpha://status`; prompt `investment_review(symbol)` walks through the evidence
   for one stock.
 
@@ -473,6 +513,8 @@ Connect from Claude Code:
 claude mcp add --transport http civalpha http://localhost:8088/mcp
 # with an admin token:
 claude mcp add --transport http civalpha http://localhost:8088/mcp --header "X-Admin-Token: <token>"
+# in accounts mode, with a personal token from the My account page:
+claude mcp add --transport http civalpha http://localhost:8088/mcp --header "Authorization: Bearer cvt_...""
 # or as a local stdio process (trusted like any local program), from backend/ with its virtualenv:
 claude mcp add civalpha -- backend/.venv/bin/python -m civalpha.platform.mcp_server
 ```
@@ -487,11 +529,50 @@ on another interface, list the host names clients use in `CIVALPHA_MCP_ALLOWED_H
 
 ## Security and scheduling
 
-* **Admin token.** Set `CIVALPHA_ADMIN_TOKEN` to require a shared secret for `/api/admin/**` (any method) and
-  for every non-GET `/api` request, such as adding an event. Clients send it as `X-Admin-Token: <token>` or
-  `Authorization: Bearer <token>`. Read-only pages stay public. The **Data & pipeline** page asks for the token
-  and keeps it for the browser tab only. Without a token everything is open, which is why the UI binds to
-  `127.0.0.1` by default (`CIVALPHA_BIND`).
+* **Two access modes (ADR-0005), set by `CIVALPHA_AUTH`.** An unknown value stops the api at start.
+  * **`token`** (default): one shared secret, `CIVALPHA_ADMIN_TOKEN`, for `/api/admin/**`, every non-GET `/api`
+    request and `/api/portfolio*` on every method, reads included (holdings are personal data). Clients send it as
+    `X-Admin-Token: <token>` or `Authorization: Bearer <token>`; the **Data & pipeline** page asks for it and keeps it
+    for the browser tab only. Other read-only pages stay public. **Without a token everything is open, including your
+    holdings**, which is why the UI binds to `127.0.0.1` by default (`CIVALPHA_BIND`).
+  * **`accounts`**: people sign in with a username and password the owner created for them. Nothing but the sign-in
+    page answers without a session, a personal token or the admin token. Roles: `OWNER` (everything) and `MEMBER`
+    (every research page, their own portfolios and account). Each person sees only their own portfolios and can keep
+    several.
+* **Switching on accounts.** Set `CIVALPHA_ADMIN_TOKEN`, create your owner account, then switch the mode:
+
+  ```bash
+  docker compose exec api python -m civalpha.platform.users create-owner <username> "<Your name>"
+  # then in .env: CIVALPHA_AUTH=accounts
+  docker compose up -d api worker
+  ```
+  ```powershell
+  docker compose exec api python -m civalpha.platform.users create-owner <username> "<Your name>"
+  # then in .env: CIVALPHA_AUTH=accounts
+  docker compose up -d api worker
+  ```
+  The **Access** page (admin token in token mode) creates accounts too. The first owner takes over the portfolios
+  entered before. Every other account gets a first password from the owner and must change it at the first sign-in.
+* **Sign-in rules.** Passwords: 12 to 200 characters, not containing the username, stored as scrypt hashes
+  (n = 2^15, r = 8, p = 1). Five failed sign-ins lock an account for 15 minutes; 20 failures from one address in 15
+  minutes answer 429. Unknown user, wrong password, locked and disabled accounts all get the same answer. The session
+  cookie is HttpOnly, SameSite=Strict and Secure. Chrome and Firefox accept a Secure cookie on http://localhost; Safari
+  was not checked (2026-10-07): if signing in loops back to the sign-in page, set `CIVALPHA_COOKIE_SECURE=false` (also
+  needed for plain http on a host name other than localhost). A session lasts 12 hours idle and 7 days at most. Writes
+  from the browser carry
+  `X-CivAlpha-Request: 1`. A password change or reset, a role change and disabling an account stop every other session
+  and personal token of that person at once. Personal tokens (`cvt_...`, 1 to 90 days, shown once) are for assistants
+  and scripts.
+* **What accounts mode does not have (decided 2026-10-07 with option B of ADR-0005):** multi-factor sign-in,
+  self-service password reset (there is no e-mail; the owner sets a new first password on the Access page), sign-in
+  through another identity provider, self sign-up. The per-address limit counts the address nginx sees: a reverse
+  proxy in front of nginx must pass the client address on, or every user shares one address. **Docker Desktop (Mac,
+  Windows) hides the client address:** measured on 2026-10-07, every sign-in through `localhost:8088` arrived from the
+  Docker gateway `172.27.0.1`, so there the 20-failure limit is shared by everyone and 20 wrong passwords from anyone
+  block all sign-ins for 15 minutes. On a Linux host with published ports the real address arrives.
+* **Before anyone outside your household gets an account:** answer whether your price-data licence allows showing the
+  data to them and whether giving them personal buy and sell advice is regulated where they and you live (BACKLOG #11).
+  The software does not decide this.
 * **Schedule.** `CIVALPHA_PIPELINE_CRON` and `CIVALPHA_OUTCOMES_CRON` take cron expressions evaluated by the worker
   in `CIVALPHA_SCHEDULE_ZONE` (default `America/New_York`). Six fields mean seconds first
   (`sec min hour day month weekday`); five fields are standard cron. `-` turns a schedule off, which is the default.
@@ -502,7 +583,7 @@ on another interface, list the host names clients use in `CIVALPHA_MCP_ALLOWED_H
 
 All variables are listed with comments in `.env.example`. The main ones are `CIVALPHA_PORT` (8088),
 `CIVALPHA_BIND`, `CIVALPHA_ADMIN_TOKEN`, `CIVALPHA_PIPELINE_CRON`, `CIVALPHA_OUTCOMES_CRON`, `POSTGRES_PASSWORD`,
-`SEC_USER_AGENT`, `SEC_MAX_RPS`, `SEC_LOOKBACK_YEARS`, `CIVALPHA_PRICE_PROVIDER`, `TIINGO_API_KEY`, `FRED_API_KEY`,
+`CIVALPHA_AUTH`, `CIVALPHA_COOKIE_SECURE`, `SEC_USER_AGENT`, `SEC_MAX_RPS`, `SEC_LOOKBACK_YEARS`, `CIVALPHA_PRICE_PROVIDER`, `TIINGO_API_KEY`, `FRED_API_KEY`,
 `EVENTS_*`, `CIVALPHA_LLM_PROVIDER`, `CIVALPHA_LLM_MODEL`, `CIVALPHA_LLM_REVIEW`, `ANTHROPIC_API_KEY`, `CIVALPHA_MCP_ALLOWED_HOSTS` and
 `CIVALPHA_MCP_ALLOWED_ORIGINS`. The stocks themselves are managed
 on the Universe page; 20–50 symbols is a sensible size.
@@ -519,6 +600,11 @@ on the Universe page; 20–50 symbols is a sensible size.
 * **"price sync failed" / "request limit reached"**
   * The provider refused the requests (for example Tiingo's free plan allows 50 requests an hour). The pipeline
     continues with the prices already stored; try again later.
+* **"The CivAlpha backend is unavailable (HTTP 502)" while the api container is healthy**
+  * Since 2026-10-07 nginx looks the api up through Docker's DNS on every request (`resolver 127.0.0.11`, cached
+    10 s, `frontend/nginx.conf`), so recreating the api container no longer leaves it pointing at the old address.
+  * An image built before that change still has the old behaviour. Fix: `docker compose up -d --build frontend`.
+  * Otherwise the api is down or still starting: `docker compose ps`, then `docker compose logs --tail 50 api`.
 
 ## Tests
 
@@ -532,7 +618,17 @@ The suite covers:
 * the platform: SEC parsers (incl. XXE), passage rules, dedup, FOMC parsing, ticker resolution, price providers
   and sync;
 * a Testcontainers PostgreSQL suite (needs Docker) for migrations, ticker changes, revised filings, price
-  versioning, forecast and decision immutability, API smoke tests and the MCP server (tools, token rule, host check).
+  versioning, forecast and decision immutability, API smoke tests and the MCP server (tools, token rule, host check);
+* the portfolio advice (`test_portfolio.py`): the rule order (data before risk before model), trims to the volatility
+  size, the live-test gate that keeps an unproven Sell or Add off the headline, additions limited by cash, the
+  hysteresis band, append-only rows per portfolio state, outcome resolution after 21 trading days, and the token on
+  every `/api/portfolio` method;
+* accounts mode (`test_accounts.py`): the role table route by route, anonymous 401, a member refused on owner routes,
+  the CSRF header, the first-sign-in password change, cookie flags, lockout after 5 failures with the same answer as
+  an unknown user, 429 per address, cross-tenant reads and writes answering 404, personal tokens (digest stored,
+  revocation), a disabled user's live cookie refused, a password change stopping other sessions and tokens, an owner
+  reset, an audit trail without secrets, and the pipeline advising active users only; the MCP server in accounts mode
+  (`test_platform_mcp.py`).
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on every pull request and every push to `main`. It runs the
 Python tests (and fails if the database tests could not run), the Angular production build, and a
@@ -591,5 +687,6 @@ docs/      api.md (REST contract and MCP tools); research/ (dated research notes
   filing accepted between 16:00 and 17:00 on a summer day counts as known at that day's close. The earnings module
   decides sessions in New York time; the other features still use the fixed cutoff.
 * **Operations.**
-  * Admin protection is a single shared token. Real multi-user access needs proper authentication and roles.
+  * Accounts mode has no multi-factor sign-in and no self-service password reset (ADR-0005); research data is shared
+    by everyone, and only the owner runs jobs and edits the universe. The audit trail is kept without a retention limit.
   * The scheduler runs inside the worker, so a missed run while the stack is down is not caught up.

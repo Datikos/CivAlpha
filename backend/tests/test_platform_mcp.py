@@ -227,3 +227,34 @@ def test_foreign_host_and_origin_are_rejected(mcp):
 
 def test_endpoint_answers_503_before_the_transport_starts(api):
     assert api.post("/mcp", json={}, headers=HEADERS).status_code == 503
+
+
+def test_accounts_mode_tools_act_as_the_personal_tokens_user(mcp, monkeypatch):
+    """ADR-0005: in accounts mode an MCP client needs a personal token; portfolio tools act on that user's portfolios,
+    job tools need the owner role, and a request without a caller never reaches a tool."""
+    import uuid
+
+    from civalpha.platform import auth, settings
+    from civalpha.platform.users import UserService
+
+    monkeypatch.setenv("CIVALPHA_AUTH", "accounts")
+    monkeypatch.setattr(auth, "SCRYPT_N", 2 ** 10)
+    settings.settings.cache_clear()
+    try:
+        name = f"m{uuid.uuid4().hex[:10]}"
+        u = UserService().create(auth.LOCAL, name, "Member", "MEMBER", "a long enough passphrase", must_change=False)
+        token = UserService().create_token(auth.Caller("SESSION", "MEMBER", u["id"]), "mcp", 1)["token"]
+        bearer = {"Authorization": f"Bearer {token}"}
+        r = mcp.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}, headers=HEADERS)
+        assert r.status_code == 401
+        err, company = call(mcp, "get_company", {"symbol": "META"}, bearer)
+        assert err is None and company["symbol"] == "META"
+        err, held = call(mcp, "set_holding", {"symbol": "META", "shares": 2, "avg_cost_usd": 10}, bearer)
+        assert err is None and held["symbol"] == "META"
+        err, advice = call(mcp, "get_portfolio_advice", {}, bearer)
+        assert err is None and advice["portfolio"]["name"] == "default"
+        err, _ = call(mcp, "evaluate_models", {}, bearer)
+        assert err is not None and "owner role" in err
+    finally:
+        monkeypatch.setenv("CIVALPHA_AUTH", "token")
+        settings.settings.cache_clear()

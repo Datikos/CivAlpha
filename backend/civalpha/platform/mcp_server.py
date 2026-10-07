@@ -5,7 +5,7 @@ Served by the API process at /mcp (streamable HTTP, stateless), so through nginx
     claude mcp add --transport http civalpha http://localhost:8088/mcp
 
 Tools call the same code as the REST endpoints, in-process, and condense the answers for a language model (summaries
-instead of long series). Research tools are public like the read API; job tools follow the admin-token rule: when
+instead of long series). Research tools are public like the read API; job and portfolio tools follow the admin-token rule: when
 CIVALPHA_ADMIN_TOKEN is set, an HTTP client must send it (X-Admin-Token or Authorization: Bearer). A local stdio run
 (python -m civalpha.platform.mcp_server) is trusted like any other process on the machine.
 """
@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import contextlib
 import functools
-import hmac
 import json
 import time
 from datetime import date
@@ -24,10 +23,11 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from starlette.routing import Route
 
-from . import sectors
+from . import auth, sectors
 from .api import admin, events as events_api, read, universe as universe_api
 from .errors import BadRequest, NotFound, Problem, Unavailable
 from .jobs import Jobs
+from .portfolio import PortfolioService
 from .rows import camel
 from .sec.profile import CompanyProfiler
 from .settings import settings
@@ -53,22 +53,34 @@ This is research software and not investment advice. It places no orders. Quote 
 the tools return; never claim profitability the platform itself does not support. Start with get_status."""
 
 
-def require_admin(ctx) -> None:
-    """Job tools: with an admin token configured, an HTTP client must present it. No transport or no HTTP headers
-    (stdio, direct calls) means a local operator, who is trusted like any other process on the machine."""
-    token = settings().admin_token
-    if not token or ctx is None:
-        return
+def caller_of(ctx) -> auth.Caller:
+    """The caller behind a tool call (ADR-0005). No transport or no HTTP headers (stdio, direct calls) means the local
+    operator, trusted like any other process on the machine; otherwise the admin token, or in accounts mode a personal
+    token (Authorization: Bearer cvt_...)."""
+    if ctx is None:
+        return auth.LOCAL
     headers = getattr(ctx, "headers", None)
     if headers is None:
-        return
-    h = {str(k).lower(): v for k, v in dict(headers).items()}
-    presented = h.get("x-admin-token")
-    auth = h.get("authorization") or ""
-    if presented is None and auth.startswith("Bearer "):
-        presented = auth[7:].strip()
-    if presented is None or not hmac.compare_digest(token.encode(), str(presented).encode()):
-        raise ToolError("admin token required (X-Admin-Token header)")
+        return auth.LOCAL
+    return auth.caller_from({str(k).lower(): v for k, v in dict(headers).items()})
+
+
+def require_admin(ctx) -> auth.Caller:
+    """Job tools: the owner (the admin token over HTTP when one is configured)."""
+    c = caller_of(ctx)
+    if not c.owner:
+        raise ToolError("this tool needs the owner role" if settings().accounts else "admin token required (X-Admin-Token header)")
+    return c
+
+
+def require_user(ctx) -> auth.Caller:
+    """Portfolio tools: in accounts mode any signed-in user, acting on their own portfolios; in token mode the owner."""
+    if not settings().accounts:
+        return require_admin(ctx)
+    c = caller_of(ctx)
+    if not c.signed_in:
+        raise ToolError("sign in required: send a personal token as Authorization: Bearer cvt_...")
+    return c
 
 
 def _domain(fn):
@@ -716,6 +728,51 @@ def build() -> MCPServer:
         """Record the AI strategy's decisions for the latest trading day (or a given date)."""
         d = _date(as_of_date, "as_of_date")
         return _action(ctx, lambda: admin.strategy_decide(admin.DateIn(asOfDate=d)), wait_seconds)
+
+    # ------------------------------------------------------------------ the owner's portfolio (ADR-0004, admin-token rule)
+    @tool_read
+    @_domain
+    def get_portfolio_advice(ctx: Context, portfolio_id: int | None = None) -> dict:
+        """The owner's holdings with one action each (NOT_COVERED, REVIEW, TRIM, SELL, ADD, HOLD), the layer that decided it
+        (DATA, RISK, MODEL), the headline shown (a MODEL action stays HOLD until the book model passes its live test), shares
+        to trade, the review date (21 trading days ahead), the triggers that would change it, the book's buy ideas and the
+        live-test verdict. Run refresh_portfolio_advice first after a holding changed. This returns personal holdings to the
+        calling assistant. Quote the layer and the live-test verdict with every action: MODEL actions are unproven until the
+        verdict is PASS. `portfolio_id` picks one of the caller's portfolios (default: the first)."""
+        return _portfolio_advice(PortfolioService(caller=require_user(ctx)), portfolio_id)
+
+    @tool_action
+    @_domain
+    def refresh_portfolio_advice(ctx: Context, portfolio_id: int | None = None) -> dict:
+        """Compute the advice for the portfolio as it is now, on the book's latest decision date, then return it as
+        get_portfolio_advice does. Idempotent while the portfolio is unchanged."""
+        svc = PortfolioService(caller=require_user(ctx))
+        svc.advise(pid=portfolio_id)
+        return _portfolio_advice(svc, portfolio_id)
+
+    def _portfolio_advice(svc: PortfolioService, portfolio_id: int | None) -> dict:
+        a = svc.advice(None, portfolio_id)
+        keep = ("symbol", "name", "shares", "close", "valueUsd", "weight", "action", "layer", "headline", "rule", "targetWeight",
+                "tradeShares", "reviewOn", "triggers", "reasons", "changed", "previousHeadline")
+        return {**_pick(a, "portfolio", "asOfDate", "latestDecisionDate", "stale", "cashUsd", "investedUsd", "totalUsd", "missing", "liveTest", "note"),
+                "advice": [{**_pick(r, *keep), "model": _pick(r.get("model") or {}, "probability", "probabilityCalibrated", "rank",
+                                                               "entryP", "exitP", "proven")} for r in a["advice"]],
+                "ideas": a["ideas"][:10]}
+
+    @tool_action
+    @_domain
+    def set_holding(ctx: Context, symbol: str, shares: float, avg_cost_usd: float, opened_on: str | None = None,
+                    note: str | None = None, portfolio_id: int | None = None) -> dict:
+        """Enter or replace one holding of the caller's portfolio (USD, long only). Run refresh_portfolio_advice after."""
+        return PortfolioService(caller=require_user(ctx)).set_holding(symbol, shares, avg_cost_usd, _date(opened_on, "opened_on"),
+                                                                      note, portfolio_id)
+
+    @tool_action
+    @_domain
+    def remove_holding(ctx: Context, symbol: str, portfolio_id: int | None = None) -> dict:
+        """Remove one holding from the caller's portfolio. Its past advice stays recorded."""
+        PortfolioService(caller=require_user(ctx)).remove_holding(symbol, portfolio_id)
+        return {"removed": symbol.upper().strip()}
 
     @tool_action
     @_domain

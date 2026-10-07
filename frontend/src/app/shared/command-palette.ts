@@ -13,7 +13,8 @@ import {
 import { Router } from '@angular/router';
 import { apiUrl, valueOf } from '../core/api';
 import { CompanySummary } from '../core/models';
-import { NAV_GROUPS } from '../core/nav';
+import { AuthService } from '../core/auth.service';
+import { NAV_GROUPS, NavGroup, visibleNav } from '../core/nav';
 import { Icon, IconName } from './icon';
 
 interface Item {
@@ -32,17 +33,19 @@ interface PageItem extends Item {
 const MAX_COMPANIES = 8;
 const TICKER = /^[A-Za-z0-9.\-]{1,10}$/;
 
-const PAGES: PageItem[] = NAV_GROUPS.flatMap((g) =>
-  g.links.map((l) => ({
-    id: 'p:' + l.path,
-    kind: 'page' as const,
-    label: l.label,
-    sub: g.label,
-    url: l.path,
-    icon: l.icon,
-    haystack: `${l.label} ${g.label} ${l.keywords ?? ''}`.toLowerCase(),
-  })),
-);
+function pageItems(groups: NavGroup[]): PageItem[] {
+  return groups.flatMap((g) =>
+    g.links.map((l) => ({
+      id: 'p:' + l.path,
+      kind: 'page' as const,
+      label: l.label,
+      sub: g.label,
+      url: l.path,
+      icon: l.icon,
+      haystack: `${l.label} ${g.label} ${l.keywords ?? ''}`.toLowerCase(),
+    })),
+  );
+}
 
 /** ⌘K quick jump: pages and companies, keyboard driven. */
 @Component({
@@ -149,6 +152,11 @@ export class CommandPalette {
   readonly open = model(false);
 
   private readonly router = inject(Router);
+  private readonly auth = inject(AuthService);
+  /** Owner-only pages are not offered to a MEMBER in accounts mode (ADR-0005). */
+  private readonly pageList = computed(() =>
+    pageItems(visibleNav(NAV_GROUPS, this.auth.accountsMode(), this.auth.ownerView())),
+  );
   private readonly dlg = viewChild.required<ElementRef<HTMLDialogElement>>('dlg');
   private readonly box = viewChild.required<ElementRef<HTMLInputElement>>('box');
 
@@ -164,7 +172,7 @@ export class CommandPalette {
 
   protected readonly pages = computed<Item[]>(() => {
     const terms = this.terms();
-    return PAGES.filter((p) => terms.every((t) => p.haystack.includes(t)));
+    return this.pageList().filter((p) => terms.every((t) => p.haystack.includes(t)));
   });
 
   protected readonly companies = computed<Item[]>(() => {

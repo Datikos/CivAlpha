@@ -18,6 +18,8 @@ from .forecasts import ForecastService
 from .jobs import Log, Progress
 from .market import MarketDataService, PriceSyncService
 from .pipeline import Pipeline, java_map, java_set
+from .auth import SYSTEM
+from .portfolio import PortfolioService
 from .sec import FilingIngestionService, SecClientFactory
 from .sql import engine
 from .tickers import TickerResolver
@@ -53,6 +55,9 @@ def strategy_decide(params: dict, log: Log) -> None:
     _benchmarks(log)
     r = DecisionService().decide(_date(params), log)
     log(f"AI decisions: {r.created} stored, {r.existing} already existed, {r.explained} explained, {r.reviewed} reviewed, {r.vetoed} vetoed")
+    a = PortfolioService(caller=SYSTEM).advise_all()     # ADR-0004: the advice reads these decisions; counts only in the log
+    if a.as_of is not None:
+        log(f"portfolio advice for {a.as_of}: {a.portfolios} portfolios, {a.created} rows stored, {a.existing} already existed")
 
 
 def doubler_study(params: dict, log: Log) -> None:

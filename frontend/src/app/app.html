@@ -73,7 +73,7 @@
   </button>
 
   <nav class="nav">
-    @for (g of groups; track g.label) {
+    @for (g of groups(); track g.label) {
       <div class="nav-group">
         <div class="nav-group-label">{{ g.label }}</div>
         @for (l of g.links; track l.path) {
@@ -91,6 +91,29 @@
       </div>
     }
   </nav>
+
+  @if (user(); as u) {
+    <div class="side-user">
+      <span class="user-avatar" aria-hidden="true"><app-icon name="user" [size]="16" /></span>
+      <div class="user-text">
+        <strong class="user-name" [title]="u.username ?? ''">{{ u.displayName || u.username || 'Signed in' }}</strong>
+        <span
+          class="chip"
+          [class]="'chip tone-' + (u.role === 'OWNER' ? 'warn' : 'info')"
+          [title]="u.role === 'OWNER' ? 'Owner: jobs, universe, events, user management and every page' : 'Member: every research page read-only, your own portfolios and account'"
+          >{{ u.role === 'OWNER' ? '★' : '●' }} {{ u.role }}</span
+        >
+      </div>
+      <div class="user-links">
+        <a routerLink="/account" class="user-link" title="My account: password and personal tokens">
+          <app-icon name="key" [size]="15" /><span class="nav-text">Account</span>
+        </a>
+        <button type="button" class="user-link" (click)="signOut()" title="Sign out">
+          <app-icon name="logout" [size]="15" /><span class="nav-text">Sign out</span>
+        </button>
+      </div>
+    </div>
+  }
 
   <div class="side-foot">
     <div class="theme" role="group" aria-label="Theme">
@@ -136,7 +159,7 @@
 </aside>
 
 <div class="content">
-  @if (meta.resource.error()) {
+  @if (apiDown()) {
     <div class="api-down" role="alert">
       The CivAlpha API is not reachable right now. Pages will show errors until the backend is
       available.

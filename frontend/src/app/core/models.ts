@@ -18,6 +18,8 @@ export interface Meta {
   missingBenchmarks?: string[];
   /** Configured automatic price provider: none | yahoo | tiingo. */
   priceProvider?: string;
+  /** How callers are recognised (ADR-0005): one shared admin token, or user accounts with sign-in. */
+  authMode: AuthMode;
   dataCutoff: string | null;
   target: string;
   disclaimers: string[];
@@ -1493,4 +1495,257 @@ export interface AddCompanyResponse {
   symbol: string;
   nextSteps: string[];
   jobs: Job[];
+}
+
+// ---------- Portfolio (ADR-0004) ----------
+
+export type AdviceAction = 'NOT_COVERED' | 'REVIEW' | 'TRIM' | 'SELL' | 'ADD' | 'HOLD';
+export type AdviceLayer = 'DATA' | 'RISK' | 'MODEL' | 'NONE';
+
+export interface Holding {
+  symbol: string;
+  companyId: number | null;
+  name: string | null;
+  shares: number;
+  avgCostUsd: number;
+  openedOn: string | null;
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** The portfolio a response is about; null while the caller has none yet (ADR-0005). */
+export interface PortfolioRef {
+  id: number;
+  name: string;
+}
+
+export interface HoldingsResponse {
+  portfolio: PortfolioRef | null;
+  cashUsd: number;
+  holdings: Holding[];
+}
+
+export interface HoldingRequest {
+  symbol: string;
+  shares: number;
+  avgCostUsd: number;
+  openedOn?: string | null;
+  note?: string | null;
+  /** One of the caller's portfolios; without it, their first (a new one named "default" when none exists). */
+  portfolioId?: number | null;
+}
+
+export interface LiveTestStatus {
+  kind: string;
+  verdict: 'PENDING' | 'PASS' | 'FAIL';
+  resolved: number;
+  auc: number | null;
+  brier: number | null;
+  baseRateBrier: number | null;
+  progress: number;
+  minResolved: number;
+  minAuc: number;
+}
+
+export interface AdviceReason {
+  rule: string;
+  action: AdviceAction;
+  layer: AdviceLayer;
+  text: string;
+}
+
+export interface AdviceTrigger {
+  action: AdviceAction;
+  when: string;
+  now: number;
+}
+
+export interface HoldingAdvice {
+  id: number;
+  asOfDate: string;
+  symbol: string;
+  companyId: number | null;
+  name: string | null;
+  shares: number;
+  close: number | null;
+  valueUsd: number;
+  weight: number;
+  action: AdviceAction;
+  layer: AdviceLayer;
+  headline: AdviceAction;
+  rule: string;
+  targetWeight: number | null;
+  tradeShares: number | null;
+  reviewOn: string;
+  triggers: AdviceTrigger[];
+  reasons: AdviceReason[];
+  model: {
+    proven: boolean;
+    liveTest: LiveTestStatus;
+    decisionId?: number;
+    decisionKey?: string;
+    bookAction?: string;
+    probability?: number;
+    probabilityCalibrated?: number | null;
+    rank?: number;
+    entryP?: number;
+    exitP?: number;
+    vol21?: number | null;
+    horizon?: number;
+  };
+  createdAt: string;
+  outcome: { excessReturn: number; windowEndDate: string } | null;
+  previousHeadline: AdviceAction | null;
+  changed: boolean;
+}
+
+export interface BuyIdea {
+  symbol: string;
+  name: string | null;
+  bookAction: string;
+  probability: number;
+  probabilityCalibrated: number | null;
+  rank: number | null;
+  targetWeight: number;
+  amountUsd: number | null;
+  proven: boolean;
+}
+
+export interface AdviceResponse {
+  portfolio: PortfolioRef | null;
+  asOfDate: string | null;
+  dates: string[];
+  latestDecisionDate: string | null;
+  stale: boolean;
+  cashUsd: number;
+  investedUsd: number;
+  totalUsd: number;
+  missing: string[];
+  advice: HoldingAdvice[];
+  ideas: BuyIdea[];
+  liveTest: LiveTestStatus;
+  note: string;
+}
+
+export interface TrackRecordRow {
+  action: AdviceAction;
+  layer: AdviceLayer;
+  advised: number;
+  resolved: number;
+  meanExcess: number | null;
+  ci: [number, number] | null;
+}
+
+export interface TrackRecordResponse {
+  minResolved: number;
+  horizon: number;
+  actions: TrackRecordRow[];
+  note: string;
+}
+
+/** GET /api/portfolios: the caller's portfolios (ADR-0005). */
+export interface PortfolioSummary {
+  id: number;
+  name: string;
+  cashUsd: number;
+  holdings: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ---------- Access (ADR-0005) ----------
+
+export type AuthMode = 'token' | 'accounts';
+export type UserRole = 'OWNER' | 'MEMBER';
+export type UserStatus = 'ACTIVE' | 'DISABLED';
+/** SESSION: signed in with a password; API_TOKEN: a personal token; ADMIN_TOKEN: the shared secret; LOCAL: token mode without a token. */
+export type CallerKind = 'SESSION' | 'API_TOKEN' | 'ADMIN_TOKEN' | 'LOCAL';
+
+export interface Caller {
+  kind: CallerKind;
+  role: UserRole;
+  userId: number | null;
+  username: string | null;
+  displayName: string | null;
+  mustChangePassword: boolean;
+}
+
+/** GET /api/auth/me; also the answer of sign-in and password change. */
+export interface AuthMe {
+  authMode: AuthMode;
+  signedIn: boolean;
+  caller: Caller | null;
+}
+
+export interface AppUser {
+  id: number;
+  username: string;
+  displayName: string;
+  email: string | null;
+  role: UserRole;
+  status: UserStatus;
+  mustChangePassword: boolean;
+  lockedUntil: string | null;
+  lastLoginAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NewUserRequest {
+  username: string;
+  displayName: string;
+  role: UserRole;
+  password: string;
+  email: string | null;
+}
+
+export interface EditUserRequest {
+  displayName?: string;
+  email?: string | null;
+  role?: UserRole;
+  status?: UserStatus;
+}
+
+export interface ApiToken {
+  id: number;
+  name: string;
+  /** The first characters of the token, for recognising it; the token itself is never shown again. */
+  prefix: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  expiresAt: string;
+  revokedAt: string | null;
+  active: boolean;
+}
+
+/** POST /api/auth/tokens: the row plus the token, shown this once. */
+export interface NewApiToken extends ApiToken {
+  token: string;
+}
+
+export type AuditAction =
+  | 'USER_CREATED'
+  | 'USER_UPDATED'
+  | 'PASSWORD_RESET'
+  | 'PASSWORD_CHANGED'
+  | 'TOKEN_CREATED'
+  | 'TOKEN_REVOKED'
+  | 'PORTFOLIO_CREATED'
+  | 'HOLDING_SET'
+  | 'HOLDING_REMOVED'
+  | 'CASH_SET';
+
+export interface AuditEvent {
+  id: number;
+  at: string;
+  actorUserId: number | null;
+  actorUsername: string | null;
+  actorKind: CallerKind | string;
+  action: AuditAction | string;
+  targetType: string | null;
+  targetId: string | number | null;
+  portfolioId: number | null;
+  before: unknown;
+  after: unknown;
 }

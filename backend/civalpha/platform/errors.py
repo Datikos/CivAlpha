@@ -20,3 +20,15 @@ class Unavailable(Exception):
 
 class Problem(Exception):
     pass
+
+
+class Unauthorized(Exception):
+    """401: no caller, or the sign-in failed (ADR-0005)."""
+
+
+class Forbidden(Exception):
+    """403: a caller without the role the route needs."""
+
+
+class TooManyRequests(Exception):
+    """429: the sign-in limit for one address was reached."""

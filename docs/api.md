@@ -522,13 +522,125 @@ response is `401`. `GET /api/meta` reports `adminTokenRequired`.
 
 Errors are `{"error": "explanation"}` with status 400 (invalid request) or 404 (unknown id/symbol).
 
+## Access: token mode and accounts mode (ADR-0005)
+
+`CIVALPHA_AUTH` selects how callers are recognised; `GET /api/meta` → `authMode` says which one runs.
+
+* **`token`** (default): one shared secret, `CIVALPHA_ADMIN_TOKEN`, sent as `X-Admin-Token` or `Authorization: Bearer`.
+  With it configured, `/api/admin/**`, `/api/portfolio*` (every method) and every non-GET `/api` call need it (401
+  `{"error": "admin token required (X-Admin-Token header)"}`); other reads are public. Without it everything is open.
+* **`accounts`**: every `/api` and `/mcp` request needs a caller: the session cookie `civalpha_session`, a personal token
+  (`Authorization: Bearer cvt_...`) or the admin token (acts as `OWNER`). Anonymous callers reach only `/health`,
+  `GET /api/meta`, `GET /api/auth/me` and `POST /api/auth/login|logout`; anything else answers 401
+  `{"error": "sign in required"}`. Roles: `OWNER` (everything) and `MEMBER` (all reads, their own portfolios and
+  account). `/api/admin/**` and every non-GET outside `/api/portfolio*` and `/api/auth/**` need `OWNER` (403
+  `{"error": "this needs the owner role"}`).
+* A cookie-authenticated non-GET must send `X-CivAlpha-Request: 1` (403 `{"error": "missing X-CivAlpha-Request header"}`).
+* A user whose password must be changed (first sign-in, after a reset) reaches only `/api/meta`, `/api/auth/me`,
+  `/api/auth/password` and `/api/auth/logout`; anything else answers 403 `{"error": "change your password first", "code": "PASSWORD_CHANGE_REQUIRED"}`.
+
+Sign-in and the caller's own account:
+
+* `POST /api/auth/login` body `{"username": "anna", "password": "..."}` → sets the cookie (HttpOnly, SameSite=Strict,
+  Secure unless `CIVALPHA_COOKIE_SECURE=false`, 7 days at most, 12 hours idle) and answers like `/me`. 401
+  `{"error": "wrong username or password"}` for an unknown user, a wrong password, a locked account (5 failures lock it
+  for 15 minutes) or a disabled one; 429 after 20 failures from one address in 15 minutes; 400 in `token` mode.
+* `POST /api/auth/logout` → `{"signedIn": false}`, clears the cookie.
+* `GET /api/auth/me` → `{"authMode": "accounts", "signedIn": true, "caller": {"kind": "SESSION", "role": "MEMBER",
+  "userId": 4, "username": "anna", "displayName": "Anna", "mustChangePassword": false}}`; `caller` is null when anonymous.
+  `kind` is `SESSION`, `API_TOKEN`, `ADMIN_TOKEN` or `LOCAL` (token mode, no admin token configured).
+* `POST /api/auth/password` body `{"currentPassword": "...", "newPassword": "..."}` → like `/me`. Passwords are 12 to
+  200 characters and must not contain the username (400 otherwise). Every other session and every personal token of
+  the user stop.
+* `GET /api/auth/tokens` → `[{"id", "name", "prefix": "cvt_AbC123", "createdAt", "lastUsedAt", "expiresAt", "revokedAt", "active"}]`.
+* `POST /api/auth/tokens` body `{"name": "Claude Desktop", "days": 30}` (1 to 90) → the row plus `"token": "cvt_..."`,
+  shown this once.
+* `POST /api/auth/tokens/{id}/revoke` → 204; 404 when not the caller's.
+
+The owner's account management (`OWNER`; in `token` mode the admin token, which is how the first owner is created):
+
+* `GET /api/admin/users` → `[{"id", "username", "displayName", "email", "role", "status", "mustChangePassword",
+  "lockedUntil", "lastLoginAt", "createdAt", "updatedAt"}]`. The password hash is never returned.
+* `POST /api/admin/users` body `{"username": "anna", "displayName": "Anna", "role": "MEMBER", "password": "...", "email": null}`
+  → the user, who must change the password at the first sign-in. Usernames: 3 to 40 lower-case letters, digits,
+  `.`, `_`, `-`. Creating the first `OWNER` assigns every portfolio without an owner to it.
+* `PUT /api/admin/users/{id}` body any of `{"displayName", "email", "role", "status": "ACTIVE" | "DISABLED"}` → the
+  user. Disabling or changing the role stops every session and token of the user. The last active owner cannot be
+  demoted or disabled (400); nobody can disable or demote themselves (403).
+* `POST /api/admin/users/{id}/password` body `{"password": "..."}` → the user: a new first password, sessions and tokens
+  stopped, lock cleared.
+* `GET /api/admin/audit?limit=200&userId=4` → `[{"id", "at", "actorUserId", "actorUsername", "actorKind", "action",
+  "targetType", "targetId", "portfolioId", "before", "after"}]`, newest first. Actions: `USER_CREATED`, `USER_UPDATED`,
+  `PASSWORD_RESET`, `PASSWORD_CHANGED`, `TOKEN_CREATED`, `TOKEN_REVOKED`, `PORTFOLIO_CREATED`, `HOLDING_SET`,
+  `HOLDING_REMOVED`, `CASH_SET`.
+
+## Portfolios (ADR-0004, ADR-0005)
+
+The caller's portfolios and the advice on them. In `token` mode every `/api/portfolio*` request needs the admin token
+when one is configured, `GET` included (holdings are personal data). In `accounts` mode each signed-in user sees only
+their own portfolios: another user's `portfolioId` answers 404. A user starts with none: the first holding or cash
+entry creates one named `default`. USD only, long only. Symbols travel in the request body, never in the path, so
+access logs do not record which stocks are held. Every portfolio endpoint takes an optional `portfolioId` (query on
+`GET`, body field on writes); without it, the caller's first portfolio.
+
+* `GET /api/portfolios` → `[{"id": 3, "name": "default", "cashUsd": 1500.0, "holdings": 4, "createdAt", "updatedAt"}]`.
+* `POST /api/portfolios` body `{"name": "Pension"}` → the portfolio; 400 for a duplicate name or more than 20.
+
+* `GET /api/portfolio/holdings?portfolioId=3` → `{"portfolio": {"id": 3, "name": "default"}, "cashUsd": 1500.0, "holdings": [{"symbol": "MSFT", "companyId": 12, "name": "Microsoft Corporation",
+  "shares": 10.0, "avgCostUsd": 310.5, "openedOn": "2024-03-01", "note": "core", "createdAt": "...", "updatedAt": "..."}]}`.
+  `companyId` and `name` are null while the symbol is not in the universe.
+* `PUT /api/portfolio/holdings` body `{"symbol": "MSFT", "shares": 10, "avgCostUsd": 310.5, "openedOn": "2024-03-01", "note": "core"}` →
+  the holding. Creates or replaces. 400 when `shares` ≤ 0, `avgCostUsd` < 0, the symbol is not 1–12 letters, digits,
+  `.` or `-`, `openedOn` is in the future, the note exceeds 500 characters, or 200 holdings already exist.
+* `POST /api/portfolio/holdings/remove` body `{"symbol": "MSFT"}` → 204; 404 when not held. Advice already given stays recorded.
+* `PUT /api/portfolio/cash` body `{"cashUsd": 1500}` → `{"cashUsd": 1500.0}`.
+* `POST /api/portfolio/advice` body `{"portfolioId": 3}` (optional) → computes the advice for the portfolio as it is now on the recorded book's latest
+  decision date, then answers like `GET`, plus `created` and `existing` (rows already stored for this portfolio state).
+* `GET /api/portfolio/advice?date=2026-10-05` → the newest advice of that day (default: the latest advised day) for the
+  current holdings:
+```json
+{ "portfolio": {"id": 3, "name": "default"}, "asOfDate": "2026-10-05", "dates": ["2026-10-05"], "latestDecisionDate": "2026-10-05", "stale": false,
+  "cashUsd": 1500.0, "investedUsd": 8200.0, "totalUsd": 9700.0, "missing": [],
+  "advice": [{"id": 4, "symbol": "MSFT", "name": "Microsoft Corporation", "shares": 10.0, "close": 420.1, "valueUsd": 4201.0,
+              "weight": 0.433, "action": "TRIM", "layer": "RISK", "headline": "TRIM", "rule": "OVER_CAP",
+              "targetWeight": 0.152, "tradeShares": -6.0, "reviewOn": "2026-11-03",
+              "triggers": [{"action": "SELL", "when": "probability below 0.48", "now": 0.52}, ...],
+              "reasons": [{"rule": "OVER_CAP", "action": "TRIM", "layer": "RISK", "text": "Weight 43.3% is above 20.0% ...", "weight": 0.433, "limit": 0.2, "target": 0.152}],
+              "model": {"proven": false, "liveTest": {"kind": "AI_BOOK_21", "verdict": "PENDING", "resolved": 0, ...},
+                        "decisionId": 9120, "decisionKey": "AI_SIZED", "bookAction": "STAY_OUT", "probability": 0.52,
+                        "probabilityCalibrated": 0.50, "rank": 40, "entryP": 0.55, "exitP": 0.48, "vol21": 0.26, "horizon": 21},
+              "outcome": null, "previousHeadline": null, "changed": false}],
+  "ideas": [{"symbol": "NVDA", "name": "NVIDIA Corporation", "bookAction": "HOLD", "probability": 0.61, "probabilityCalibrated": 0.52,
+             "rank": 2, "targetWeight": 0.08, "amountUsd": 776.0, "proven": false}],
+  "liveTest": {"kind": "AI_BOOK_21", "verdict": "PENDING", "resolved": 0, "minResolved": 500, "minAuc": 0.53, ...},
+  "note": "Research software, not investment advice; ..." }
+```
+  `action` is the first rule that fired, in this order: `NOT_COVERED` (rules `NOT_IN_UNIVERSE`, `NO_PRICE`,
+  `NO_DECISION`), `REVIEW` (`BROKEN_VOLATILITY`: 21-day volatility above 200%; `UNEXPLAINED_MOVE`: a raw one-day move of
+  30% or more in the last 45 calendar days with no corporate action that day; `CORPORATE_ACTION_GAP`: an unreconciled,
+  unrejected corporate-action candidate in the last 120 days), `TRIM` (`OVER_CAP`: weight above 20%; `OVER_RISK_SIZE`:
+  above 1.5 × the volatility size `targetWeight` = min(0.20, 0.04 / `vol21`)), `SELL` (`MODEL_EXIT`: p below `exitP`),
+  `ADD` (`MODEL_ADD`: p at least `entryP` and weight below 0.67 × the volatility size), `HOLD`. `reasons` lists every
+  rule that fired. `layer` is `DATA`, `RISK`, `MODEL` or `NONE`; `headline` equals `action` except that a `MODEL`
+  action shows `HOLD` until `liveTest.verdict` is `PASS`. `tradeShares` is negative to sell and positive to buy (an
+  `ADD` is limited by `cashUsd`), null when nothing whole is to be traded. `reviewOn` is the as-of date plus 21
+  weekdays. `outcome` is `{excessReturn, windowEndDate}` once the 21 trading days after the advice have closed.
+  `ideas` are the book's `ENTER` and `HOLD` positions not held, sized like the book. `stale` is true when the book has
+  decided a newer day than the advice shown.
+* `GET /api/portfolio/track-record` → `{"minResolved": 30, "horizon": 21, "actions": [{"action": "TRIM", "layer": "RISK",
+  "advised": 40, "resolved": 31, "meanExcess": -0.004, "ci": [-0.02, 0.011]}, ...], "note": "..."}`: per action, the
+  mean excess return over the sector ETF in the 21 trading days after the advice (the day's newest portfolio state, one
+  row per holding and day) with a 95% interval bootstrapped over symbols, both null below 30 resolved rows.
+
 ## MCP (Model Context Protocol)
 
 `POST /mcp` (Streamable HTTP, stateless, JSON responses) serves the same data and actions to MCP clients. Through the UI
 it is `http://localhost:8088/mcp`; it answers `503` until the MCP transport has started with the API. The endpoint
 rejects a `Host` or `Origin` that is not localhost/127.0.0.1 unless listed in `CIVALPHA_MCP_ALLOWED_HOSTS` /
-`CIVALPHA_MCP_ALLOWED_ORIGINS` (DNS-rebinding protection). Job tools follow the admin-token rule above: send
-`X-Admin-Token` (or `Authorization: Bearer`) with the MCP requests. A local stdio run
+`CIVALPHA_MCP_ALLOWED_ORIGINS` (DNS-rebinding protection). In `token` mode job and portfolio tools follow the
+admin-token rule above: send `X-Admin-Token` (or `Authorization: Bearer`) with the MCP requests. In `accounts` mode
+every MCP request needs a personal token (`Authorization: Bearer cvt_...`) or the admin token; job tools need `OWNER`,
+portfolio tools act on the token owner's portfolios. A local stdio run
 (`python -m civalpha.platform.mcp_server`) is trusted like any local process.
 
 Tools call the same code as the REST endpoints and return condensed JSON (also as `structuredContent`; lists as
@@ -563,6 +675,8 @@ Tools call the same code as the REST endpoints and return condensed JSON (also a
 | `discover_companies(min_public_float_usd?, exchanges?, limit?)` | `GET /api/admin/universe/discover` | candidates for a universe expansion with the quota and pipeline-time notes |
 | `expand_universe(min_public_float_usd?, exchanges?, limit?, tag?, symbols?, ingest_sec?, sync_prices?, wait_seconds?)` | `GET .../discover` + `POST /api/admin/universe/expand` | admin; adds the discovered candidates (or only `symbols` among them) in one job |
 | `set_company_tags(symbol, tags)` | `PUT /api/admin/universe/companies/{id}/tags` | admin; replaces the company's user-defined tags (`[]` clears); former tickers resolve |
+| `get_portfolio_advice(portfolio_id?)` / `refresh_portfolio_advice(portfolio_id?)` | `GET` / `POST /api/portfolio/advice` | token mode: admin; accounts mode: any signed-in caller, on their own portfolios; each holding's action, layer, headline, shares to trade, review date, triggers and the book's probability, plus up to 10 buy ideas and the live-test verdict. Returns personal holdings to the calling assistant |
+| `set_holding(symbol, shares, avg_cost_usd, opened_on?, note?, portfolio_id?)` / `remove_holding(symbol, portfolio_id?)` | `PUT /api/portfolio/holdings` / `POST /api/portfolio/holdings/remove` | as above |
 
 `investment_candidates` returns:
 ```json

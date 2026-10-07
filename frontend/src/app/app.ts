@@ -1,9 +1,11 @@
 import { isPlatformBrowser } from '@angular/common';
-import { Component, HostListener, PLATFORM_ID, effect, inject, signal } from '@angular/core';
+import { HttpErrorResponse } from '@angular/common/http';
+import { Component, HostListener, PLATFORM_ID, computed, effect, inject, signal } from '@angular/core';
 import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { filter } from 'rxjs';
+import { AuthService } from './core/auth.service';
 import { MetaService } from './core/meta.service';
-import { NAV_GROUPS } from './core/nav';
+import { NAV_GROUPS, visibleNav } from './core/nav';
 import { ThemePref, ThemeService } from './core/theme.service';
 import { CommandPalette } from './shared/command-palette';
 import { Icon } from './shared/icon';
@@ -23,12 +25,30 @@ const MOBILE = '(max-width: 900px)';
   host: {
     '[class.rail]': 'collapsed()',
     '[class.drawer-open]': 'drawer()',
+    '[class.bare]': 'bare()',
   },
 })
 export class App {
   protected readonly meta = inject(MetaService);
   protected readonly theme = inject(ThemeService);
-  protected readonly groups = NAV_GROUPS;
+  protected readonly auth = inject(AuthService);
+  /** Owner-only links are hidden for a MEMBER in accounts mode; account links only exist in accounts mode. */
+  protected readonly groups = computed(() =>
+    visibleNav(NAV_GROUPS, this.auth.accountsMode(), this.auth.ownerView()),
+  );
+  /** The signed-in person shown at the foot of the sidebar (accounts mode only). */
+  protected readonly user = computed(() =>
+    this.auth.accountsMode() && this.auth.signedIn() ? this.auth.caller() : null,
+  );
+  /** The API cannot be reached (no answer or a 5xx); a 401/403 on /api/meta is a sign-in matter, not an outage. */
+  protected readonly apiDown = computed(() => {
+    const e = this.meta.resource.error();
+    if (!e) return false;
+    const status = e instanceof HttpErrorResponse ? e.status : ((e as { cause?: unknown }).cause as HttpErrorResponse | undefined)?.status;
+    return status === undefined || status === 0 || status >= 500;
+  });
+  /** The sign-in page is shown without the navigation. */
+  protected readonly bare = signal(location.pathname.startsWith('/login'));
 
   /** Sidebar reduced to an icon rail (remembered per browser). */
   protected readonly collapsed = signal(readFlag('civalpha.rail'));
@@ -42,8 +62,11 @@ export class App {
 
   constructor() {
     this.router.events
-      .pipe(filter((e) => e instanceof NavigationEnd))
-      .subscribe(() => this.drawer.set(false));
+      .pipe(filter((e): e is NavigationEnd => e instanceof NavigationEnd))
+      .subscribe((e) => {
+        this.drawer.set(false);
+        this.bare.set(e.urlAfterRedirects.startsWith('/login'));
+      });
     effect(() => writeFlag('civalpha.rail', this.collapsed()));
     effect(() => {
       document.body.style.overflow = this.drawer() ? 'hidden' : '';
@@ -58,8 +81,16 @@ export class App {
     this.theme.pref.set(p);
   }
 
+  protected signOut(): void {
+    this.auth.logout().subscribe({
+      next: () => void this.router.navigate(['/login']),
+      error: () => void this.router.navigate(['/login']),
+    });
+  }
+
   @HostListener('document:keydown', ['$event'])
   protected onKey(e: KeyboardEvent): void {
+    if (this.bare()) return;
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
       e.preventDefault();
       this.palette.update((v) => !v);

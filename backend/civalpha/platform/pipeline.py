@@ -1,4 +1,5 @@
-"""The pipeline: refresh prices, SEC filings, macro data and policy events, then evaluate, forecast and decide."""
+"""The pipeline: refresh prices, SEC filings, macro data and policy events, then evaluate, forecast, decide and advise on
+the owner's holdings (ADR-0004)."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -7,6 +8,7 @@ from pathlib import Path
 from .. import service as ml
 from ..strategies import doublers, setups, signals
 from ..strategies import service as strategy_lab
+from ..db import load_bundle
 from .decisions import DecisionService
 from .errors import Problem
 from .events import EventService, LiveEventSources
@@ -14,6 +16,8 @@ from .forecasts import ForecastService
 from .jobs import Log, Progress
 from .macro import MacroService
 from .market import MarketDataService, PriceSyncService
+from .auth import SYSTEM
+from .portfolio import PortfolioService
 from .earnings import EarningsIngestionService
 from .insiders import InsiderIngestionService
 from .sec import FilingIngestionService, SecClientFactory
@@ -133,6 +137,10 @@ class Pipeline:
         log(f"live forecasts: {live.created} created, {live.unchanged} unchanged")
         step("outcomes")
         log("outcomes: " + java_map(ml.resolve_outcomes(engine())))
+        try:   # ADR-0004: counts only; holdings and advice never go into the job log
+            log("portfolio advice outcomes: " + java_map(PortfolioService(self.db, caller=SYSTEM).resolve_outcomes(lambda: load_bundle(engine()))))
+        except Exception as e:  # noqa: BLE001
+            log(f"portfolio advice outcomes skipped: {e}")
         step("strategy lab")
         try:
             log("strategy lab: " + str(strategy_lab.backtest_strategies(engine())["summary"]))
@@ -140,6 +148,12 @@ class Pipeline:
             log(f"AI decisions: {d.created} stored, {d.existing} already existed, {d.explained} explained")
         except Exception as e:  # noqa: BLE001 - the lab is optional; forecasts above are already stored
             log(f"strategy lab skipped: {e}")
+        try:   # ADR-0004: after the decisions it reads; counts only in the log
+            a = PortfolioService(self.db, caller=SYSTEM).advise_all()
+            if a.as_of is not None:
+                log(f"portfolio advice for {a.as_of}: {a.portfolios} portfolios, {a.created} rows stored, {a.existing} already existed")
+        except Exception as e:  # noqa: BLE001
+            log(f"portfolio advice skipped: {e}")
         step("doubler study")
         try:
             log("doubler study: " + str(doublers.study(engine())["headline"]))

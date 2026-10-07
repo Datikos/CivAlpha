@@ -122,11 +122,25 @@ class Settings:
     schedule: Schedule
     mcp: Mcp
     jev: Jev = field(default_factory=lambda: Jev(api_key=""))
+    auth_mode: str = "token"        # ADR-0005: "token" (one shared admin token, reads public) or "accounts" (sign-in)
+    cookie_secure: bool = True      # session cookie Secure flag; false only for plain-http use away from localhost
     extra: dict = field(default_factory=dict)
 
     @property
     def admin_token_required(self) -> bool:
         return bool(self.admin_token)
+
+    @property
+    def accounts(self) -> bool:
+        return self.auth_mode == "accounts"
+
+
+def _auth_mode(v: str) -> str:
+    """A misspelt mode must not fall back to the open one: refuse to start instead."""
+    m = (v or "token").strip().lower()
+    if m not in ("token", "accounts"):
+        raise ValueError(f"CIVALPHA_AUTH must be 'token' or 'accounts', not {v!r}")
+    return m
 
 
 @lru_cache(maxsize=1)
@@ -154,6 +168,8 @@ def load() -> Settings:
         schedule=Schedule(pipeline_cron=_env("CIVALPHA_PIPELINE_CRON", "-"), outcomes_cron=_env("CIVALPHA_OUTCOMES_CRON", "-"),
                           zone=_env("CIVALPHA_SCHEDULE_ZONE", "America/New_York")),
         mcp=Mcp(allowed_hosts=_list("CIVALPHA_MCP_ALLOWED_HOSTS"), allowed_origins=_list("CIVALPHA_MCP_ALLOWED_ORIGINS")),
+        auth_mode=_auth_mode(_env("CIVALPHA_AUTH", "token")),
+        cookie_secure=_bool("CIVALPHA_COOKIE_SECURE", True),
         jev=Jev(api_key=_env("TYPESAFE_API_KEY"), model=_env("CIVALPHA_JEV_MODEL", "jev-1.13.0"),
                 base_url=_env("CIVALPHA_JEV_URL", "https://api.typesafe.ai/v1/systemone")),
     )

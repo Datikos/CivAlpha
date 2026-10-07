@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, input } from '@angular/co
 
 /** 24×24 stroke icons (one or more path strings each). */
 const ICONS = {
+  wallet: ['M4 7h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a1 1 0 0 1-1-1V7z', 'M4 7l11-3v3', 'M16 13.5h.01'],
   pulse: ['M3 12h4l3-8 4 16 3-8h4'],
   history: ['M3 12a9 9 0 1 0 2.6-6.4L3 8', 'M3 3v5h5', 'M12 7.5V12l3 2'],
   target: [
@@ -70,6 +71,19 @@ const ICONS = {
   columns: ['M4 5h16v14H4z', 'M10 5v14M16 5v14'],
   diff: ['M12 4v16', 'M5 9h5M7.5 6.5v5', 'M14 15h5'],
   external: ['M14 4h6v6', 'M20 4 10 14', 'M18 13v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h6'],
+  user: ['M12 4a4 4 0 1 0 0 8 4 4 0 1 0 0-8', 'M4.5 20a7.5 7.5 0 0 1 15 0'],
+  users: [
+    'M9 4.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 1 0 0-7',
+    'M2.5 20a6.5 6.5 0 0 1 13 0',
+    'M16 4.8a3.5 3.5 0 0 1 0 6.4',
+    'M18.5 14.3a6.5 6.5 0 0 1 3 5.7',
+  ],
+  key: ['M8 11a4 4 0 1 0 0 8 4 4 0 1 0 0-8', 'M10.8 12.2 20 3', 'M16.5 6.5l2.5 2.5', 'M14 9l2 2'],
+  lock: ['M6 11h12a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1z', 'M8 11V7.5a4 4 0 0 1 8 0V11', 'M12 15v2'],
+  logout: ['M10 4H6a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h4', 'M15 8l4 4-4 4', 'M19 12H9'],
+  shield: ['M12 3 5 6v5.5c0 4.3 3 7.9 7 9.5 4-1.6 7-5.2 7-9.5V6z', 'M9 12l2 2 4-4'],
+  copy: ['M9 9h10a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V10a1 1 0 0 1 1-1z', 'M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1'],
+  plus: ['M12 5v14M5 12h14'],
 } as const;
 
 export type IconName = keyof typeof ICONS;

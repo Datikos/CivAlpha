@@ -89,6 +89,7 @@ def meta():
         "secConfigured": s.sec.configured,
         "fredEnabled": s.fred.enabled,
         "adminTokenRequired": s.admin_token_required,
+        "authMode": s.auth_mode,
         "missingBenchmarks": MarketDataService().missing_benchmarks(),
         "priceProvider": s.prices.provider.lower() if s.prices.enabled else "none",
         "dataCutoff": value(db().scalar("SELECT max(trade_date) FROM price_bar")),
@@ -579,19 +580,24 @@ def accuracy():
 
 def _live_test(live: dict) -> dict:
     """The pre-registered test scored on the resolved LIVE forecasts (latest version of each series) per model."""
+    return {**LIVE_TEST, "models": {kind: live_test_of(kind) for kind in live}}
+
+
+def live_test_of(kind: str) -> dict:
+    """One model's live-test verdict (evaluation.LIVE_TEST) on its resolved LIVE forecasts, latest version of each series.
+    Also read by the portfolio advice (ADR-0004), whose model layer is graded by the book model's verdict."""
     from sklearn.metrics import roc_auc_score
 
-    per_model = {}
-    for kind, v in live.items():
-        rows = db().all("""
-            WITH latest AS (SELECT DISTINCT ON (series_key) * FROM forecast WHERE issue_mode = 'LIVE' AND model_kind = :k
-                            ORDER BY series_key, version DESC)
-            SELECT l.probability::float8 AS p, o.outcome FROM latest l JOIN forecast_outcome o ON o.forecast_id = l.id""", k=kind)
-        y = [1.0 if r["outcome"] else 0.0 for r in rows]
-        auc = float(roc_auc_score(y, [r["p"] for r in rows])) if len(set(y)) == 2 else None
-        per_model[kind] = live_test_verdict(len(rows), auc, None if v.get("brier") is None else float(v["brier"]),
-                                            None if v.get("baseRate") is None else float(v["baseRate"]))
-    return {**LIVE_TEST, "models": per_model}
+    rows = db().all("""
+        WITH latest AS (SELECT DISTINCT ON (series_key) * FROM forecast WHERE issue_mode = 'LIVE' AND model_kind = :k
+                        ORDER BY series_key, version DESC)
+        SELECT l.probability::float8 AS p, o.outcome FROM latest l JOIN forecast_outcome o ON o.forecast_id = l.id""", k=kind)
+    y = [1.0 if r["outcome"] else 0.0 for r in rows]
+    p = [r["p"] for r in rows]
+    auc = float(roc_auc_score(y, p)) if len(set(y)) == 2 else None
+    brier = float(np.mean([(a - b) ** 2 for a, b in zip(p, y)])) if rows else None
+    base_rate = float(np.mean(y)) if rows else None
+    return live_test_verdict(len(rows), auc, brier, base_rate)
 
 
 # --------------------------------------------------------------------------- strategies, decisions, time machine

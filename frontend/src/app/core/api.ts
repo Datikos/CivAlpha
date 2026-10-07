@@ -4,6 +4,15 @@ import { Observable } from 'rxjs';
 import {
   AddCompanyRequest,
   AddCompanyResponse,
+  AdviceResponse,
+  AppUser,
+  AuthMe,
+  EditUserRequest,
+  NewApiToken,
+  NewUserRequest,
+  PortfolioSummary,
+  Holding,
+  HoldingRequest,
   DiscoverResponse,
   ExpandRequest,
   ExpandResponse,
@@ -66,7 +75,28 @@ export const apiUrl = {
   timeMachineRun: (id: number | string) => `${BASE}/timemachine/${enc(String(id))}`,
   jobs: () => `${BASE}/admin/jobs`,
   universe: () => `${BASE}/admin/universe`,
+  portfolios: () => `${BASE}/portfolios`,
+  portfolioHoldings: (portfolioId?: number | null) =>
+    withQuery(`${BASE}/portfolio/holdings`, { portfolioId: idParam(portfolioId) }),
+  portfolioAdvice: (date?: string | null, portfolioId?: number | null) =>
+    withQuery(`${BASE}/portfolio/advice`, { date, portfolioId: idParam(portfolioId) }),
+  portfolioTrackRecord: (portfolioId?: number | null) =>
+    withQuery(`${BASE}/portfolio/track-record`, { portfolioId: idParam(portfolioId) }),
+  authMe: () => `${BASE}/auth/me`,
+  authTokens: () => `${BASE}/auth/tokens`,
+  adminUsers: () => `${BASE}/admin/users`,
+  adminAudit: (limit?: number | null, userId?: number | null) =>
+    withQuery(`${BASE}/admin/audit`, { limit: idParam(limit), userId: idParam(userId) }),
 };
+
+function idParam(v: number | null | undefined): string | null {
+  return v === null || v === undefined ? null : String(v);
+}
+
+/** Adds portfolioId to a write body only when one is chosen, so the backend's default (the first portfolio) applies otherwise. */
+function withPortfolio<T extends object>(body: T, portfolioId?: number | null): T & { portfolioId?: number } {
+  return portfolioId === null || portfolioId === undefined ? body : { ...body, portfolioId };
+}
 
 /** Mutating calls. */
 @Injectable({ providedIn: 'root' })
@@ -191,6 +221,69 @@ export class ApiService {
     return this.http.delete(`${BASE}/admin/universe/companies/${id}`);
   }
 
+  /** Enters or replaces one holding of the owner's portfolio (ADR-0004). */
+  setHolding(body: HoldingRequest): Observable<Holding> {
+    return this.http.put<Holding>(`${BASE}/portfolio/holdings`, body);
+  }
+
+  /** The symbol goes in the body, so access logs do not record which stocks are held. */
+  removeHolding(symbol: string, portfolioId?: number | null): Observable<unknown> {
+    return this.http.post(`${BASE}/portfolio/holdings/remove`, withPortfolio({ symbol }, portfolioId));
+  }
+
+  setCash(cashUsd: number, portfolioId?: number | null): Observable<{ cashUsd: number }> {
+    return this.http.put<{ cashUsd: number }>(`${BASE}/portfolio/cash`, withPortfolio({ cashUsd }, portfolioId));
+  }
+
+  /** Advice on the book's latest decision date for the portfolio as it is now. */
+  refreshAdvice(portfolioId?: number | null): Observable<AdviceResponse> {
+    return this.http.post<AdviceResponse>(`${BASE}/portfolio/advice`, withPortfolio({}, portfolioId));
+  }
+
+  /** A new, empty portfolio of the caller (ADR-0005); 400 for a duplicate name or more than 20. */
+  createPortfolio(name: string): Observable<PortfolioSummary> {
+    return this.http.post<PortfolioSummary>(`${BASE}/portfolios`, { name });
+  }
+
+  // ---------- sign-in and the caller's own account (ADR-0005) ----------
+
+  login(username: string, password: string): Observable<AuthMe> {
+    return this.http.post<AuthMe>(`${BASE}/auth/login`, { username, password });
+  }
+
+  logout(): Observable<{ signedIn: false }> {
+    return this.http.post<{ signedIn: false }>(`${BASE}/auth/logout`, {});
+  }
+
+  /** Stops every other session and every personal token of the user. */
+  changePassword(currentPassword: string, newPassword: string): Observable<AuthMe> {
+    return this.http.post<AuthMe>(`${BASE}/auth/password`, { currentPassword, newPassword });
+  }
+
+  /** The answer carries the token itself, shown this once. */
+  createToken(name: string, days: number): Observable<NewApiToken> {
+    return this.http.post<NewApiToken>(`${BASE}/auth/tokens`, { name, days });
+  }
+
+  revokeToken(id: number): Observable<unknown> {
+    return this.http.post(`${BASE}/auth/tokens/${id}/revoke`, {});
+  }
+
+  // ---------- the owner's account management (ADR-0005) ----------
+
+  createUser(body: NewUserRequest): Observable<AppUser> {
+    return this.http.post<AppUser>(`${BASE}/admin/users`, body);
+  }
+
+  editUser(id: number, body: EditUserRequest): Observable<AppUser> {
+    return this.http.put<AppUser>(`${BASE}/admin/users/${id}`, body);
+  }
+
+  /** A new first password: the user must change it at the next sign-in; their sessions and tokens stop. */
+  resetUserPassword(id: number, password: string): Observable<AppUser> {
+    return this.http.post<AppUser>(`${BASE}/admin/users/${id}/password`, { password });
+  }
+
   importPrices(file: File): Observable<Job> {
     const form = new FormData();
     form.append('file', file, file.name);
@@ -221,6 +314,15 @@ export function errorMessage(err: unknown): string {
     return err.message;
   }
   return String(err);
+}
+
+/** The backend's own sentence (`{"error": "..."}`) when there is one, verbatim; otherwise errorMessage. */
+export function backendError(err: unknown): string {
+  if (err instanceof HttpErrorResponse && err.status !== 0) {
+    const body = err.error as { error?: unknown } | null;
+    if (body && typeof body === 'object' && typeof body.error === 'string' && body.error) return body.error;
+  }
+  return errorMessage(err);
 }
 
 /**

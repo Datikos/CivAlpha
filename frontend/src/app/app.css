@@ -256,6 +256,80 @@
   transition: transform 0.18s var(--ease);
 }
 
+/* ---------- signed-in user (accounts mode) ---------- */
+.side-user {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.55rem;
+  padding: 0.6rem 0.75rem;
+  border-top: 1px solid var(--border);
+}
+.user-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 50%;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.user-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+}
+.user-name {
+  font-size: 0.86rem;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-text .chip {
+  font-size: 0.68rem;
+}
+.user-links {
+  display: flex;
+  flex-basis: 100%;
+  gap: 0.35rem;
+}
+.user-link {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.5rem;
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-decoration: none;
+}
+.user-link:hover {
+  color: var(--ink);
+  text-decoration: none;
+}
+
+/* ---------- sign-in page: no navigation ---------- */
+:host(.bare) .sidebar,
+:host(.bare) .topbar,
+:host(.bare) .scrim {
+  display: none;
+}
+:host(.bare) .content {
+  margin-left: 0;
+}
+
 /* ---------- collapsed rail (desktop) ---------- */
 :host(.rail) .sidebar {
   width: var(--rail-w);
@@ -293,6 +367,16 @@
 }
 :host(.rail) .side-foot {
   justify-content: center;
+}
+:host(.rail) .side-user {
+  flex-direction: column;
+  padding-inline: 0;
+}
+:host(.rail) .user-text {
+  display: none;
+}
+:host(.rail) .user-links {
+  flex-direction: column;
 }
 :host(.rail) .rail-btn app-icon {
   transform: none;
@@ -379,6 +463,16 @@
   }
   :host(.rail) .nav-text {
     display: inline;
+  }
+  :host(.rail) .side-user,
+  :host(.rail) .user-links {
+    flex-direction: row;
+  }
+  :host(.rail) .side-user {
+    padding-inline: 0.75rem;
+  }
+  :host(.rail) .user-text {
+    display: flex;
   }
   :host(.rail) .side-head,
   :host(.rail) .search-btn,

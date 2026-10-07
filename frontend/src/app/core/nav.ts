@@ -7,6 +7,10 @@ export interface NavLink {
   exact: boolean;
   /** Extra words the command palette matches on. */
   keywords?: string;
+  /** Hidden from a MEMBER in accounts mode (ADR-0005); the route guard refuses it too. */
+  ownerOnly?: boolean;
+  /** Shown only in accounts mode (a page that has nothing to show with the shared admin token). */
+  accountsOnly?: boolean;
 }
 
 export interface NavGroup {
@@ -93,6 +97,13 @@ export const NAV_GROUPS: NavGroup[] = [
         keywords: 'llm trades',
       },
       {
+        path: '/portfolio',
+        label: 'My portfolio',
+        icon: 'wallet',
+        exact: false,
+        keywords: 'holdings my stocks advice what to do sell buy trim add positions',
+      },
+      {
         path: '/timemachine',
         label: 'Time machine',
         icon: 'hourglass',
@@ -138,6 +149,7 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: 'globe',
         exact: false,
         keywords: 'add company symbols',
+        ownerOnly: true,
       },
       {
         path: '/admin',
@@ -145,6 +157,28 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: 'database',
         exact: false,
         keywords: 'admin jobs sync ingest',
+        ownerOnly: true,
+      },
+    ],
+  },
+  {
+    label: 'Account',
+    links: [
+      {
+        path: '/account',
+        label: 'My account',
+        icon: 'user',
+        exact: false,
+        keywords: 'password personal token mcp assistant sign out profile',
+        accountsOnly: true,
+      },
+      {
+        path: '/access',
+        label: 'Access',
+        icon: 'shield',
+        exact: false,
+        keywords: 'users accounts roles owner member audit trail sign in reset password',
+        ownerOnly: true,
       },
     ],
   },
@@ -161,3 +195,13 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
 ];
+
+/** The groups a caller sees: owner-only links go for a MEMBER in accounts mode, account-only links in token mode. */
+export function visibleNav(groups: NavGroup[], accountsMode: boolean, ownerView: boolean): NavGroup[] {
+  return groups
+    .map((g) => ({
+      ...g,
+      links: g.links.filter((l) => (!l.ownerOnly || ownerView) && (!l.accountsOnly || accountsMode)),
+    }))
+    .filter((g) => g.links.length > 0);
+}
