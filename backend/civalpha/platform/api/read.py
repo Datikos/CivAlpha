@@ -560,6 +560,15 @@ def forecast(forecast_id: int):
     return m
 
 
+# --------------------------------------------------------------------------- live quotes (ADR-0006)
+@router.get("/quotes")
+def quotes():
+    """Latest live quote of every universe member and benchmark ETF; display only."""
+    from ..market.quotes import QuoteService
+
+    return QuoteService().public()
+
+
 # --------------------------------------------------------------------------- accuracy
 @router.get("/accuracy")
 def accuracy():

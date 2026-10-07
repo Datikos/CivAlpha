@@ -1,6 +1,6 @@
 import { httpResource } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { Component, computed, inject, input, signal } from '@angular/core';
+import { Component, DestroyRef, computed, inject, input, signal } from '@angular/core';
 import { LowerCasePipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
@@ -125,6 +125,17 @@ const LAYER_HINT: Record<AdviceLayer, string> = {
             <div class="stat-sub">{{ a.investedUsd | usd }} in {{ a.advice.length }} holdings · {{ a.cashUsd | usd }} cash</div>
             <app-meter [value]="a.totalUsd ? a.investedUsd / a.totalUsd : 0" tone="info" label="Invested share" />
           </div>
+          @if (a.live; as lv) {
+            <div class="stat" [class]="'stat tone-' + (lv.stale ? 'warn' : lv.changeUsd >= 0 ? 'good' : 'bad')">
+              <div class="stat-label">Value now <app-help text="Your holdings at the latest live quote (Tiingo's reference price: the last IEX trade or the mid, polled every few minutes in market hours) plus cash. The change is against yesterday's close. Display only: the advice and its share counts stay on the close of the advice date." topic="live-price" label="live value" /></div>
+              <div class="stat-value">{{ lv.totalUsd | usd }}</div>
+              <div class="stat-sub">
+                <span [class]="lv.changeUsd >= 0 ? 'pos' : 'neg'">{{ lv.changeUsd >= 0 ? '▲' : '▼' }} {{ abs(lv.changeUsd) | usd }} today</span>
+                · {{ lv.marketOpen ? 'quotes from' : 'last quote' }} {{ nyTime(lv.asOf) }} New York
+                @if (lv.stale) { · <strong>some quotes are stale</strong> }
+              </div>
+            </div>
+          }
           <div class="stat" [class]="'stat tone-' + (actNow() ? 'warn' : 'good')">
             <div class="stat-label">To act on <app-help text="Holdings whose headline is not Hold: data to check, a trim for size, or (once the model is proven) a sell or add." topic="page-portfolio" label="actions" /></div>
             <div class="stat-value">{{ actNow() }}<span class="unit">of {{ a.advice.length }}</span></div>
@@ -182,10 +193,21 @@ const LAYER_HINT: Record<AdviceLayer, string> = {
                 }
               </p>
 
+              @if (r.live; as q) {
+                <p class="small live-line">
+                  <span class="chip" [class]="'chip tone-' + (q.stale ? 'warn' : (q.change ?? 0) >= 0 ? 'good' : 'bad')"
+                        [title]="'Live quote at ' + nyTime(q.quotedAt) + ' New York (Tiingo reference price). Display only.'">
+                    now {{ q.price | usd }} @if (q.change !== null) { {{ q.change >= 0 ? '▲' : '▼' }} {{ abs(q.change) | pct: 1 }} }
+                  </span>
+                  <span class="muted">{{ q.valueUsd | usd }} · {{ nyTime(q.quotedAt) }}@if (q.stale) { · <strong>stale</strong> }</span>
+                </p>
+              }
+
               @if (r.tradeShares !== null && (r.headline !== 'HOLD' || r.action !== 'HOLD')) {
                 <p class="trade" [class]="'trade tone-' + tone[r.action]">
                   {{ r.tradeShares < 0 ? 'Sell' : 'Buy' }} <strong>{{ abs(r.tradeShares) | num }}</strong> shares
                   @if (r.close !== null) { ≈ {{ abs(r.tradeShares) * r.close | usd }} at {{ r.close | usd }} }
+                  @if (r.live; as q) { <span class="small muted">· now ≈ {{ abs(r.tradeShares) * q.price | usd }}</span> }
                   @if (r.headline !== r.action) { <span class="small muted">(if you follow the opinion)</span> }
                 </p>
               }
@@ -386,6 +408,7 @@ const LAYER_HINT: Record<AdviceLayer, string> = {
     .new-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.5rem; }
     section.card { margin-bottom: 1rem; }
     td .name { margin-left: 0.4rem; }
+    .live-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4rem; margin: 0.3rem 0; }
   `,
 })
 export class PortfolioPage {
@@ -418,6 +441,14 @@ export class PortfolioPage {
   protected draft = { symbol: '', shares: null as number | null, avgCostUsd: null as number | null, openedOn: '', note: '' };
   protected cashDraft: number | null = null;
   protected readonly pctFmt = (v: number) => fmtSignedPct(v, 1);
+  /** ADR-0006: reload the advice every 60 s while the market is open, so the live value follows the quotes. */
+  private readonly refresher = setInterval(() => {
+    if (this.advice()?.live?.marketOpen && !this.busy()) this.adviceRes.reload();
+  }, 60_000);
+  private readonly cleanup = inject(DestroyRef).onDestroy(() => clearInterval(this.refresher));
+  protected nyTime(iso: string): string {
+    return new Date(iso).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit' });
+  }
 
   protected readonly holdings = computed(() => valueOf(this.holdingsRes));
   protected readonly advice = computed(() => valueOf(this.adviceRes));

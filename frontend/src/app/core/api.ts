@@ -75,6 +75,7 @@ export const apiUrl = {
   timeMachineRun: (id: number | string) => `${BASE}/timemachine/${enc(String(id))}`,
   jobs: () => `${BASE}/admin/jobs`,
   universe: () => `${BASE}/admin/universe`,
+  quotes: () => `${BASE}/quotes`,
   portfolios: () => `${BASE}/portfolios`,
   portfolioHoldings: (portfolioId?: number | null) =>
     withQuery(`${BASE}/portfolio/holdings`, { portfolioId: idParam(portfolioId) }),

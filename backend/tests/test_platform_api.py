@@ -8,7 +8,7 @@ READ_URLS = ["/api/meta", "/api/companies", "/api/companies/META", "/api/compani
              "/api/forecasts/current", "/api/forecasts/history", "/api/forecasts/history?symbol=META&modelKind=AUGMENTED",
              "/api/accuracy", "/api/admin/jobs", "/api/strategies", "/api/decisions", "/api/decisions?date=2026-01-02",
              "/api/timemachine", "/api/doublers", "/api/admin/universe", "/health", "/api/companies/META/insiders",
-             "/api/companies/META/earnings", "/api/setups"]
+             "/api/companies/META/earnings", "/api/setups", "/api/quotes"]
 
 
 def test_read_endpoints_answer_without_errors(api):

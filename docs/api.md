@@ -204,6 +204,15 @@ target: `probLow` = `probHigh` = `probability`, no interval; its explanation fac
 ```
 `contribution` is in log-odds units (coefficient × standardized value).
 
+## Live quotes (ADR-0006)
+
+`GET /api/quotes` → `{"enabled": true, "marketOpen": true, "asOf": "2026-10-07T17:11:12.170440Z", "quotes": [{"symbol": "MSFT",
+"price": 527.77, "prevClose": 529.3, "change": -0.0029, "quotedAt": "2026-10-07T17:15:01.2Z", "stale": false}], "note": "..."}`:
+the latest quote of every active universe member and benchmark ETF (Tiingo's reference price `tngoLast`, polled by
+the worker every `CIVALPHA_QUOTES_SECONDS` on weekdays 09:25-16:10 New York). `stale` = older than 15 minutes while the
+market is open. Symbols held outside the universe are not listed. Display only: no model reads these quotes. Public in
+token mode, a signed-in user in accounts mode.
+
 ## Accuracy
 `GET /api/accuracy` — also returns `liveTest`: the pre-registered bar for the LIVE forecasts (`registeredOn` 2026-10-06, `minResolved` 500 per model, `minAuc` 0.53, Brier below the base-rate Brier) scored on the resolved LIVE forecasts per model (`models.<kind>`: `resolved`, `auc`, `brier`, `baseRateBrier`, `progress`, `verdict` PENDING / PASS / FAIL).
 ```json
@@ -625,7 +634,12 @@ access logs do not record which stocks are held. Every portfolio endpoint takes 
   action shows `HOLD` until `liveTest.verdict` is `PASS`. `tradeShares` is negative to sell and positive to buy (an
   `ADD` is limited by `cashUsd`), null when nothing whole is to be traded. `reviewOn` is the as-of date plus 21
   weekdays. `outcome` is `{excessReturn, windowEndDate}` once the 21 trading days after the advice have closed.
-  `ideas` are the book's `ENTER` and `HOLD` positions not held, sized like the book. `stale` is true when the book has
+  `ideas` are the book's `ENTER` and `HOLD` positions not held, sized like the book. ADR-0006: each advice row carries
+  `live` (`price`, `prevClose`, `change` = price / prevClose − 1, `valueUsd` = current shares × price, `quotedAt`,
+  `stale`: older than 15 minutes in market hours) or null without a quote, and the response carries `live`
+  (`totalUsd` with cash and with rows lacking a quote at their advice value, `changeUsd` against the previous close,
+  `asOf`, `stale`, `marketOpen`, `note`) or null when no holding has a quote. Display only: `valueUsd`, `weight` and
+  `tradeShares` of the row stay on the close of the advice date. `stale` is true when the book has
   decided a newer day than the advice shown.
 * `GET /api/portfolio/track-record` → `{"minResolved": 30, "horizon": 21, "actions": [{"action": "TRIM", "layer": "RISK",
   "advised": 40, "resolved": 31, "meanExcess": -0.004, "ci": [-0.02, 0.011]}, ...], "note": "..."}`: per action, the

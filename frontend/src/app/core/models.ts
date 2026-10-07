@@ -1598,6 +1598,7 @@ export interface HoldingAdvice {
   outcome: { excessReturn: number; windowEndDate: string } | null;
   previousHeadline: AdviceAction | null;
   changed: boolean;
+  live?: LiveQuote | null;
 }
 
 export interface BuyIdea {
@@ -1612,8 +1613,45 @@ export interface BuyIdea {
   proven: boolean;
 }
 
+/** ADR-0006: a holding's value at the latest live quote (display only; the advice stays on its close). */
+export interface LiveQuote {
+  price: number;
+  prevClose: number | null;
+  change: number | null;
+  valueUsd: number;
+  quotedAt: string;
+  stale: boolean;
+}
+
+export interface LiveQuoteRow {
+  symbol: string;
+  price: number;
+  prevClose: number | null;
+  change: number | null;
+  quotedAt: string;
+  stale: boolean;
+}
+
+export interface LiveQuotesResponse {
+  enabled: boolean;
+  marketOpen: boolean;
+  asOf: string | null;
+  quotes: LiveQuoteRow[];
+  note: string;
+}
+
+export interface LiveTotals {
+  totalUsd: number;
+  changeUsd: number;
+  asOf: string;
+  stale: boolean;
+  marketOpen: boolean;
+  note: string;
+}
+
 export interface AdviceResponse {
   portfolio: PortfolioRef | null;
+  live: LiveTotals | null;
   asOfDate: string | null;
   dates: string[];
   latestDecisionDate: string | null;

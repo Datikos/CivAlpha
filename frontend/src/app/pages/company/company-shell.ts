@@ -1,4 +1,5 @@
 import { Component, computed, effect, inject, input } from '@angular/core';
+import { LiveQuotesService, nyTime } from '../../core/live-quotes.service';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { FORMAT_PIPES } from '../../core/format';
 import { Icon } from '../../shared/icon';
@@ -19,6 +20,15 @@ import { CompanyContext } from './company-context';
             <h1>
               {{ c.name }} <span class="muted">({{ c.symbol }})</span>
             </h1>
+            @if (live.quote(c.symbol); as q) {
+              <p class="live-head">
+                <span class="live-price">{{ q.price | usd }}</span>
+                @if (q.change !== null) { <app-delta [value]="q.change" kind="pct" [digits]="2" /> }
+                <span class="small muted">{{ live.marketOpen() ? 'live' : 'last quote' }} {{ nyTime(q.quotedAt) }} New York · vs close {{ q.prevClose | usd }}</span>
+                @if (q.stale) { <span class="chip tone-warn" title="Older than 15 minutes while the market is open">stale</span> }
+                <app-help text="Tiingo's reference price (the last IEX trade or the mid), refreshed every few minutes in market hours, against yesterday's close. Display only: forecasts and decisions use daily closes." topic="live-price" label="live price" />
+              </p>
+            }
             <p class="muted">
               {{ c.sector }}
               @if (c.industry) {
@@ -56,10 +66,16 @@ import { CompanyContext } from './company-context';
     </nav>
     <router-outlet />
   `,
+  styles: `
+    .live-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem; margin: 0.1rem 0 0.35rem; }
+    .live-price { font-size: 1.35rem; font-weight: 600; }
+  `,
 })
 export class CompanyShell {
   readonly symbol = input.required<string>();
   protected readonly ctx = inject(CompanyContext);
+  protected readonly live = inject(LiveQuotesService);
+  protected readonly nyTime = nyTime;
 
   constructor() {
     effect(() => this.ctx.symbol.set(this.symbol()));

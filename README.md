@@ -77,6 +77,7 @@ Design decisions with alternatives are written down before they are built, in `d
 | ADR-0002 | Calibrate the book's probabilities before judging its thresholds | Accepted, implemented 2026-10-06 |
 | ADR-0004 | Advise on the owner's own holdings with risk rules and a graded model opinion, recorded and scored | Accepted, implemented 2026-10-07 |
 | ADR-0005 | Several people, each with their own portfolio, behind real sign-in | Accepted, implemented 2026-10-07 |
+| ADR-0006 | Live prices for display, polled by the worker, never read by the models | Accepted, implemented 2026-10-07 |
 
 ## Architecture
 
@@ -128,6 +129,7 @@ no Kafka, Redis, graph database or Kubernetes. Forecasts and AI decisions are ap
 | Models | `model_version`, `forecast`, `forecast_outcome`, `model_evaluation`, `backtest_prediction` | A database trigger rejects `UPDATE` and `DELETE` on `forecast`. Outcomes are stored in a separate table. |
 | Strategies | `strategy_run`, `strategy_result`, `strategy_trade`, `strategy_decision`, `decision_explanation` | Backtest runs, decisions and explanations are written by the worker; decisions are append-only (trigger); language-model explanations live in their own table. |
 | Accounts | `app_user`, `user_session`, `api_token`, `login_attempt`, `audit_event` | ADR-0005. Passwords as scrypt hashes, session cookies and personal tokens as SHA-256 digests; none is ever returned, logged or audited. `audit_event` records who changed which holding, cash amount, portfolio, account, password or token, with before and after. |
+| Live quotes | `live_quote` | ADR-0006. Latest quote per symbol, replaced every poll, no history; display only. |
 | Portfolio | `portfolio`, `holding`, `holding_advice`, `holding_advice_outcome` | The owner's holdings and cash (empty on a fresh installation). Advice is append-only (trigger), one row per holding, day and portfolio state (`basis`, a hash of holdings and cash); outcomes in their own table. Every row carries `portfolio_id`. |
 
 How an event is linked to a company:
@@ -425,6 +427,16 @@ that fires decides:
   days after it; the page shows the mean per action with a 95% interval (bootstrap over symbols) from 30 resolved
   rows. Rows of one portfolio overlap in time, so it is a track record, not a test.
 * **Buy ideas:** the recorded book's positions you do not own, sized as the book sizes them.
+* **Live prices (ADR-0006):** with `CIVALPHA_PRICE_PROVIDER=tiingo` the worker polls Tiingo's IEX endpoint every
+  `CIVALPHA_QUOTES_SECONDS` (300 by default, `0` = off) on weekdays 09:25-16:10 New York, for the universe, the
+  benchmark ETFs and every held symbol (about 4 requests a poll; 363 quotes in 3 s, measured 2026-10-07). The page
+  shows the value now, the move since yesterday's close and the cost of an advised trade at the live price, and
+  reloads every 60 s in market hours. The price is Tiingo's reference price (`tngoLast`: the last IEX trade or the
+  mid): without an IEX exchange agreement `last`, bid and ask are not delivered. A quote older than 15 minutes in market
+  hours is marked stale (on 2026-10-07, 3 of 363). The Companies list (Price column) and every company page header
+  show the same live price against yesterday's close (`GET /api/quotes`). Only the latest quote per symbol is kept (`live_quote`); the
+  models, the book and the advice never read it. Tiingo receives the ticker list, held symbols included, never shares
+  or values.
 * **Privacy:** in token mode holdings need the admin token on every request, reads included; in accounts mode each
   person sees only their own portfolios and can keep several (ADR-0005). Holdings are never sent to a language model,
   never written to the job log (counts only), and symbols never appear in a URL path.
@@ -583,7 +595,7 @@ on another interface, list the host names clients use in `CIVALPHA_MCP_ALLOWED_H
 
 All variables are listed with comments in `.env.example`. The main ones are `CIVALPHA_PORT` (8088),
 `CIVALPHA_BIND`, `CIVALPHA_ADMIN_TOKEN`, `CIVALPHA_PIPELINE_CRON`, `CIVALPHA_OUTCOMES_CRON`, `POSTGRES_PASSWORD`,
-`CIVALPHA_AUTH`, `CIVALPHA_COOKIE_SECURE`, `SEC_USER_AGENT`, `SEC_MAX_RPS`, `SEC_LOOKBACK_YEARS`, `CIVALPHA_PRICE_PROVIDER`, `TIINGO_API_KEY`, `FRED_API_KEY`,
+`CIVALPHA_AUTH`, `CIVALPHA_COOKIE_SECURE`, `CIVALPHA_QUOTES_SECONDS`, `SEC_USER_AGENT`, `SEC_MAX_RPS`, `SEC_LOOKBACK_YEARS`, `CIVALPHA_PRICE_PROVIDER`, `TIINGO_API_KEY`, `FRED_API_KEY`,
 `EVENTS_*`, `CIVALPHA_LLM_PROVIDER`, `CIVALPHA_LLM_MODEL`, `CIVALPHA_LLM_REVIEW`, `ANTHROPIC_API_KEY`, `CIVALPHA_MCP_ALLOWED_HOSTS` and
 `CIVALPHA_MCP_ALLOWED_ORIGINS`. The stocks themselves are managed
 on the Universe page; 20–50 symbols is a sensible size.
@@ -623,6 +635,9 @@ The suite covers:
   size, the live-test gate that keeps an unproven Sell or Add off the headline, additions limited by cash, the
   hysteresis band, append-only rows per portfolio state, outcome resolution after 21 trading days, and the token on
   every `/api/portfolio` method;
+* live quotes (`test_quotes.py`): parsing with `last` null, batches of 100 with the key in a header (never the URL),
+  the market window, staleness, replace-and-delete, the portfolio's live value with a fallback to the close, and that
+  no module but the poller reads `live_quote`;
 * accounts mode (`test_accounts.py`): the role table route by route, anonymous 401, a member refused on owner routes,
   the CSRF header, the first-sign-in password change, cookie flags, lockout after 5 failures with the same answer as
   an unknown user, 429 per address, cross-tenant reads and writes answering 404, personal tokens (digest stored,

@@ -25,7 +25,7 @@ from __future__ import annotations
 import hashlib
 import math
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 import numpy as np
@@ -38,6 +38,7 @@ from .decisions import LARGE_MOVE
 from . import auth
 from .auth import LOCAL, Caller
 from .errors import BadRequest, Forbidden, NotFound, Unauthorized
+from .market.quotes import QuoteService, is_stale, market_open
 from .rows import camel, camel_all, value
 from .sql import Db, db, jsonb
 from .tickers import TickerResolver
@@ -434,11 +435,39 @@ class PortfolioService:
         latest_day, _ = self.decisions_fn(None)
         invested = sum(r["valueUsd"] for r in rows)
         total = invested + state["cashUsd"]
-        return {"portfolio": self._name(pid), "asOfDate": value(d), "dates": [value(x) for x in dates], "latestDecisionDate": value(latest_day),
+        live = self._live(rows, state)
+        return {"portfolio": self._name(pid), "live": live, "asOfDate": value(d), "dates": [value(x) for x in dates], "latestDecisionDate": value(latest_day),
                 "stale": d is not None and latest_day is not None and d < latest_day,
                 "cashUsd": state["cashUsd"], "investedUsd": invested, "totalUsd": total,
                 "missing": sorted(held - {r["symbol"] for r in rows}), "advice": rows,
                 "ideas": self.ideas(d, held, total) if d else [], "liveTest": self.live_test_fn(), "note": NOTE}
+
+    def _live(self, rows: list[dict], state: dict) -> dict | None:
+        """ADR-0006: each row's value at the latest live quote and the portfolio totals; display only, the advice itself
+        stays on its close. Shares are the current holding's. None when no held symbol has a quote."""
+        shares = {h["symbol"]: float(h["shares"]) for h in state["holdings"]}
+        quotes = QuoteService(self.db).latest(list(shares))
+        now = datetime.now(timezone.utc)
+        total, change, as_of, stale = state["cashUsd"], 0.0, None, False
+        for r in rows:
+            q, n = quotes.get(r["symbol"]), shares.get(r["symbol"], 0.0)
+            if q is None:
+                r["live"] = None
+                total += r["valueUsd"]
+                continue
+            prev = q["prev_close"]
+            row_stale = is_stale(q["quoted_at"], now)
+            r["live"] = {"price": q["price"], "prevClose": prev, "change": (q["price"] / prev - 1.0) if prev else None,
+                         "valueUsd": n * q["price"], "quotedAt": value(q["quoted_at"]), "stale": row_stale}
+            total += n * q["price"]
+            change += n * (q["price"] - prev) if prev else 0.0
+            as_of = q["quoted_at"] if as_of is None or q["quoted_at"] > as_of else as_of
+            stale = stale or row_stale
+        if as_of is None:
+            return None
+        return {"totalUsd": total, "changeUsd": change, "asOf": value(as_of), "stale": stale, "marketOpen": market_open(now),
+                "note": "Live value at Tiingo's reference price (IEX last trade or mid); the advice and its share counts stay "
+                        "on the close of the advice date."}
 
     def _day_rows(self, pid: int | None, d: date | None) -> list[dict]:
         if pid is None or d is None:

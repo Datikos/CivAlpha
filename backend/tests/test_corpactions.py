@@ -163,6 +163,11 @@ def test_keyword_run_stores_candidates_reconciled_with_recorded_actions(pg, tmp_
         with e.connect() as c:
             assert c.execute(text("SELECT count(*) FROM corporate_action WHERE company_id = :c"), {"c": cid}).scalar_one() == 1
         assert ca.gaps(e).query("symbol == 'SPNT'").empty            # the spin-off is reconciled: no gap
-    finally:
+    finally:   # everything this test committed, so later tests do not see a third company or the XLP benchmark
         with e.begin() as c:
             c.execute(text("DELETE FROM corporate_action_candidate WHERE company_id = :c"), {"c": cid})
+            c.execute(text("DELETE FROM corporate_action WHERE company_id = :c"), {"c": cid})
+            c.execute(text("DELETE FROM filing WHERE company_id = :c"), {"c": cid})
+            c.execute(text("DELETE FROM source_document WHERE accession_no IN ('0000000001-26-000001', '0000000001-26-000002')"))
+            c.execute(text("DELETE FROM ticker_history WHERE company_id = :c"), {"c": cid})
+            c.execute(text("DELETE FROM company WHERE id = :c"), {"c": cid})

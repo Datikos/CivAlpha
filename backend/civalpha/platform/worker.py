@@ -3,11 +3,14 @@
 Schedules (CIVALPHA_PIPELINE_CRON / CIVALPHA_OUTCOMES_CRON, "-" or empty = off) are cron expressions evaluated in
 CIVALPHA_SCHEDULE_ZONE. Six fields mean seconds first (the format used before, e.g. "0 30 22 * * MON-FRI"); five
 fields are standard cron. A scheduled run is skipped while a job of the same type is queued or running.
+
+A second thread polls live quotes in market hours (ADR-0006, CIVALPHA_QUOTES_SECONDS); it is independent of the job queue.
 """
 from __future__ import annotations
 
 import logging
 import signal
+import threading
 import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -16,6 +19,7 @@ from croniter import croniter
 
 from .errors import Problem
 from .jobs import Jobs
+from .market.quotes import run_poller
 from .settings import settings
 from .tasks import TASKS
 
@@ -64,7 +68,9 @@ def run_forever() -> None:
     if n:
         log.warning("%d job(s) were interrupted by a restart and marked FAILED", n)
     sched = schedules()
-    signal.signal(signal.SIGTERM, lambda *_: globals().__setitem__("_stop", True))
+    quotes_stop = threading.Event()
+    threading.Thread(target=run_poller, args=(quotes_stop,), name="live-quotes", daemon=True).start()
+    signal.signal(signal.SIGTERM, lambda *_: (globals().__setitem__("_stop", True), quotes_stop.set()))
     log.info("worker ready")
     while not _stop:
         for s in sched:

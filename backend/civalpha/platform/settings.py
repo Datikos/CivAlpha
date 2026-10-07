@@ -124,6 +124,7 @@ class Settings:
     jev: Jev = field(default_factory=lambda: Jev(api_key=""))
     auth_mode: str = "token"        # ADR-0005: "token" (one shared admin token, reads public) or "accounts" (sign-in)
     cookie_secure: bool = True      # session cookie Secure flag; false only for plain-http use away from localhost
+    quotes_seconds: int = 300       # ADR-0006: live-quote poll interval in market hours; 0 = off
     extra: dict = field(default_factory=dict)
 
     @property
@@ -170,6 +171,7 @@ def load() -> Settings:
         mcp=Mcp(allowed_hosts=_list("CIVALPHA_MCP_ALLOWED_HOSTS"), allowed_origins=_list("CIVALPHA_MCP_ALLOWED_ORIGINS")),
         auth_mode=_auth_mode(_env("CIVALPHA_AUTH", "token")),
         cookie_secure=_bool("CIVALPHA_COOKIE_SECURE", True),
+        quotes_seconds=int(_env("CIVALPHA_QUOTES_SECONDS", "300") or "0"),
         jev=Jev(api_key=_env("TYPESAFE_API_KEY"), model=_env("CIVALPHA_JEV_MODEL", "jev-1.13.0"),
                 base_url=_env("CIVALPHA_JEV_URL", "https://api.typesafe.ai/v1/systemone")),
     )

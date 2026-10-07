@@ -1,11 +1,12 @@
 import { httpResource } from '@angular/common/http';
-import { Component, computed, effect, input, signal } from '@angular/core';
+import { Component, computed, effect, inject, input, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { apiUrl, valueOf } from '../core/api';
 import { FORMAT_PIPES } from '../core/format';
 import { latestByModel } from '../core/forecast-utils';
 import { CompanySummary, DividendStatus, ForecastSummary, MODEL_KINDS, ModelKind } from '../core/models';
+import { LiveQuotesService, nyTime } from '../core/live-quotes.service';
 import { createSort } from '../core/sort';
 import { Icon } from '../shared/icon';
 import { SortTh } from '../shared/sort-th';
@@ -119,7 +120,7 @@ interface Row {
                 <th sortKey="symbol" [sort]="sort" defaultDir="asc">Symbol</th>
                 <th sortKey="name" [sort]="sort" defaultDir="asc">Name</th>
                 <th sortKey="sector" [sort]="sort" defaultDir="asc">Sector</th>
-                <th class="num" sortKey="close" [sort]="sort">Last close</th>
+                <th class="num" sortKey="now" [sort]="sort">Price <app-help text="The live price (Tiingo's reference price: the last IEX trade or the mid, refreshed every few minutes in market hours) with its move since yesterday's close; the last daily close below it. Display only: forecasts and decisions use daily closes." topic="live-price" label="live price" /></th>
                 <th sortKey="excess" [sort]="sort">21 days vs sector <app-help text="The stock's return over the last 21 trading days (one forecast horizon) minus its sector ETF's return over the same days. The sparkline is the stock's raw close." topic="benchmark" label="21-day move" /></th>
                 <th sortKey="yield" [sort]="sort">Dividend <app-help text="From recorded cash dividends: the payment frequency when regular, irregular or suspended otherwise, with the trailing 12-month yield." topic="reported-estimated" label="dividend status" /></th>
                 <th sortKey="pBase" [sort]="sort">Baseline forecast <app-help text="Latest probability that the stock beats its sector ETF over 21 trading days, from the model that sees prices and fundamentals only." topic="models" label="baseline forecast" /></th>
@@ -151,9 +152,16 @@ interface Row {
                     {{ r.c.sector }}
                     <div class="small muted">{{ r.c.industry ? (r.c.industry | human) + ' · ' : '' }}vs {{ r.c.benchmarkSymbol }}</div>
                   </td>
-                  <td class="num">
-                    {{ r.c.latestClose | usd }}
-                    <div class="small muted">{{ r.c.latestCloseDate ?? '' }}</div>
+                  <td class="num nowrap">
+                    @if (live.quote(r.c.symbol); as q) {
+                      <span [title]="'Live at ' + nyTime(q.quotedAt) + ' New York' + (q.stale ? ' (stale: older than 15 minutes)' : '')">{{ q.price | usd }}</span>
+                      @if (q.change !== null) { <app-delta [value]="q.change" kind="pct" [digits]="1" /> }
+                      @if (q.stale) { <span class="chip tone-warn" title="Older than 15 minutes while the market is open">stale</span> }
+                      <div class="small muted">close {{ r.c.latestClose | usd }} · {{ r.c.latestCloseDate ?? '' }}</div>
+                    } @else {
+                      {{ r.c.latestClose | usd }}
+                      <div class="small muted">close · {{ r.c.latestCloseDate ?? '' }}</div>
+                    }
                   </td>
                   <td class="nowrap">
                     @if (r.c.recentCloses?.length) {
@@ -227,6 +235,8 @@ export class CompaniesPage {
   readonly tagParam = input<string | undefined>(undefined, { alias: 'tag' });
 
   protected readonly MAX = MAX_COMPARE;
+  protected readonly live = inject(LiveQuotesService);
+  protected readonly nyTime = nyTime;
   protected readonly q = signal('');
   protected readonly sector = signal('');
   protected readonly industry = signal('');
@@ -310,6 +320,7 @@ export class CompaniesPage {
       name: (r) => r.c.name,
       sector: (r) => r.c.sector,
       close: (r) => r.c.latestClose,
+      now: (r) => this.live.quote(r.c.symbol)?.price ?? r.c.latestClose,
       excess: (r) => r.excess21d,
       yield: (r) => r.c.dividend?.trailingYield ?? null,
       pBase: (r) => r.fc[0].f?.probability ?? null,
