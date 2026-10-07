@@ -294,6 +294,68 @@ interface Col {
           />
         </div>
 
+        @if (sizingSeries().length > 2) {
+          <div class="card" id="sizing">
+            <h3>What the sizing does without a forecast <app-help text="The recorded book gives each position 0.04 divided by the stock's annualized 21-day volatility, at most 20%, no leverage. The same sizing is applied to two selections that use no AI forecast: the whole universe (EW_SIZED, which is inverse-volatility weighting, fully invested) and the 12-1 momentum top 5 (MOM_12_1_SIZED). If the book's curve sits on top of theirs, the sizing explains it, not the forecast." topic="position-sizing" label="sizing without a forecast" /></h3>
+            <p class="small muted">
+              Same volatility sizing, three ways of choosing the stocks: none (the whole universe), a classic 12-1 momentum
+              screen, and the AI's forecast (the recorded book). Equal-weight buy &amp; hold is the grey reference. The
+              finding "Does the AI forecast add anything beyond position sizing?" above reads these rows.
+            </p>
+            <div class="grid-2">
+              <div>
+                <h4>Growth of capital</h4>
+                <app-line-chart
+                  [series]="sizingSeries()"
+                  label="Cumulative net return of buy and hold and three selections under the book's volatility sizing"
+                  [yFormat]="equityFmt"
+                  [refY]="1"
+                  refLabel="start"
+                  [height]="260"
+                  [endLabelsEnabled]="false"
+                />
+              </div>
+              <div>
+                <h4>Drawdown <app-help text="Fall from the highest equity reached so far, day by day. Sizing by volatility shows up here first: calm stocks get more capital, so the troughs are shallower." topic="max-drawdown" label="drawdown" /></h4>
+                <app-line-chart
+                  [series]="sizingDrawdown()"
+                  label="Drawdown of buy and hold and three selections under the book's volatility sizing"
+                  [yFormat]="pct0"
+                  [yMax]="0"
+                  [height]="260"
+                  [endLabelsEnabled]="false"
+                />
+              </div>
+            </div>
+            <details class="chart-table">
+              <summary>Sharpe, drawdown and excess per row ({{ sizingRows().length }} rows)</summary>
+              <div class="table-wrap">
+                <table class="table compact">
+                  <thead>
+                    <tr><th>Row</th><th>Selection</th><th class="num">Sharpe</th><th class="num">Max DD</th><th class="num">CAGR</th><th class="num">Invested</th><th class="num">Excess (95% CI)</th></tr>
+                  </thead>
+                  <tbody>
+                    @for (x of sizingRows(); track x.key) {
+                      <tr>
+                        <td><a [routerLink]="['/strategies', x.key]">{{ x.name }}</a><div class="small muted mono">{{ x.key }}</div></td>
+                        <td class="small">{{ x.selection }}</td>
+                        <td class="num">{{ x.m.sharpe | fixed: 2 }}</td>
+                        <td class="num">{{ x.m.maxDrawdown | pct: 1 }}</td>
+                        <td class="num"><app-delta [value]="x.m.cagr" kind="pct" [digits]="1" /></td>
+                        <td class="num">{{ x.m.exposure | pct: 0 }}</td>
+                        <td class="num">
+                          @if (x.m.excessReturn === null || x.m.excessReturn === undefined) { <span class="muted">reference</span> }
+                          @else { <app-delta [value]="x.m.excessReturn" kind="pct" [digits]="1" /><div class="small muted">{{ x.m.excessCiLow | signedPct: 1 }} to {{ x.m.excessCiHigh | signedPct: 1 }}</div> }
+                        </td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          </div>
+        }
+
         <div class="card" id="confidence">
           <h3>Does confidence pay? <app-help text="The AI's own out-of-sample forecasts ranked by probability. Each row buys only the top slice at the next close and holds for the AI's horizon; costs are charged on the stock alone (buy and sell). If the surest 10% do not earn more than everything, waiting for a higher probability cannot help." topic="abstention" label="abstention" /></h3>
             <p class="small muted">
@@ -415,7 +477,7 @@ interface Col {
     }
   `,
   styles: `
-    .grid-3 h4 { margin: 0.25rem 0 0.35rem; font-size: 0.9rem; }
+    .grid-3 h4, #sizing h4 { margin: 0.25rem 0 0.35rem; font-size: 0.9rem; }
     .chart-head { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
     .chart-head select { margin-left: 0.4rem; }
     .ref-row td { background: var(--surface-2); }
@@ -572,7 +634,7 @@ export class StrategiesPage {
           ...(mom !== null ? [`12-1 momentum, same sizing (MOM_12_1_SIZED): ${sh('MOM_12_1_SIZED')}, ${dd('MOM_12_1_SIZED')}.`] : []),
           nil ? 'The sizing explains the book; the forecast does not add to it on this window.' : 'A gap this size is within what the trial count allows by luck.',
         ],
-        link: { label: book, to: ['/strategies', book] },
+        link: { label: 'Sizing without a forecast, charted', to: ['/strategies'], fragment: 'sizing' },
       });
     }
 
@@ -799,4 +861,31 @@ export class StrategiesPage {
     if (other) out.push(equitySeries(other.strategyKey, other.name, 'var(--series-3)', other));
     return out;
   });
+
+  /** "What the sizing does": buy & hold as the grey reference, then the same volatility sizing on three selections.
+   *  Short names: the chart legend and tooltip carry them; full names are in the data table. Colors follow the role. */
+  protected readonly sizingRows = computed(() => {
+    const byKey = new Map(this.results().map((s) => [s.strategyKey, s]));
+    const book = this.run()?.config.bookKey ?? 'AI_SIZED';
+    const spec = [
+      { key: REFERENCE_KEY, short: 'Buy & hold', selection: 'every stock, equal weight, no sizing', color: 'var(--ink-muted)' },
+      { key: 'EW_SIZED', short: 'Sizing only', selection: 'every stock, no forecast', color: 'var(--series-1)' },
+      { key: 'MOM_12_1_SIZED', short: 'Momentum, sized', selection: '12-1 momentum top 5, no forecast', color: 'var(--series-3)' },
+      { key: book, short: 'AI book, sized', selection: "the AI's forecast (the recorded book)", color: 'var(--series-2)' },
+    ];
+    return spec.flatMap((x) => {
+      const r = byKey.get(x.key);
+      return r ? [{ ...x, name: r.name, m: r.metrics, r }] : [];
+    });
+  });
+  protected readonly sizingSeries = computed<LineSeries[]>(() => this.sizingRows().map((x) => equitySeries(x.key, x.short, x.color, x.r)));
+  protected readonly sizingDrawdown = computed<LineSeries[]>(() =>
+    this.sizingRows().map((x) => ({
+      key: x.key,
+      label: x.short,
+      color: x.color,
+      points: x.r.equity.map((p) => ({ x: Date.parse(p.date + 'T00:00:00Z'), y: p.drawdown ?? 0 })),
+    })),
+  );
+  protected readonly pct0 = (v: number) => fmtPct(v, 0);
 }

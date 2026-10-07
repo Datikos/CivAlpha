@@ -75,6 +75,7 @@ Design decisions with alternatives are written down before they are built, in `d
 |---|---|---|
 | ADR-0001 | One forecast horizon for the live models, the recorded book and the lab (21 trading days) | Accepted, implemented 2026-10-06 |
 | ADR-0002 | Calibrate the book's probabilities before judging its thresholds | Accepted, implemented 2026-10-06 |
+| ADR-0004 | Advise on the owner's own holdings with risk rules and a graded model opinion, recorded and scored | Proposed 2026-10-07 |
 
 ## Architecture
 
@@ -282,7 +283,7 @@ strategies on the same data, the same out-of-sample window and the same costs. T
 
 | Family | Strategies |
 |---|---|
-| Benchmark | Equal-weight buy & hold (the reference every verdict compares against); sector ETF basket; the whole universe under the recorded book's volatility sizing (`EW_SIZED`: 0.04 / 21-day volatility, 20% cap, no leverage, so inverse-volatility weighting, fully invested), to show what sizing earns without any forecast |
+| Benchmark | Equal-weight buy & hold (the reference every verdict compares against); sector ETF basket; the whole universe under the recorded book's volatility sizing (`EW_SIZED`: 0.04 / 21-day volatility, 20% cap, no leverage, so inverse-volatility weighting, fully invested), to show what sizing earns without any forecast. The lab page draws it with `MOM_12_1_SIZED` and the recorded book in a "What the sizing does without a forecast" panel: growth of capital and drawdown, buy & hold as the grey reference |
 | Trend / momentum | 50/200-day golden cross (with and without a 10% trailing stop); 12-1 month momentum, top 5 monthly, equal-weight and under the book's volatility sizing (`MOM_12_1_SIZED`); Donchian 55/20 breakout |
 | Mean reversion | RSI(2) pullback above the 200-day average; Bollinger band (20, 2σ) bounce; weekly 5-day reversal, bottom 5 |
 | Speculative | Doubler screen: volatile, small, cheap stock on a breakout or volume spike; hold 63 days, 50% stop |
