@@ -128,7 +128,7 @@ export const routes: Routes = [
     path: 'portfolio',
     canActivate: [authGuard],
     title: 'My portfolio · CivAlpha',
-    loadComponent: () => import('./pages/portfolio').then((m) => m.PortfolioPage),
+    loadComponent: () => import('./pages/portfolio/portfolio-page').then((m) => m.PortfolioPage),
   },
   {
     path: 'timemachine',

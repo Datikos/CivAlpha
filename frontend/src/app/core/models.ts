@@ -1567,6 +1567,7 @@ export interface HoldingAdvice {
   symbol: string;
   companyId: number | null;
   name: string | null;
+  sector?: string | null;
   shares: number;
   close: number | null;
   valueUsd: number;

@@ -474,7 +474,7 @@ class PortfolioService:
             return []
         rows = camel_all(self.db.all("""
             WITH newest AS (SELECT basis FROM holding_advice WHERE portfolio_id = :p AND as_of_date = :d ORDER BY created_at DESC, id DESC LIMIT 1)
-            SELECT a.id, a.as_of_date, a.symbol, a.company_id, c.name, a.shares, a.close, a.value_usd, a.weight, a.action, a.layer,
+            SELECT a.id, a.as_of_date, a.symbol, a.company_id, c.name, c.sector, a.shares, a.close, a.value_usd, a.weight, a.action, a.layer,
                    a.headline, a.rule, a.target_weight, a.trade_shares, a.review_on, a.triggers, a.reasons, a.model, a.created_at,
                    o.excess_return, o.window_end_date
             FROM holding_advice a LEFT JOIN company c ON c.id = a.company_id LEFT JOIN holding_advice_outcome o ON o.advice_id = a.id
