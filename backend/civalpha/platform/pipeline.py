@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 
+from .. import corpactions
 from .. import service as ml
 from ..strategies import doublers, setups, signals
 from ..strategies import service as strategy_lab
@@ -60,7 +61,7 @@ class Pipeline:
             raise Problem("The universe is empty. Add companies on the Universe page first.")
         # progress: imports, prices, one step per company's SEC filings plus insiders (or one skipped step), macro,
         # events, then the after-ingest steps
-        sec_steps = len(companies) + 1 if self.s.sec.configured else 1
+        sec_steps = len(companies) + 2 if self.s.sec.configured else 1      # companies, insiders, 8-K corporate actions
         p = Progress(log, 2 + sec_steps + 2 + AFTER_STEPS, "CSV imports")
         imports = Path(self.s.imports_dir)
         if imports.is_dir():
@@ -102,6 +103,12 @@ class Pipeline:
                 InsiderIngestionService(self.db).ingest(sec, p.child())
             except Exception as e:  # noqa: BLE001
                 log(f"insider transactions failed ({e}); continuing")
+            p.step("8-K corporate-action candidates")
+            try:   # ADR-0003: the keyword rule reads every new 8-K; the portfolio's data check reads the candidates
+                r = corpactions.run(engine(), "KEYWORD", log=lambda _m: None)
+                log(f"8-K corporate-action candidates: {r['classified']} new filings read, {r['flagged']} flagged")
+            except Exception as e:  # noqa: BLE001 - a detector failure must not stop prices, filings or the models
+                log(f"8-K corporate-action candidates skipped: {e}")
         else:
             p.step("SEC filings skipped")
             log("SEC_USER_AGENT is not set (your name and contact e-mail, required by the SEC); SEC filings skipped")

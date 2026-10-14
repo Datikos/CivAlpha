@@ -126,4 +126,4 @@ Phase 2, data (2026-10-06):
       legend and stat labels follow the horizons present in the selected run (run 1 shows both, run 2 only 21 days).
 
 Phase 3, later:
-- [ ] ADR-0002 calibration: isotonic maps on past folds in the lab and in the daily decision; what 0.55 / 0.60 then mean.
+- [x] ADR-0002 calibration: isotonic maps on past folds in the lab and in the daily decision; what 0.55 / 0.60 then mean.

@@ -75,6 +75,7 @@ Design decisions with alternatives are written down before they are built, in `d
 |---|---|---|
 | ADR-0001 | One forecast horizon for the live models, the recorded book and the lab (21 trading days) | Accepted, implemented 2026-10-06 |
 | ADR-0002 | Calibrate the book's probabilities before judging its thresholds | Accepted, implemented 2026-10-06 |
+| ADR-0003 | Find corporate actions the price feed missed, from 8-K text, with a keyword rule and Jev | Accepted; keyword rule implemented and run daily since 2026-10-14; Jev waits for a key |
 | ADR-0004 | Advise on the owner's own holdings with risk rules and a graded model opinion, recorded and scored | Accepted, implemented 2026-10-07 |
 | ADR-0005 | Several people, each with their own portfolio, behind real sign-in | Accepted, implemented 2026-10-07 |
 | ADR-0006 | Live prices for display, polled by the worker, never read by the models | Accepted, implemented 2026-10-07 |
@@ -675,7 +676,14 @@ docs/      api.md (REST contract and MCP tools); research/ (dated research notes
   distribution is recorded by hand as a `SPIN_OFF` corporate action whose value is the per-share market value of the
   shares received at the ex-date close; the total-return index treats it like a cash dividend. `python -m
   civalpha.integrity` scans every series for 21-day volatility above 200%, one-day total returns beyond 50%, and
-  raw-close moves beyond 50% with no recorded action (the signature of a missing adjustment). Corrections are versioned: the replaced
+  raw-close moves beyond 50% with no recorded action (the signature of a missing adjustment). A spin-off is announced
+  in an 8-K weeks before the price breaks, so every pipeline run also reads the new 8-Ks with a keyword rule
+  (ADR-0003, `python -m civalpha.corpactions run|study|gaps`) and stores split and spin-off candidates; one with no
+  matching recorded action is a feed gap, and My portfolio marks a holding with a gap in the last 120 days "Check the
+  data". Measured 2026-10-14 on 13,775 8-Ks: recall 55 of 68 recorded actions (80.9%, 95% CI 69.8%–90.5%), 0.64% of
+  quiet 8-Ks flagged; none of the 49 companies with a gap shows a price break (the feed recorded the real
+  distributions as fractional splits or as cash dividends worth the shares, e.g. 3M's Solventum at $17.39 a share). Candidates can be confirmed or rejected
+  only in the database so far. Corrections are versioned: the replaced
   values move to `price_bar_revision`. Features always use the latest corrected prices, while forecasts
   already issued keep the feature values they were computed with.
 * **SEC.**

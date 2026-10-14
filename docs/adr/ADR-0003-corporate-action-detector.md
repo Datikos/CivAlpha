@@ -1,6 +1,6 @@
 # ADR-0003: Find corporate actions the price feed missed, from 8-K text, with a keyword rule and Jev
 
-**Status:** Accepted (2026-10-06; phase 1 implemented 2026-10-06; phase 2 waits for a TypeSafe API key)
+**Status:** Accepted (2026-10-06; phase 1 implemented 2026-10-06, keyword baseline run and daily step added 2026-10-14; phase 2 waits for a TypeSafe API key)
 **Date:** 2026-10-06
 **Deciders:** David Sakhelashvili (owner)
 
@@ -114,14 +114,44 @@ dividends' amounts, any change to the forecaster.
 ## Action items
 
 Phase 1, without a key (2026-10-06):
-- [ ] `civalpha/corpactions.py`: item-text extraction, keyword method, Jev client (`platform/jev.py`, pinned model,
+- [x] `civalpha/corpactions.py`: item-text extraction, keyword method, Jev client (`platform/jev.py`, pinned model,
       timeouts, quiet failure), reconciliation, evaluation (recall, flag rate, CIs), CLI `study` / `gaps` / `run`.
-- [ ] Migration `V17__corporate_action_candidate.sql`.
-- [ ] Settings: `TYPESAFE_API_KEY`, `CIVALPHA_JEV_MODEL`; `.env.example`, `docker-compose.yml`.
-- [ ] Tests: extraction on real 8-K structure, keyword hits and misses, reconciliation window, Jev request shape and
+- [x] Migration `V17__corporate_action_candidate.sql`.
+- [x] Settings: `TYPESAFE_API_KEY`, `CIVALPHA_JEV_MODEL`; `.env.example`, `docker-compose.yml`.
+- [x] Tests: extraction on real 8-K structure, keyword hits and misses, reconciliation window, Jev request shape and
       failure path with a stub transport, evaluation arithmetic.
-- [ ] Run the keyword baseline on the stored data; record recall, flag rate and the feed-gap list here.
-- [ ] Docs: README, `docs/api.md` if an endpoint is added, integrity section.
+- [x] Run the keyword baseline on the stored data; record recall, flag rate and the feed-gap list here.
+      *Run 2026-10-14* (`python -m civalpha.corpactions run keyword`, one-off worker container, 21 s): 13,775 relevant
+      8-Ks read (the universe grew from about 40 to 352 companies since the plan's 8,507), none without text, 230
+      flagged. Pre-registered evaluation (`study keyword`):
+
+      | Measure | Value | 95% CI (bootstrap over companies) |
+      |---|---|---|
+      | Event recall, 68 recorded actions since 2021-01-05 | 55 / 68 = 80.9% | 69.8% – 90.5% |
+      | Flag rate on 13,215 quiet 8-Ks | 85 = 0.64% | 0.41% – 0.90% |
+
+      Missed (13): TSLA 2022 3:1, CTAS 2024 4:1, CMG 2024 50:1, CVNA 2026 5:1, CPRT 2022 2:1, DXCM 2022 4:1 (no relevant
+      8-K stored for four of them: announced in an exhibit or a proxy), CP 2021 5:1, PCAR 2023 3:2, ETR 2024 2:1, and the
+      spin-offs the feed encoded as fractional splits (MRK 1.048 2021, BDX 1.272 2026, FWONA 1.018 and 1.026 2023).
+      Feed gaps (flagged, no reconciling action): 125 filings of 49 companies. *Checked against the prices:* for every
+      gap company, the largest one-day raw-close move without a recorded action from the first gap filing to 240 days
+      after the last is a market event, not a missing adjustment (DXCM -40.7% on 2024-07-26 and EW -31.3% on 2024-07-25,
+      results days; WBD +28.9% on 2025-09-11, bid news); none reaches the integrity scan's 50%. The real distributions
+      among them are in the feed's corporate actions, in one of two forms: a fractional split factor (GE 1.281 on
+      2023-01-04 and 1.253 on 2024-04-02, Exelon 1.402 on 2022-02-02, AT&T 1.324 on 2022-04-11) or a cash dividend worth
+      the shares distributed (Danaher 28.19 on 2023-10-02 against a raw drop of 13.9%, 3M 17.39 on 2024-04-01 against
+      11.4%). The total-return index applies both, so the prices are right; the reconciliation counts only split and
+      spin-off actions, so these show as gaps. *Not changed now:* counting a large cash dividend as a match would change
+      the rule after seeing the data; it is a candidate for the next rule version, measured on the same evaluation. The
+      dividend-based inputs (`AI_DIV`, the company page's dividend status) see those two distributions as dividends of
+      11-14% for twelve months. Most gaps are mentions: a completed split restated in later 8-Ks (MSTR, 13 filings),
+      merger and separation agreements, announcements more than 120 days before the ex-date (GOOGL's 20:1 split, 8-K of
+      2022-02-01, ex-date 2022-07-18, outside the reconciliation window).
+      *Found while implementing:* Decision 2 says the keyword rule runs on every filing, but nothing ran it after the
+      back-run, so new 8-Ks were never read and the portfolio's data check (ADR-0004, rule `CORPORATE_ACTION_GAP`) had
+      no candidates. The pipeline now runs it after the insider step on the 8-Ks not yet read (step "8-K
+      corporate-action candidates", counts only in the log; a failure is logged and the run goes on).
+- [x] Docs: README, `docs/api.md` if an endpoint is added, integrity section.
 
 Phase 2, needs `TYPESAFE_API_KEY` (owner):
 - [ ] Run Jev on the evaluation set; record recall, flag rate, CIs, cost; apply the adoption rule of decision 5.

@@ -1,6 +1,6 @@
 # Backlog
 
-State on 2026-10-07: 6 open items across 2 ADRs (ADR-0002, ADR-0005) and the October 2026 research report. Rows leave when their item is
+State on 2026-10-14: 7 open items across 3 ADRs (ADR-0002, ADR-0003, ADR-0005) and the October 2026 research report. Rows leave when their item is
 ticked in its ADR; a new item goes into an ADR first, then here. Sizes: S up to a day, M a few days, L a week or more.
 
 ## P1, before the live test resolves (2026-11-03)
@@ -18,3 +18,4 @@ ticked in its ADR; a new item goes into an ADR first, then here. Sizes: S up to 
 | 6 | Append batch 2's fingerprint when its 10th as-of date is issued | docs/research/live-test-2026-10-batch2.md §5 | 10 as-of dates | S |
 | 7 | Backdate universe membership for the 312 companies added on 2026-10-05 | research report §Open | owner's call (survivorship bias) | M |
 | 11 | Go-live gate: data licence and advice regulation answered before the first account for someone outside the owner's household | ADR-0005 Decision 11 | owner + legal advice | S |
+| 12 | Review surface for corporate-action candidates (list the feed gaps, confirm or reject, enter a confirmed distribution as `SPIN_OFF`), so a portfolio's "Check the data" can be cleared | ADR-0003 phase 3 | — | S |
