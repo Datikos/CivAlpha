@@ -76,3 +76,16 @@ def test_batch_2_reports_the_book_model_and_closes_at_ten_dates():
     assert r["asOfDates"] == list(livetest.AS_OF_DATES) and r["populationClosed"] is False
     assert "augmentedMinusBaseline" not in r
     assert "LIMIT 10" in livetest.BATCH2_SQL and "AI_BOOK_21" in livetest.BATCH2_SQL
+
+
+def test_batch_2_closes_on_issued_dates_even_when_one_has_no_counted_forecast():
+    """2026-10-09 was issued after the 3-day limit: it is one of the ten dates but contributes no forecast."""
+    rows = _rows(n_companies=20)
+    rows["model_kind"] = "AI_BOOK_21"
+    issued = sorted(set(rows["as_of_date"])) + [pd.Timestamp("2026-12-31").date()]
+    one_missing = issued[:-1]
+    r = livetest.report(rows, batch="2", issued_dates=issued)
+    assert r["asOfDates"][-1] == "2026-12-31" and r["forecastsPerDate"]["2026-12-31"] == 0
+    assert r["populationClosed"] is (len(issued) >= livetest.BATCH2_DATES)
+    assert livetest.report(rows, batch="2", issued_dates=one_missing)["populationClosed"] is (len(one_missing) >= livetest.BATCH2_DATES)
+    assert "LIMIT 10" in livetest.BATCH2_DATES_SQL

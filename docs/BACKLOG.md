@@ -14,7 +14,7 @@ ticked in its ADR; a new item goes into an ADR first, then here. Sizes: S up to 
 
 | # | Task | Ref | Needs | Size |
 |---|---|---|---|---|
-| 6 | Append batch 2's fingerprint when its 10th as-of date is issued | docs/research/live-test-2026-10-batch2.md §5 | 10 as-of dates | S |
+| 6 | Append batch 2's fingerprint once its 10th as-of date (2026-10-16) is issued: `docker compose run --rm --no-deps -T worker python -m civalpha.livetest 2` shows `populationClosed: true`; 2026-10-09 counts 0 forecasts (issued after the 3-day limit, network failure of 2026-10-09) | docs/research/live-test-2026-10-batch2.md §5 | as-of 2026-10-16 issued before 2026-10-19 00:00 UTC | S |
 | 7 | Backdate universe membership for the 312 companies added on 2026-10-05 | research report §Open | owner's call (survivorship bias) | M |
 | 11 | Go-live gate: data licence and advice regulation answered before the first account for someone outside the owner's household | ADR-0005 Decision 11 | owner + legal advice | S |
 | 13 | Review the 125 feed gaps on the Corporate actions page (most are mentions; link the feed's action where it adjusted the prices) | ADR-0003 phase 3 | owner | S |

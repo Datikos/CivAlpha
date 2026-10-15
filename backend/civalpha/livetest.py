@@ -66,6 +66,13 @@ SELECT s.*, o.outcome, o.excess_return::float8 AS excess_return, o.window_end_da
 FROM scored s LEFT JOIN forecast_outcome o ON o.forecast_id = s.id
 ORDER BY s.as_of_date, s.company_id
 """
+# the as-of dates of batch 2 as the population query picks them: a date counts once issued, even when none of its forecasts
+# was issued within BATCH2_ISSUE_DAYS (2026-10-09: all 351 issued on 2026-10-12, after the network failed on 2026-10-09)
+BATCH2_DATES_SQL = f"""
+SELECT DISTINCT as_of_date FROM forecast
+WHERE issue_mode = 'LIVE' AND model_kind = '{BATCH2_MODEL}' AND as_of_date >= DATE '{BATCH2_FIRST_AS_OF}'
+ORDER BY as_of_date LIMIT {BATCH2_DATES}
+"""
 BATCHES = {"1": {"sql": POPULATION_SQL, "models": MODELS, "fingerprint": FINGERPRINT},
            "2": {"sql": BATCH2_SQL, "models": (BATCH2_MODEL,), "fingerprint": None}}
 
@@ -168,7 +175,7 @@ def paired_difference(a: pd.DataFrame, b: pd.DataFrame, n_boot: int = N_BOOT, se
             "maxAbsProbDiff": float(np.abs(j["p_a"] - j["p_b"]).max())}
 
 
-def report(rows: pd.DataFrame, batch: str = "1") -> dict:
+def report(rows: pd.DataFrame, batch: str = "1", issued_dates: list | None = None) -> dict:
     b = BATCHES[batch]
     fp = fingerprint(rows)
     out = {"batch": batch, "registeredOn": REGISTERED_ON, "fingerprint": fp,
@@ -176,8 +183,12 @@ def report(rows: pd.DataFrame, batch: str = "1") -> dict:
     if batch == "1":
         out["registrationCutoff"] = REGISTRATION_CUTOFF
     else:
-        out["asOfDates"] = sorted(str(d) for d in rows["as_of_date"].unique()) if len(rows) else []
-        out["populationClosed"] = len(out["asOfDates"]) >= BATCH2_DATES
+        # the dates the population query picks (BATCH2_DATES_SQL); without them, the dates that have counted rows
+        dates = sorted(str(d) for d in (issued_dates if issued_dates is not None else (rows["as_of_date"].unique() if len(rows) else [])))
+        counted = rows.groupby(rows["as_of_date"].astype(str)).size().to_dict() if len(rows) else {}
+        out["asOfDates"] = dates
+        out["forecastsPerDate"] = {d: int(counted.get(d, 0)) for d in dates}
+        out["populationClosed"] = len(dates) >= BATCH2_DATES
     by = {k: g for k, g in rows.groupby("model_kind")}
     for kind in b["models"]:
         g = by.get(kind)
@@ -194,7 +205,8 @@ def main() -> None:
     batch = sys.argv[1] if len(sys.argv) > 1 else "1"
     with engine().connect() as c:
         rows = pd.read_sql(text(BATCHES[batch]["sql"]), c)
-    json.dump(report(rows, batch), sys.stdout, indent=2, default=str)
+        dates = list(pd.read_sql(text(BATCH2_DATES_SQL), c)["as_of_date"]) if batch == "2" else None
+    json.dump(report(rows, batch, dates), sys.stdout, indent=2, default=str)
     print()
 
 
