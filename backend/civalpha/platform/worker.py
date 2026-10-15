@@ -4,6 +4,9 @@ Schedules (CIVALPHA_PIPELINE_CRON / CIVALPHA_OUTCOMES_CRON, "-" or empty = off) 
 CIVALPHA_SCHEDULE_ZONE. Six fields mean seconds first (the format used before, e.g. "0 30 22 * * MON-FRI"); five
 fields are standard cron. A scheduled run is skipped while a job of the same type is queued or running.
 
+When the pipeline schedule is set, a failed or missed evening run is caught up (catchup.py): the worker queues another
+run, at least an hour apart and at most 6 times per session, until every active benchmark ETF has the session's bar.
+
 A second thread polls live quotes in market hours (ADR-0006, CIVALPHA_QUOTES_SECONDS); it is independent of the job queue.
 """
 from __future__ import annotations
@@ -12,11 +15,12 @@ import logging
 import signal
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from croniter import croniter
 
+from .catchup import CatchUp
 from .errors import Problem
 from .jobs import Jobs
 from .market.quotes import run_poller
@@ -68,6 +72,8 @@ def run_forever() -> None:
     if n:
         log.warning("%d job(s) were interrupted by a restart and marked FAILED", n)
     sched = schedules()
+    s = settings().schedule
+    catch_up = CatchUp(s.pipeline_cron, s.zone) if s.pipeline_cron.strip() not in ("", "-") else None
     quotes_stop = threading.Event()
     threading.Thread(target=run_poller, args=(quotes_stop,), name="live-quotes", daemon=True).start()
     signal.signal(signal.SIGTERM, lambda *_: (globals().__setitem__("_stop", True), quotes_stop.set()))
@@ -76,6 +82,11 @@ def run_forever() -> None:
         for s in sched:
             if s.due(datetime.now(s.zone)) and not jobs.running(s.job_type):
                 jobs.submit(s.job_type, {"trigger": "schedule"})
+        if catch_up is not None:
+            try:
+                catch_up.check(datetime.now(timezone.utc))
+            except Exception as e:  # noqa: BLE001 - a failed check must not stop the job loop
+                log.warning("catch-up check failed: %s", type(e).__name__)
         job = jobs.claim()
         if job is None:
             time.sleep(POLL_SECONDS)

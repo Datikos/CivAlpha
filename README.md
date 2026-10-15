@@ -80,6 +80,7 @@ Design decisions with alternatives are written down before they are built, in `d
 | ADR-0005 | Several people, each with their own portfolio, behind real sign-in | Accepted, implemented 2026-10-07 |
 | ADR-0006 | Live prices for display, polled by the worker, never read by the models | Accepted, implemented 2026-10-07 |
 | ADR-0007 | The book does not size a stock whose price moved more than 50% without an explanation | Accepted, implemented 2026-10-15 |
+| ADR-0008 | Catch up a failed or missed evening pipeline run | Accepted, implemented 2026-10-15 |
 
 ## Architecture
 
@@ -591,7 +592,10 @@ on another interface, list the host names clients use in `CIVALPHA_MCP_ALLOWED_H
   in `CIVALPHA_SCHEDULE_ZONE` (default `America/New_York`). Six fields mean seconds first
   (`sec min hour day month weekday`); five fields are standard cron. `-` turns a schedule off, which is the default.
   Example: `0 30 22 * * MON-FRI` runs the pipeline after the US close. Scheduled runs are logged like manual jobs
-  and are skipped while a job of the same type is queued or running.
+  and are skipped while a job of the same type is queued or running. When the evening pipeline run fails or never runs
+  (the network dropped, the machine slept), the worker catches it up: it queues another run, at least an hour apart and
+  at most 6 times per session, until every active benchmark ETF has the session's bar; NYSE holidays are skipped
+  (ADR-0008).
 
 ## Environment variables
 
@@ -715,4 +719,5 @@ docs/      api.md (REST contract and MCP tools); research/ (dated research notes
 * **Operations.**
   * Accounts mode has no multi-factor sign-in and no self-service password reset (ADR-0005); research data is shared
     by everyone, and only the owner runs jobs and edits the universe. The audit trail is kept without a retention limit.
-  * The scheduler runs inside the worker, so a missed run while the stack is down is not caught up.
+  * The scheduler runs inside the worker. A failed or missed pipeline run is caught up when the worker runs again
+    (ADR-0008); the outcomes schedule is not, and an unscheduled market closure (2025-01-09) costs 6 useless runs.
