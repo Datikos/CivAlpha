@@ -87,6 +87,12 @@ the last close under it, sortable) and the company page header shows the live pr
 reload every 60 s in market hours (`core/live-quotes.service.ts`). Test
 `test_public_quotes_leave_out_symbols_held_outside_the_universe`.
 
+Second amendment (2026-10-15, item #11): the Dashboard's movers card ranks the live move since yesterday's close minus
+the sector ETF's live move ("Today"; "Last session" while the market is closed; stale quotes left out), with the 21-day
+ranking one click away. The company price chart adds today's live price as one more point, only when the quote is from
+a newer New York date than the last stored close, and says so under the chart. A true intraday line needs quote history,
+which this ADR does not keep; it stays out of scope.
+
 ## Action items
 
 1. [x] `db/migration/V20__live_quote.sql`.

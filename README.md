@@ -437,7 +437,9 @@ that fires decides:
   reloads every 60 s in market hours. The price is Tiingo's reference price (`tngoLast`: the last IEX trade or the
   mid): without an IEX exchange agreement `last`, bid and ask are not delivered. A quote older than 15 minutes in market
   hours is marked stale (on 2026-10-07, 3 of 363). The Companies list (Price column) and every company page header
-  show the same live price against yesterday's close (`GET /api/quotes`). Only the latest quote per symbol is kept (`live_quote`); the
+  show the same live price against yesterday's close (`GET /api/quotes`); the company price chart adds today's live
+  price as its last point until the evening close replaces it, and the Dashboard's movers card ranks today's live
+  moves against each stock's sector ETF ("Today", or "Last session" while the market is closed). Only the latest quote per symbol is kept (`live_quote`); the
   models, the book and the advice never read it. Tiingo receives the ticker list, held symbols included, never shares
   or values.
 * **Privacy:** in token mode holdings need the admin token on every request, reads included; in accounts mode each

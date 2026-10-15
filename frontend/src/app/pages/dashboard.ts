@@ -17,6 +17,7 @@ import {
 } from '../core/models';
 import { Icon } from '../shared/icon';
 import { Sparkline } from '../shared/sparkline';
+import { LiveQuotesService, nyTime } from '../core/live-quotes.service';
 import { UI } from '../shared/ui';
 import { Lean, VIZ, leanOf, verdictTone } from '../shared/viz';
 
@@ -232,11 +233,38 @@ interface Mover {
 
       <div class="card">
         <div class="card-head">
-          <h3>Movers vs benchmark <app-help text="Each stock's return over the last 21 trading days minus its sector ETF's return over the same days. The sparkline is the stock's raw close." topic="benchmark" label="movers" /></h3>
-          <span class="small muted">21 trading days · <a routerLink="/companies">all companies</a></span>
+          <h3>Movers vs benchmark <app-help text="Today: each stock's live move since yesterday's close minus its sector ETF's live move (live prices, every few minutes in market hours). 21 days: the stock's return over the last 21 trading days minus its sector ETF's. The sparkline is the stock's raw close." topic="live-price" label="movers" /></h3>
+          <span class="small muted">
+            @if (todayMovers()) {
+              <span class="seg" role="group" aria-label="Period">
+                <button type="button" [class.on]="period() === 'today'" (click)="moverPeriod.set('today')" [attr.aria-pressed]="period() === 'today'">{{ live.marketOpen() ? 'Today' : 'Last session' }}</button>
+                <button type="button" [class.on]="period() === '21d'" (click)="moverPeriod.set('21d')" [attr.aria-pressed]="period() === '21d'">21 days</button>
+              </span>
+            } @else { 21 trading days }
+            · <a routerLink="/companies">all companies</a>
+          </span>
         </div>
         <app-status [res]="companiesRes" what="companies" />
-        @if (movers(); as m) {
+        @if (period() === 'today' && todayMovers(); as t) {
+          <p class="small muted" style="margin: 0 0 0.4rem">{{ live.marketOpen() ? 'Live' : 'Last quotes' }}, {{ t.asOf }} New York · move today minus the sector ETF's</p>
+          <div class="movers">
+            @for (side of [{ label: 'Ahead of the sector', rows: t.up }, { label: 'Behind the sector', rows: t.down }]; track side.label) {
+              <div>
+                <div class="small muted" style="margin-bottom: 0.3rem">{{ side.label }}</div>
+                <ul class="dash-list">
+                  @for (x of side.rows; track x.symbol) {
+                    <li>
+                      <a class="sym" [routerLink]="['/companies', x.symbol]">{{ x.symbol }}</a>
+                      <span class="small">{{ x.price | usd }} <app-delta [value]="x.change" kind="pct" [digits]="1" /></span>
+                      <span class="grow"></span>
+                      <app-delta [value]="x.excess" kind="pct" [digits]="1" [title]="'vs ' + x.bench + ' ' + pctText(x.benchChange)" />
+                    </li>
+                  }
+                </ul>
+              </div>
+            }
+          </div>
+        } @else if (movers(); as m) {
           <div class="movers">
             <div>
               <div class="small muted" style="margin-bottom: 0.3rem">Ahead of the sector</div>
@@ -295,6 +323,9 @@ interface Mover {
     </div>
   `,
   styles: `
+    .seg { display: inline-flex; gap: 2px; margin-right: 0.3rem; }
+    .seg button { border: 1px solid var(--border); background: var(--surface-2); color: var(--ink-muted); font-size: 0.75rem; padding: 0.1rem 0.5rem; border-radius: 6px; cursor: pointer; }
+    .seg button.on { color: var(--ink); border-color: var(--accent); background: var(--accent-soft); }
     .movers { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; }
     .prob.tone-good, .prob.tone-bad { color: var(--tone-ink); background: var(--tone-bg); border-color: var(--tone-mark); }
     .verdict { margin-bottom: 0; font-size: 0.95rem; }
@@ -416,6 +447,26 @@ export class DashboardPage {
       invested: r.decisions.reduce((s, d) => s + d.weight, 0),
     };
   });
+
+  protected readonly live = inject(LiveQuotesService);
+  /** The movers card: today's live moves while quotes exist (the default while the market is open), else 21 days. */
+  protected readonly moverPeriod = signal<'today' | '21d' | null>(null);
+  protected readonly period = computed(() => this.moverPeriod() ?? (this.todayMovers() && this.live.marketOpen() ? 'today' : '21d'));
+  protected readonly todayMovers = computed(() => {
+    const rows = (valueOf(this.companiesRes) ?? []).flatMap((c) => {
+      const q = this.live.quote(c.symbol);
+      const qb = this.live.quote(c.benchmarkSymbol);
+      if (!q || !qb || q.change === null || qb.change === null || q.stale) return [];
+      return [{ symbol: c.symbol, price: q.price, change: q.change, bench: c.benchmarkSymbol, benchChange: qb.change,
+                excess: q.change - qb.change }];
+    }).sort((a, b) => b.excess - a.excess);
+    if (rows.length < 4) return null;
+    const asOf = this.live.data()?.asOf;
+    return { up: rows.slice(0, 5), down: rows.slice(-5).reverse(), asOf: asOf ? nyTime(asOf) : '' };
+  });
+  protected pctText(v: number): string {
+    return `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)}%`;
+  }
 
   protected readonly movers = computed(() => {
     const list = (valueOf(this.companiesRes) ?? [])

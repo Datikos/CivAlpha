@@ -3,6 +3,7 @@ import { Component, computed, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { LineChart, LineSeries } from '../../charts/line-chart';
 import { dateMs, isoDay } from '../../charts/chart-utils';
+import { LiveQuotesService, nyTime } from '../../core/live-quotes.service';
 import { apiUrl, valueOf } from '../../core/api';
 import { FORMAT_PIPES } from '../../core/format';
 import { latestByModel } from '../../core/forecast-utils';
@@ -81,6 +82,14 @@ const RANGE_DAYS: Record<Range, number> = { '6M': 183, '1Y': 365, '3Y': 3 * 365,
               [yFormat]="fmtIndex"
               [label]="c.symbol + ' vs ' + c.benchmarkSymbol + ' indexed to 100'"
             />
+            @if (livePoint(); as lp) {
+              <p class="small muted live-note">
+                The last point is today's live price, not a close: {{ c.symbol }} {{ lp.price | usd }}
+                (<app-delta [value]="lp.change" kind="pct" [digits]="2" /> since yesterday's close),
+                {{ c.benchmarkSymbol }} <app-delta [value]="lp.benchChange" kind="pct" [digits]="2" />,
+                at {{ lp.time }} New York{{ lp.stale ? ' (stale)' : '' }}. It is replaced by the close after the evening run.
+              </p>
+            }
           } @else {
             <p class="empty">No price history.</p>
           }
@@ -375,6 +384,7 @@ const RANGE_DAYS: Record<Range, number> = { '6M': 183, '1Y': 365, '3Y': 3 * 365,
     }
   `,
   styles: `
+    .live-note { margin: 0.35rem 0 0; }
     tr.quiet td { opacity: 0.65; }
     .evidence { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .btn-link { background: none; border: none; padding: 0.4rem 0; color: var(--accent); cursor: pointer; }
@@ -382,6 +392,7 @@ const RANGE_DAYS: Record<Range, number> = { '6M': 183, '1Y': 365, '3Y': 3 * 365,
 })
 export class CompanyOverview {
   protected readonly ctx = inject(CompanyContext);
+  private readonly live = inject(LiveQuotesService);
   protected readonly ranges: Range[] = ['6M', '1Y', '3Y', '5Y'];
   protected readonly range = signal<Range>('1Y');
   protected readonly fmtIndex = (v: number) => v.toFixed(1);
@@ -468,24 +479,41 @@ export class CompanyOverview {
     return bars.filter((b) => dateMs(b.date) >= start);
   });
 
+  /** ADR-0006: today's live quotes of the stock and its ETF, when they are newer than the last stored close. */
+  protected readonly livePoint = computed(() => {
+    const bars = this.windowBars();
+    const p = valueOf(this.prices);
+    if (!bars.length || !p) return null;
+    const q = this.live.quote(p.symbol);
+    const qb = this.live.quote(p.benchmarkSymbol);
+    if (!q || !qb) return null;
+    const day = new Date(q.quotedAt).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });   // YYYY-MM-DD
+    if (day <= bars[bars.length - 1].date) return null;
+    return { day, price: q.price, change: q.change, benchPrice: qb.price, benchChange: qb.change, time: nyTime(q.quotedAt),
+             stale: q.stale || qb.stale };
+  });
+
   protected readonly priceSeries = computed<LineSeries[] | null>(() => {
     const bars = this.windowBars();
     const p = valueOf(this.prices);
     if (!bars.length || !p) return null;
     const s0 = bars[0].close!;
     const b0 = bars[0].benchmarkClose!;
+    const lp = this.livePoint();
     return [
       {
         key: 'stock',
         label: p.symbol,
         color: 'var(--series-1)',
-        points: bars.map((b) => ({ x: dateMs(b.date), y: (b.close! / s0) * 100 })),
+        points: [...bars.map((b) => ({ x: dateMs(b.date), y: (b.close! / s0) * 100 })),
+                 ...(lp ? [{ x: dateMs(lp.day), y: (lp.price / s0) * 100 }] : [])],
       },
       {
         key: 'bench',
         label: p.benchmarkSymbol,
         color: 'var(--series-2)',
-        points: bars.map((b) => ({ x: dateMs(b.date), y: (b.benchmarkClose! / b0) * 100 })),
+        points: [...bars.map((b) => ({ x: dateMs(b.date), y: (b.benchmarkClose! / b0) * 100 })),
+                 ...(lp ? [{ x: dateMs(lp.day), y: (lp.benchPrice / b0) * 100 }] : [])],
       },
     ];
   });
