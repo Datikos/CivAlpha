@@ -16,8 +16,8 @@ from . import backtest, registry, stats
 from .ai import (AI_CAL_KEY, AI_CONF_KEY, AI_DIV_FEATURES, AI_EVENTS_FEATURES, AI_FEATURE_SET, AI_FEATURES, AI_KEY, AI_RANK_KEY,
                  AI_RANK_SIZED_KEY, AI_RANK_VOL_KEY, AI_SIZED_CAL_KEY, AI_SIZED_KEY, AI_WITH_EVENTS_KEY, BOOK_KEY,
                  FUND_MODEL_FEATURES, ALGORITHM, CODE_VERSION, AiConfig, ai_strategies, calibrated_probabilities,
-                 dataset, decide_positions, explain, new_model, size_by_conviction, size_by_volatility, sized_weight,
-                 technical_features, walk_forward_probabilities)
+                 GUARD_DAYS, GUARD_MOVE, dataset, decide_positions, explain, guard_mask, new_model, size_by_conviction,
+                 size_by_volatility, sized_weight, technical_features, unexplained_breaks, walk_forward_probabilities)
 from .base import Strategy
 from .panel import MarketPanel
 from .rules import rule_strategies, rule_votes
@@ -56,7 +56,11 @@ def run_lab(bundle: DataBundle, cfg: LabConfig, n_trials: int | None = None) -> 
     feature_test = compare_forecasts(panel, data, wf["prob"], wf_div["prob"])
     conf_w, _ = decide_positions(wf["prob"], panel.member, ai_cfg.confident(), start_idx=oos)
     vol_21 = technical_features(panel)["vol_21"]
-    sized_w = size_by_volatility(ai_w, vol_21, ai_cfg)
+    breaks, _ = unexplained_breaks(panel)                                              # ADR-0007: the sizing guard
+    guard = guard_mask(breaks)
+    book_w, _ = decide_positions(wf["prob"], panel.member, ai_cfg, start_idx=oos, blocked=guard)
+    sized_w = size_by_volatility(book_w, vol_21, ai_cfg)
+    noguard_w = size_by_volatility(ai_w, vol_21, ai_cfg)
     rank_w, _ = decide_positions(wf["prob"], panel.member, ai_cfg.ranked(), start_idx=oos)
     rank_sized_w = size_by_conviction(rank_w, vol_21, wf["prob"], ai_cfg)
     rank_vol_w = size_by_volatility(rank_w, vol_21, ai_cfg)
@@ -68,7 +72,7 @@ def run_lab(bundle: DataBundle, cfg: LabConfig, n_trials: int | None = None) -> 
     cal_sized_w = size_by_volatility(cal_w, vol_21, ai_cfg)
     cal_coverage = ai_coverage_curve(panel, data, cal_prob, cfg.cost_bps_per_side)
     strategies = rule_strategies() + ai_strategies(ai_cfg, ai_w, fund_w, div_w, conf_w, sized_w, rank_w, rank_sized_w,
-                                                   rank_vol_w, events_w, cal_w, cal_sized_w)
+                                                   rank_vol_w, events_w, cal_w, cal_sized_w, noguard_w)
     start = oos + 1  # first decision is at close(oos), first trade at close(oos + 1)
     if start >= len(panel.calendar) - 1:
         raise ValueError("not enough out-of-sample history to backtest strategies")
@@ -297,6 +301,21 @@ def decide(engine, as_of: str | None = None, cfg: LabConfig | None = None) -> di
     return {"decisions": decisions_at(bundle, int(bundle.calendar.get_loc(d)), cfg, held, calibration=(eval_id, cal_rows))}
 
 
+def _guard_info(panel: MarketPanel, breaks: pd.DataFrame, moves: pd.DataFrame, guard: pd.DataFrame, idx: int, cid: int) -> dict | None:
+    """ADR-0007: why a stock is out of the book today (the latest break within the guard window), or None."""
+    d = panel.calendar[idx]
+    if cid not in guard.columns or not bool(guard.at[d, cid]):
+        return None
+    lo = max(0, idx - GUARD_DAYS + 1)
+    days = [i for i in range(lo, idx + 1) if bool(breaks.iat[i, breaks.columns.get_loc(cid)])]
+    b = days[-1]
+    end = b + GUARD_DAYS - 1
+    until = panel.calendar[end].date() if end < len(panel.calendar) else (panel.calendar[-1] + pd.offsets.BDay(end - len(panel.calendar) + 1)).date()
+    return {"blocked": True, "breakDate": str(panel.calendar[b].date()), "move": float(moves.iat[b, moves.columns.get_loc(cid)]),
+            "until": str(until), "rule": f"raw close moved more than {GUARD_MOVE:.0%} with no recorded corporate action; out for "
+                                         f"{GUARD_DAYS} trading days unless an action is recorded for that day (ADR-0007)"}
+
+
 def calibration_map(rows: pd.DataFrame):
     """Isotonic map p -> observed rate fitted on out-of-sample (probability, outcome) rows; None when too few."""
     from sklearn.isotonic import IsotonicRegression
@@ -328,7 +347,9 @@ def decisions_at(bundle: DataBundle, idx: int, cfg: LabConfig, held: set[int],
     prob = pd.DataFrame(np.nan, index=[d], columns=panel.px.columns)
     prob.loc[d, rows["company_id"].to_numpy()] = p
     member = panel.member.loc[[d]]
-    weights, actions = decide_positions(prob, member, ai_cfg, held0=held)
+    breaks, moves = unexplained_breaks(panel)                       # ADR-0007: the sizing guard
+    guard = guard_mask(breaks)
+    weights, actions = decide_positions(prob, member, ai_cfg, held0=held, blocked=guard.loc[[d]])
     votes = rule_votes(panel, idx, rule_strategies())
     medians = train[AI_FEATURES].median().to_numpy(float)
     trained_through = panel.calendar[int(train["idx"].max())].date()
@@ -359,6 +380,7 @@ def decisions_at(bundle: DataBundle, idx: int, cfg: LabConfig, held: set[int],
                       "book": {"key": BOOK_KEY, "maxPositions": ai_cfg.max_positions, "slot": slots[cid],
                                "swapMargin": ai_cfg.swap_margin, "tilt": None, "replacedBy": None, "replaces": None,
                                "features": "no policy-event features", "featureSet": AI_FEATURE_SET, "horizon": ai_cfg.horizon},
+                      "guard": _guard_info(panel, breaks, moves, guard, idx, cid),
                       "sizing": {"vol21": float(vols[i]), "sizedWeight": raw_sized[cid] * sized_scale,
                                  "confident": bool(p[i] >= ai_cfg.confident_entry_p),
                                  "volBudget": ai_cfg.vol_budget, "maxWeight": ai_cfg.max_weight,

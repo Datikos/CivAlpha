@@ -91,7 +91,10 @@ AI_WITH_EVENTS_KEY = "AI_WITH_EVENTS"   # AI_GBM trained with the policy-event f
 AI_CAL_KEY = "AI_GBM_CAL"               # ADR-0002: the standard rule on probabilities calibrated fold by fold on earlier folds
 AI_SIZED_CAL_KEY = "AI_SIZED_CAL"       # ADR-0002: the sized book on the same calibrated probabilities
 CAL_MIN_PRIOR_FOLDS = 3
+AI_SIZED_NOGUARD_KEY = "AI_SIZED_NOGUARD"   # ADR-0007: the recorded book without the sizing guard, to price the guard
 BOOK_KEY = AI_SIZED_KEY             # the variant whose decisions are recorded every day
+GUARD_MOVE = 0.5                    # ADR-0007: a raw-close move beyond this with no corporate action that day is a break...
+GUARD_DAYS = 21                     # ...and keeps the stock out of the recorded book for this many trading days
 RANK_SWAP_MARGIN = 0.08
 ALGORITHM = "hist_gradient_boosting"
 CODE_VERSION = "strategy-0.1.0"
@@ -329,16 +332,41 @@ def calibrated_probabilities(prob: pd.DataFrame, data: pd.DataFrame, folds: list
     return pd.DataFrame(out, index=prob.index, columns=prob.columns)
 
 
+def unexplained_breaks(panel: MarketPanel) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """ADR-0007: (breaks, moves). A break is a day whose raw close moved more than GUARD_MOVE from the previous close with
+    no corporate action of that company recorded on that day (the signature of a distribution the feed missed, and of
+    a genuine crash or surge). Known at that day's close."""
+    move = panel.close.pct_change(fill_method=None)
+    brk = (move.abs() > GUARD_MOVE).fillna(False)
+    acts = panel.bundle.actions
+    if acts is not None and len(acts):
+        a = acts[acts["company_id"].notna()]
+        for cid, day in zip(a["company_id"].astype(int), pd.to_datetime(a["ex_date"])):
+            if cid in brk.columns and day in brk.index:
+                brk.at[day, cid] = False
+    return brk.astype(bool), move
+
+
+def guard_mask(breaks: pd.DataFrame, days: int = GUARD_DAYS) -> pd.DataFrame:
+    """True on the break day and the `days` - 1 trading days after it: the recorded book treats the stock as unavailable."""
+    return breaks.astype(int).rolling(days, min_periods=1).max().astype(bool)
+
+
 def decide_positions(prob: pd.DataFrame, member: pd.DataFrame, cfg: AiConfig, start_idx: int = 0,
-                     held0: set | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+                     held0: set | None = None, blocked: pd.DataFrame | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Run the entry/exit rule day by day. Returns (weights, actions) over the whole calendar.
 
     Order within a day: exits (p below exit_p, or no longer a member / no probability), then entries into free slots from
     the top of the ranking, then, with cfg.swap_margin set, replacements: once the book is full, the weakest holding leaves
     when the best remaining outsider clears entry_p and beats it by swap_margin, repeated while that holds. A replaced
-    holding is an EXIT like any other; the live decision marks it as replaced because its p is still at or above exit_p."""
+    holding is an EXIT like any other; the live decision marks it as replaced because its p is still at or above exit_p.
+
+    `blocked` (ADR-0007, the sizing guard) marks stocks unavailable on a day: no entry, and a holding exits."""
     P = prob.to_numpy(float)
     M = member.reindex(index=prob.index, columns=prob.columns, fill_value=False).to_numpy(bool)
+    # a guarded stock is still a member (it gets STAY_OUT or EXIT, never a blank), it just cannot be held
+    B = (blocked.reindex(index=prob.index, columns=prob.columns, fill_value=False).to_numpy(bool) if blocked is not None
+         else np.zeros(M.shape, dtype=bool))
     T, N = P.shape
     W = np.zeros((T, N))
     A = np.full((T, N), "", dtype=object)
@@ -349,7 +377,7 @@ def decide_positions(prob: pd.DataFrame, member: pd.DataFrame, cfg: AiConfig, st
                 held[prob.columns.get_loc(c)] = True
     for t in range(start_idx, T):
         p = P[t]
-        valid = M[t] & np.isfinite(p)
+        valid = M[t] & ~B[t] & np.isfinite(p)
         was = held.copy()
         held &= valid & (np.where(valid, p, -1.0) >= cfg.exit_p)
         order = np.argsort(-np.where(valid, p, -np.inf), kind="stable")
@@ -441,7 +469,7 @@ def ai_strategies(cfg: AiConfig, weights: pd.DataFrame, fund_weights: pd.DataFra
                   sized_weights: pd.DataFrame | None = None, rank_weights: pd.DataFrame | None = None,
                   rank_sized_weights: pd.DataFrame | None = None, rank_vol_weights: pd.DataFrame | None = None,
                   events_weights: pd.DataFrame | None = None, cal_weights: pd.DataFrame | None = None,
-                  cal_sized_weights: pd.DataFrame | None = None) -> list[Strategy]:
+                  cal_sized_weights: pd.DataFrame | None = None, noguard_weights: pd.DataFrame | None = None) -> list[Strategy]:
     desc = dict(entry=f"Model probability ≥ {cfg.entry_p:.2f} that the stock beats its sector ETF over the next "
                       f"{cfg.horizon} days, and among the top {cfg.max_positions}",
                 origin="Gradient-boosted trees over every rule's indicator plus the report profile, insider activity and the "
@@ -482,9 +510,19 @@ def ai_strategies(cfg: AiConfig, weights: pd.DataFrame, fund_weights: pd.DataFra
                             origin="The same entries and exits as AI_GBM; each position is sized by its 21-day volatility "
                                    f"({cfg.vol_budget:.2f} / annualized volatility, at most {cfg.max_weight:.0%} of capital, "
                                    "no leverage) so every position carries about the same risk and the book shrinks "
-                                   "when markets turn volatile (volatility targeting). This is the book recorded on the "
+                                   "when markets turn volatile (volatility targeting). A stock whose raw close moved more "
+                                   f"than {GUARD_MOVE:.0%} on a day with no recorded corporate action stays out for "
+                                   f"{GUARD_DAYS} trading days (sizing guard, ADR-0007). This is the book recorded on the "
                                    "AI decisions page",
-                            sizing="WEIGHTS", fn=lambda _p: sized_weights, params=cfg.params()))
+                            sizing="WEIGHTS", fn=lambda _p: sized_weights,
+                            params={**cfg.params(), "guard_move": GUARD_MOVE, "guard_days": GUARD_DAYS}))
+    if noguard_weights is not None:
+        out.append(Strategy(AI_SIZED_NOGUARD_KEY, "AI", "AI decides, sized by volatility, no sizing guard",
+                            entry=desc["entry"], exit=f"Probability falls below {cfg.exit_p:.2f}",
+                            origin="The recorded book without the sizing guard of ADR-0007: the gap between the two rows "
+                                   "is what keeping stocks out after an unexplained move beyond "
+                                   f"{GUARD_MOVE:.0%} costs or earns",
+                            sizing="WEIGHTS", fn=lambda _p: noguard_weights, params=cfg.params()))
     rcfg = cfg.ranked()
     swap = (f"Probability falls below {cfg.exit_p:.2f}, or a stock outside the book clears {cfg.entry_p:.2f} and beats this "
             f"holding's probability by {rcfg.swap_margin:.2f} (replacement)")

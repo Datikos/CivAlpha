@@ -79,6 +79,7 @@ Design decisions with alternatives are written down before they are built, in `d
 | ADR-0004 | Advise on the owner's own holdings with risk rules and a graded model opinion, recorded and scored | Accepted, implemented 2026-10-07 |
 | ADR-0005 | Several people, each with their own portfolio, behind real sign-in | Accepted, implemented 2026-10-07 |
 | ADR-0006 | Live prices for display, polled by the worker, never read by the models | Accepted, implemented 2026-10-07 |
+| ADR-0007 | The book does not size a stock whose price moved more than 50% without an explanation | Accepted, implemented 2026-10-15 |
 
 ## Architecture
 
@@ -295,7 +296,7 @@ strategies on the same data, the same out-of-sample window and the same costs. T
 | Speculative | Doubler screen: volatile, small, cheap stock on a breakout or volume spike; hold 63 days, 50% stop |
 | Fundamental / event | Quality & growth screen on as-filed XBRL data; post-earnings-announcement drift (earnings surprise ≥ 1, hold 60 days); value (top 5 earnings yield); gross profitability (top 5 gross profit / assets); dividend yield (top 5); stepping aside from tariff/rate shocks using SEC-filing exposures |
 | AI | Gradient-boosted trees that combine every rule's indicator with the financial-report profile, event shocks and macro (with and without a 10% trailing stop); the same model on the financial-report profile alone (`AI_FUND`); the same model plus dividend signals (`AI_DIV`), compared with it on the same out-of-sample forecasts |
-| AI, decision layer | The same probabilities as `AI_GBM`, acted on differently: `AI_CONF` abstains unless p ≥ 0.60 (exit below 0.50); `AI_SIZED` keeps the standard entries and exits but sizes each position by volatility (0.04 / annualized 21-day volatility, at most 20%, no leverage); `AI_GBM_CAL` and `AI_SIZED_CAL` apply the same thresholds to probabilities calibrated fold by fold on earlier folds (ADR-0002), to show how often honest probabilities clear them |
+| AI, decision layer | The same probabilities as `AI_GBM`, acted on differently: `AI_CONF` abstains unless p ≥ 0.60 (exit below 0.50); `AI_SIZED` keeps the standard entries and exits but sizes each position by volatility (0.04 / annualized 21-day volatility, at most 20%, no leverage) and keeps a stock out for 21 trading days after a raw-close move beyond 50% with no recorded corporate action (sizing guard, ADR-0007; `AI_SIZED_NOGUARD` is the book without it); `AI_GBM_CAL` and `AI_SIZED_CAL` apply the same thresholds to probabilities calibrated fold by fold on earlier folds (ADR-0002), to show how often honest probabilities clear them |
 
 * **The AI decides.** The model estimates the probability that a stock beats its sector ETF over the next 21 trading days,
   the platform's forecast target (ADR-0001; it trained on a 10-day label until 2026-10-06).

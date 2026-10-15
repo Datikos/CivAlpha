@@ -840,6 +840,8 @@ export interface AiDecision {
       /** True when the language model's review vetoed this entry (CIVALPHA_LLM_REVIEW=veto): stored as STAY_OUT with weight 0. */
       vetoed?: boolean;
     };
+    /** ADR-0007: why the stock is out of the book today (a raw-close move beyond 50% with no recorded corporate action). */
+    guard?: { blocked: boolean; breakDate: string; move: number; until: string; rule: string } | null;
     /** The decision layer: volatility-scaled size and whether the probability clears the confident bar. */
     sizing?: {
       vol21: number | null;

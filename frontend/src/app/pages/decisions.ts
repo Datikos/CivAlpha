@@ -136,6 +136,9 @@ const RULE_LABEL: Record<string, string> = {
                 </div>
                 <span class="badge" [class]="'badge tone-' + actionTone[d.action]" [title]="actionHint[d.action]">{{ actionGlyph[d.action] }} {{ actionLabel[d.action] }}</span>
               </header>
+              @if (d.model.guard; as g) {
+                <p class="small vetoed"><strong>Sizing guard: out until {{ g.until }}.</strong> The raw close moved {{ g.move | signedPct: 0 }} on {{ g.breakDate }} with no recorded corporate action: a split or spin-off the feed missed, or a real crash or surge. Record the action on the <a routerLink="/corporate-actions">Corporate actions</a> page to lift it (ADR-0007).</p>
+              }
               @if (d.model.book?.vetoed) {
                 <p class="small vetoed"><strong>Vetoed by the reviewer.</strong> The model wanted to enter; the language model's review disagreed, so no position was taken and the slot stays empty.</p>
               }
