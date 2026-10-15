@@ -531,6 +531,28 @@ response is `401`. `GET /api/meta` reports `adminTokenRequired`.
 
 Errors are `{"error": "explanation"}` with status 400 (invalid request) or 404 (unknown id/symbol).
 
+## Corporate-action candidates (ADR-0003, owner)
+
+* `GET /api/admin/corporate-actions/candidates?status=gap&symbol=FDX&limit=500` → `{"status", "counts": {"gap", "gapRecent",
+  "unreviewed", "confirmed", "rejected", "flagged", "read"}, "portfolioDays": 120, "candidates": [{"id", "filingId", "companyId",
+  "name", "symbol", "acceptedAt", "method", "kind", "probability", "evidence", "reconciledActionId", "review", "reviewedAt",
+  "reviewedBy", "reviewNote", "accessionNo", "items", "filingUrl", "nearbyActions": [{"id", "exDate", "type", "value",
+  "provider", "shareOfClose"}], "largestMove": {"date", "move"}, "inPortfolioWindow"}], "rule": "keyword-1", "note"}`.
+  `status`: `gap` (flagged, no reconciling action, not rejected; default), `unreviewed`, `confirmed`, `rejected`,
+  `flagged`, `all`. `nearbyActions`: the company's splits, spin-offs and cash dividends of at least 2% of the close from
+  60 days before to 130 days after the 8-K. `largestMove`: the largest one-day raw-close move without a recorded action
+  from 5 days before to 120 days after. `inPortfolioWindow`: younger than 120 days (holders see "Check the data").
+* `POST /api/admin/corporate-actions/candidates/review` body `{"ids": [12, 13], "review": "REJECTED", "note": "restates a
+  completed split", "linkActionId": null}` → `{"reviewed": 2}`. `review`: `UNREVIEWED`, `CONFIRMED`, `REJECTED`; at most
+  500 ids. `linkActionId` (one candidate, `CONFIRMED`) reconciles it with an action of the same company the feed recorded.
+  400 for an unknown review or a link to another company's action, 404 for an unknown id. Audited (`CANDIDATE_REVIEWED`).
+* `POST /api/admin/corporate-actions/candidates/{id}/spin-off` body `{"exDate": "2026-06-01", "valuePerShare": 17.39,
+  "note": "1 SOLV per 4 MMM x first close"}` → `{"actionId", "symbol", "exDate", "value", "note"}`: records a `SPIN_OFF`
+  action (provider `manual`), confirms the candidate and reconciles every open candidate of the company whose window covers
+  the ex-date. 400 when the ex-date is in the future, the value is not between 0 and the close before the ex-date, or the
+  same spin-off is recorded. Audited (`SPIN_OFF_ENTERED`). Applied from the next pipeline run.
+* `POST /api/admin/corporate-actions/detect` → job `CORPACTIONS_DETECT`: reads the 8-Ks not yet read (also a pipeline step).
+
 ## Access: token mode and accounts mode (ADR-0005)
 
 `CIVALPHA_AUTH` selects how callers are recognised; `GET /api/meta` → `authMode` says which one runs.

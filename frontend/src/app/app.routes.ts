@@ -70,6 +70,13 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/filing-detail').then((m) => m.FilingDetailPage),
   },
   {
+    path: 'corporate-actions',
+    canActivate: [authGuard],
+    data: { ownerOnly: true },
+    title: 'Corporate actions · CivAlpha',
+    loadComponent: () => import('./pages/corporate-actions').then((m) => m.CorporateActionsPage),
+  },
+  {
     path: 'universe',
     canActivate: [authGuard],
     data: { ownerOnly: true },

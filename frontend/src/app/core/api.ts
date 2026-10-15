@@ -5,6 +5,7 @@ import {
   AddCompanyRequest,
   AddCompanyResponse,
   AdviceResponse,
+  CandidateReview,
   AppUser,
   AuthMe,
   EditUserRequest,
@@ -76,6 +77,8 @@ export const apiUrl = {
   jobs: () => `${BASE}/admin/jobs`,
   universe: () => `${BASE}/admin/universe`,
   quotes: () => `${BASE}/quotes`,
+  actionCandidates: (status: string, symbol?: string | null) =>
+    withQuery(`${BASE}/admin/corporate-actions/candidates`, { status, symbol }),
   portfolios: () => `${BASE}/portfolios`,
   portfolioHoldings: (portfolioId?: number | null) =>
     withQuery(`${BASE}/portfolio/holdings`, { portfolioId: idParam(portfolioId) }),
@@ -283,6 +286,21 @@ export class ApiService {
   /** A new first password: the user must change it at the next sign-in; their sessions and tokens stop. */
   resetUserPassword(id: number, password: string): Observable<AppUser> {
     return this.http.post<AppUser>(`${BASE}/admin/users/${id}/password`, { password });
+  }
+
+  /** ADR-0003 phase 3: set the review of corporate-action candidates; `linkActionId` ties one to an action the feed recorded. */
+  reviewCandidates(ids: number[], review: CandidateReview, note?: string | null, linkActionId?: number | null): Observable<{ reviewed: number }> {
+    return this.http.post<{ reviewed: number }>(`${BASE}/admin/corporate-actions/candidates/review`, { ids, review, note: note || null, linkActionId: linkActionId ?? null });
+  }
+
+  /** Records a distribution the feed missed as a SPIN_OFF action and confirms the candidate. */
+  enterSpinOff(candidateId: number, exDate: string, valuePerShare: number, note?: string | null): Observable<{ actionId: number }> {
+    return this.http.post<{ actionId: number }>(`${BASE}/admin/corporate-actions/candidates/${candidateId}/spin-off`, { exDate, valuePerShare, note: note || null });
+  }
+
+  /** Queues the job that reads the 8-Ks not yet read by the keyword rule. */
+  detectCorporateActions(): Observable<Job> {
+    return this.http.post<Job>(`${BASE}/admin/corporate-actions/detect`, {});
   }
 
   importPrices(file: File): Observable<Job> {

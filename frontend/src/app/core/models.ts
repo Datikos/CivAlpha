@@ -1788,3 +1788,52 @@ export interface AuditEvent {
   before: unknown;
   after: unknown;
 }
+
+// ---------- Corporate-action candidates (ADR-0003 phase 3) ----------
+
+export type CandidateReview = 'UNREVIEWED' | 'CONFIRMED' | 'REJECTED';
+export type CandidateStatus = 'gap' | 'unreviewed' | 'confirmed' | 'rejected' | 'flagged' | 'all';
+
+export interface NearbyAction {
+  id: number;
+  exDate: string;
+  type: string;
+  value: number;
+  provider: string;
+  /** For a cash dividend: its value as a share of the close before the ex-date. */
+  shareOfClose: number | null;
+}
+
+export interface ActionCandidate {
+  id: number;
+  filingId: number;
+  companyId: number;
+  name: string;
+  symbol: string;
+  acceptedAt: string;
+  method: string;
+  model: string | null;
+  kind: string;
+  probability: number | null;
+  evidence: string;
+  reconciledActionId: number | null;
+  review: CandidateReview;
+  reviewedAt: string | null;
+  reviewedBy: string | null;
+  reviewNote: string | null;
+  accessionNo: string;
+  items: string | null;
+  filingUrl: string | null;
+  nearbyActions: NearbyAction[];
+  largestMove: { date: string; move: number } | null;
+  inPortfolioWindow: boolean;
+}
+
+export interface CandidatesResponse {
+  status: CandidateStatus;
+  counts: { gap: number; gapRecent: number; unreviewed: number; confirmed: number; rejected: number; flagged: number; read: number };
+  portfolioDays: number;
+  candidates: ActionCandidate[];
+  rule: string;
+  note: string;
+}

@@ -60,6 +60,15 @@ def strategy_decide(params: dict, log: Log) -> None:
         log(f"portfolio advice for {a.as_of}: {a.portfolios} portfolios, {a.created} rows stored, {a.existing} already existed")
 
 
+def corpactions_detect(params: dict, log: Log) -> None:
+    """ADR-0003: read the 8-Ks not yet read by the keyword rule and store split and spin-off candidates."""
+    from .. import corpactions
+    from .sql import engine
+
+    r = corpactions.run(engine(), "KEYWORD", log=lambda _m: None)
+    log(f"8-K corporate-action candidates: {r['classified']} new filings read, {r['flagged']} flagged")
+
+
 def doubler_study(params: dict, log: Log) -> None:
     _benchmarks(log)
     log(str(doublers.study(engine())["headline"]))
@@ -173,6 +182,7 @@ TASKS = {
     "EVALUATE": evaluate,
     "STRATEGY_BACKTEST": strategy_backtest,
     "STRATEGY_DECIDE": strategy_decide,
+    "CORPACTIONS_DETECT": corpactions_detect,
     "TIME_MACHINE": time_machine,
     "DOUBLER_STUDY": doubler_study,
     "SETUP_STUDY": setup_study,

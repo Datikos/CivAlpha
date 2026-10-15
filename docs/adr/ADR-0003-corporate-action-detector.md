@@ -158,4 +158,13 @@ Phase 2, needs `TYPESAFE_API_KEY` (owner):
 - [ ] If adopted: pipeline step for new 8-Ks; the integrity scan shows feed gaps.
 
 Phase 3:
-- [ ] Review the feed-gap list; enter the confirmed distributions as `SPIN_OFF` actions.
+- [x] A review surface (2026-10-14): page `/corporate-actions` (owner), `platform/corpaction_review.py`,
+      `api/corpactions.py`, migration `V21__candidate_review.sql` (`reviewed_at`, `reviewed_by`, `review_note`), job
+      `CORPACTIONS_DETECT`; tests `backend/tests/test_corpaction_review.py` (6). Four decisions: reject; confirm and link
+      an action the feed recorded (closes the gap); enter a missed distribution as `SPIN_OFF` (closes every open
+      candidate of the company covering the ex-date); confirm only (the gap stays open, holders keep the warning).
+      *Found while implementing:* 8-Ks often report a distribution after its ex-date (FDX: Freight spun off 2026-06-01,
+      8-Ks of 2026-06-25 and 2026-07-10), outside the reconciliation window that starts 5 days before the filing; the
+      feed had recorded it (split 1.241 on 2026-06-01). The page therefore shows the feed's actions from 60 days before
+      the 8-K, so the owner can link them; the pre-registered rule is unchanged.
+- [ ] Review the feed-gap list (125 on 2026-10-14; the owner's work on the page).

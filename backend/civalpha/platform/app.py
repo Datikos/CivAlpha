@@ -159,7 +159,7 @@ if settings().accounts:
 elif not settings().admin_token_required:
     log.warning("CIVALPHA_ADMIN_TOKEN is not set: admin and write endpoints are unauthenticated (keep the stack on localhost)")
 
-from .api import admin, auth as auth_api, events, portfolio, read, universe  # noqa: E402  (routers import the services)
+from .api import admin, auth as auth_api, corpactions as corpactions_api, events, portfolio, read, universe  # noqa: E402  (routers import the services)
 from . import mcp_server  # noqa: E402
 
 app.include_router(read.router)
@@ -169,4 +169,5 @@ app.include_router(universe.router)
 app.include_router(portfolio.router)
 app.include_router(auth_api.router)
 app.include_router(auth_api.admin_router)
+app.include_router(corpactions_api.router)
 mcp_server.mount(app)

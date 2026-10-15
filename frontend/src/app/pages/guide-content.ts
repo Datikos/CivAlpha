@@ -259,6 +259,22 @@ export const PAGES: PageCard[] = [
     caution: 'A universe without delisted stocks overstates every rate here. The page lists the caveats.',
   },
   {
+    id: 'page-corporate-actions',
+    path: '/corporate-actions',
+    title: 'Corporate actions',
+    icon: 'diff',
+    area: 'data',
+    question: 'Did the price feed miss a split or a spin-off that an 8-K announced?',
+    read: [
+      'Every pipeline run reads the new 8-Ks that carry item 1.01, 2.01, 3.03, 5.03, 7.01 or 8.01 with a keyword rule (keyword-1, ADR-0003) and stores what each reads like: spin-off or distribution, stock split, reverse split, or nothing. Read new 8-Ks now does the same without waiting for the pipeline.',
+      'A flagged 8-K is matched to a recorded split or spin-off of the same company from 5 days before to 120 days after it. One with no match is an open gap. A gap younger than 120 days puts holders of the stock on "Check the data" on My portfolio, and the row is marked "affects advice".',
+      'Feed recorded lists the splits, spin-offs and cash dividends worth at least 2% of the close that the feed recorded around the 8-K. The feed records many real spin-offs as a fractional split factor (GE 1.281 on 2023-01-04) or as a cash dividend worth the shares distributed (3M $17.39 on 2024-04-01, 11.4% of the close). Largest move is the biggest one-day raw-close move without a recorded action from 5 days before to 120 days after: a missed distribution looks like a drop of its size, while results days and news also move prices.',
+      'Four decisions: Reject when the filing only mentions a split or spin-off (a completed split restated, merger terms). Link a feed action when the feed already adjusted the prices: the candidate is confirmed and the gap closes. + Spin-off when the feed missed a distribution that has happened: enter the ex-date and the value one share received at the ex-date close (shares received × their first close); it is applied like a cash dividend from the next pipeline run, and every open 8-K of that company covering the date is matched. Confirm alone for a real event still ahead: the gap stays open so holders keep the warning until it is recorded.',
+      'Select rows to reject or confirm several at once, with one note. Every decision records who and when, and goes to the audit trail. Measured 2026-10-14 on 13,775 8-Ks: 55 of 68 recorded splits and spin-offs found (81%), 0.64% of quiet 8-Ks flagged.',
+    ],
+    caution: 'Owner only. A recorded spin-off changes the total-return index, every feature built on it and the book\'s sizing from the next pipeline run; enter only a distribution that happened, with its value at the ex-date close. Nothing here edits a price bar.',
+  },
+  {
     id: 'page-universe',
     path: '/universe',
     title: 'Universe',

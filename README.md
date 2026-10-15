@@ -682,8 +682,10 @@ docs/      api.md (REST contract and MCP tools); research/ (dated research notes
   matching recorded action is a feed gap, and My portfolio marks a holding with a gap in the last 120 days "Check the
   data". Measured 2026-10-14 on 13,775 8-Ks: recall 55 of 68 recorded actions (80.9%, 95% CI 69.8%–90.5%), 0.64% of
   quiet 8-Ks flagged; none of the 49 companies with a gap shows a price break (the feed recorded the real
-  distributions as fractional splits or as cash dividends worth the shares, e.g. 3M's Solventum at $17.39 a share). Candidates can be confirmed or rejected
-  only in the database so far. Corrections are versioned: the replaced
+  distributions as fractional splits or as cash dividends worth the shares, e.g. 3M's Solventum at $17.39 a share).
+  The owner decides each gap on the **Corporate actions** page (`/corporate-actions`): reject a mention, link the
+  action the feed recorded, enter a missed distribution as a `SPIN_OFF` (ex-date, value per share), or confirm a
+  coming event and keep the warning; every decision is audited. Corrections are versioned: the replaced
   values move to `price_bar_revision`. Features always use the latest corrected prices, while forecasts
   already issued keep the feature values they were computed with.
 * **SEC.**

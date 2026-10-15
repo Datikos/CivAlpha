@@ -152,6 +152,14 @@ export const NAV_GROUPS: NavGroup[] = [
         ownerOnly: true,
       },
       {
+        path: '/corporate-actions',
+        label: 'Corporate actions',
+        icon: 'diff',
+        exact: false,
+        keywords: 'spin-off split 8-K feed gap review candidates distribution',
+        ownerOnly: true,
+      },
+      {
         path: '/admin',
         label: 'Data & pipeline',
         icon: 'database',

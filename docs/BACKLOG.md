@@ -18,4 +18,4 @@ ticked in its ADR; a new item goes into an ADR first, then here. Sizes: S up to 
 | 6 | Append batch 2's fingerprint when its 10th as-of date is issued | docs/research/live-test-2026-10-batch2.md §5 | 10 as-of dates | S |
 | 7 | Backdate universe membership for the 312 companies added on 2026-10-05 | research report §Open | owner's call (survivorship bias) | M |
 | 11 | Go-live gate: data licence and advice regulation answered before the first account for someone outside the owner's household | ADR-0005 Decision 11 | owner + legal advice | S |
-| 12 | Review surface for corporate-action candidates (list the feed gaps, confirm or reject, enter a confirmed distribution as `SPIN_OFF`), so a portfolio's "Check the data" can be cleared | ADR-0003 phase 3 | — | S |
+| 13 | Review the 125 feed gaps on the Corporate actions page (most are mentions; link the feed's action where it adjusted the prices) | ADR-0003 phase 3 | owner | S |
