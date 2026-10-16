@@ -128,3 +128,13 @@ def test_public_quotes_leave_out_symbols_held_outside_the_universe(tdb, universe
     assert {q["symbol"] for q in out["quotes"]} == {"META", "XLC"}                          # ...the research pages do not
     meta = next(q for q in out["quotes"] if q["symbol"] == "META")
     assert meta["change"] == pytest.approx(0.01) and meta["quotedAt"].endswith("Z")
+
+
+def test_http_client_request_lines_stay_out_of_the_log():
+    """Quote request URLs carry ticker lists that include holdings (ADR-0004 Decision 8): no INFO line from httpx."""
+    import logging
+
+    import civalpha.platform.app  # noqa: F401
+    import civalpha.platform.worker  # noqa: F401
+
+    assert all(logging.getLogger(n).getEffectiveLevel() >= logging.WARNING for n in ("httpx", "httpcore"))

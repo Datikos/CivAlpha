@@ -28,6 +28,9 @@ from .settings import settings
 from .tasks import TASKS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+# request URLs carry ticker lists that include holdings (ADR-0004 Decision 8): HTTP client lines only from WARNING up
+for _noisy in ("httpx", "httpcore"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 log = logging.getLogger("civalpha.worker")
 
 POLL_SECONDS = 1.0
