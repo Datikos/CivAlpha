@@ -1,7 +1,10 @@
 """Official and discovery feeds (all optional, disabled by default):
 
-- Federal Register API (official trade/tariff notices, proclamations, rules)
-- Federal Reserve monetary-policy press RSS (FOMC statements; rate change parsed from the statement)
+- Federal Register API: the material trade streams of ADR-0009 (presidential proclamations and executive orders,
+  Section 301, Section 232, Entity List rules), the last LIVE_DAYS days on a pipeline run, any date range for the
+  history (events/backfill.py)
+- Federal Reserve monetary-policy press RSS (FOMC statements; rate change parsed from the statement); the statement
+  pages of past rate changes for the history
 - generic news RSS feeds (discovery only; stored as NEWS_ONLY until an official document is linked)
 """
 from __future__ import annotations
@@ -11,9 +14,10 @@ import html.entities
 import json
 import logging
 import re
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Callable
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo
 from xml.etree.ElementTree import Element
 
 import httpx
@@ -23,7 +27,8 @@ from defusedxml.ElementTree import fromstring as parse_xml
 from .. import http
 from ..jobs import Log
 from ..settings import Events, settings
-from . import signals
+from ...pit import MODEL_STREAMS
+from . import signals, streams
 from .model import EventDraft, Source, Target
 
 log = logging.getLogger("civalpha.events.live")
@@ -31,9 +36,32 @@ log = logging.getLogger("civalpha.events.live")
 _FLAGS = re.IGNORECASE | re.ASCII
 TRADE = re.compile(r"tariff|duties|duty|section 301|section 232|export control|import", _FLAGS)
 MONETARY = re.compile(r"fomc|federal funds|interest rate|federal reserve", _FLAGS)
-FEDERAL_REGISTER = ("https://www.federalregister.gov/api/v1/documents.json?per_page=40&order=newest"
-                    "&conditions[term]=tariff&conditions[type][]=RULE&conditions[type][]=PRESDOCU&conditions[type][]=NOTICE")
+FR_API = "https://www.federalregister.gov/api/v1/documents.json"
+FR_FIELDS = ("title", "type", "abstract", "document_number", "html_url", "publication_date", "agencies", "raw_text_url")
+# ADR-0009 decision 3: one query per material stream, the same for the live run and the history
+FR_QUERIES = (
+    ("presidential", "conditions[type][]=PRESDOCU&conditions[presidential_document_type][]=proclamation"
+                     "&conditions[presidential_document_type][]=executive_order&conditions[term]=tariff | duties | imports"),
+    ("section 301", f"conditions[agencies][]={streams.USTR}"),
+    ("section 232", 'conditions[term]="section 232"'),
+    ("entity list", f'conditions[agencies][]={streams.BIS}&conditions[type][]=RULE&conditions[term]="entity list"'),
+)
+FR_PAGE = 1000
+FR_MAX_PAGES = 10            # the API returns at most 10,000 results per query; a year of one stream is under 1,000
+LIVE_DAYS = 14
+FULL_TEXT_CHARS = 5000       # a presidential document without a target in its title gets them from its full text's start
 FED_RSS = "https://www.federalreserve.gov/feeds/press_monetary.xml"
+FOMC_STATEMENT = "https://www.federalreserve.gov/newsevents/pressreleases/monetary{day:%Y%m%d}a.htm"
+FOMC_RELEASE = time(14, 0)   # statements come out at 14:00 New York; the 2020 emergency ones earlier or on a Sunday
+NEW_YORK = ZoneInfo("America/New_York")
+FOMC_ACTOR = "Federal Open Market Committee"
+FED_PUBLISHER = "Board of Governors of the Federal Reserve System"
+
+
+def fr_url(conditions: str, start: date, end: date, page: int = 1) -> str:
+    fields = "&".join(f"fields[]={f}" for f in FR_FIELDS)
+    return (f"{FR_API}?per_page={FR_PAGE}&page={page}&order=oldest&{fields}"
+            f"&conditions[publication_date][gte]={start.isoformat()}&conditions[publication_date][lte]={end.isoformat()}&{conditions}")
 
 
 class LiveEventSources:
@@ -65,28 +93,55 @@ class LiveEventSources:
             log.warning("event source %s failed", name, exc_info=True)
             return []
 
-    def federal_register(self) -> list[EventDraft]:
-        body = self._get(FEDERAL_REGISTER)
+    def federal_register(self, start: date | None = None, end: date | None = None) -> list[EventDraft]:
+        """Documents of the material streams published in [start, end] (default: the last LIVE_DAYS days), each once."""
+        end = end or date.today()
+        start = start or end - timedelta(days=LIVE_DAYS)
         out: list[EventDraft] = []
-        for r in json.loads(body).get("results") or []:
-            title = _str(r.get("title"), "")
-            abstract = _str(r.get("abstract"), "")
-            if not TRADE.search(title + " " + abstract):
-                continue
-            url = _str(r.get("html_url"), "")
-            pub = _iso_date(_str(r.get("publication_date"), ""))
-            # FR public inspection precedes; publication ~8:45 ET
-            published = datetime(pub.year, pub.month, pub.day, 13, 45, tzinfo=timezone.utc)
-            agencies = r.get("agencies")
-            first = agencies[0] if isinstance(agencies, list) and agencies and isinstance(agencies[0], dict) else {}
-            agency = _str(first.get("name"), "Federal Register")
-            attrs = {"severity": 0.5, "auto_extracted": True, "document_number": _str(r.get("document_number"), "")}
-            text = title + ". " + abstract
-            content = json.dumps(r, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-            out.append(EventDraft("TRADE_TARIFF", signals.trade_event_type(text), title, abstract, pub, published, agency, attrs,
-                                  signals.trade_targets(text),
-                                  Source(url, title, "Federal Register", "OFFICIAL_PRIMARY", published, content, "application/json")))
+        seen: set[str] = set()
+        for _name, conditions in FR_QUERIES:
+            for page in range(1, FR_MAX_PAGES + 1):
+                body = json.loads(self._get(fr_url(conditions, start, end, page)))
+                for r in body.get("results") or []:
+                    number = _str(r.get("document_number"), "")
+                    if number in seen:
+                        continue
+                    d = self._fr_draft(r)
+                    if d is not None:
+                        seen.add(number)
+                        out.append(d)
+                if page >= int(body.get("total_pages") or 1):
+                    break
         return out
+
+    def _fr_draft(self, r: dict) -> EventDraft | None:
+        """A material trade action, or None (another stream, or a presidential document that is not about trade)."""
+        title = _str(r.get("title"), "")
+        abstract = _str(r.get("abstract"), "")
+        text = title + ". " + abstract
+        stream = streams.classify(r)
+        if stream not in MODEL_STREAMS or (stream == "PRESIDENTIAL" and not TRADE.search(text)):
+            return None
+        url = _str(r.get("html_url"), "")
+        pub = _iso_date(_str(r.get("publication_date"), ""))
+        # FR public inspection precedes; publication ~8:45 ET
+        published = datetime(pub.year, pub.month, pub.day, 13, 45, tzinfo=timezone.utc)
+        agencies = r.get("agencies")
+        first = agencies[0] if isinstance(agencies, list) and agencies and isinstance(agencies[0], dict) else {}
+        agency = _str(first.get("name"), "Federal Register")
+        attrs = {"severity": streams.severity(stream), "auto_extracted": True, "document_number": _str(r.get("document_number"), "")}
+        targets = signals.trade_targets(text)
+        full_text = _str(r.get("raw_text_url"), "")
+        if not targets and stream == "PRESIDENTIAL" and full_text:
+            try:
+                targets = signals.trade_targets(html_text(self._get(full_text))[:FULL_TEXT_CHARS])
+                attrs["targets_from"] = "full_text"
+            except Exception as e:  # noqa: BLE001 - the event is still recorded, with the targets its title gives
+                log.warning("full text of %s failed: %s", url, _message(e))
+        content = json.dumps(r, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        return EventDraft("TRADE_TARIFF", signals.trade_event_type(text), title, abstract, pub, published, agency, attrs, targets,
+                          Source(url, title, "Federal Register", "OFFICIAL_PRIMARY", published, content, "application/json"),
+                          stream)
 
     def fed_rss(self) -> list[EventDraft]:
         rss = _xml(self._get(FED_RSS))
@@ -97,20 +152,49 @@ class LiveEventSources:
                 continue
             link = _text(_required(item, "link"))
             published = parse_rfc1123(_text(_required(item, "pubDate")))
-            page = self._get(link)
+            out.append(self.fomc_draft(link, title, published, self._get(link)))
+        return out
+
+    def fomc_draft(self, link: str, title: str, published: datetime, page: bytes, change_bps: int | None = None) -> EventDraft:
+        """An FOMC statement as an official RATE_DECISION; `change_bps` (the history's FRED change) overrides the parsed one."""
+        decision = signals.rate_decision(html_text(page))
+        attrs: dict = {}
+        bps = change_bps if change_bps is not None else (None if decision is None else decision.change_bps)
+        if decision is not None:
+            if bps is not None:
+                attrs["rate_change_bps"] = bps
+            attrs["target_lower_pct"] = decision.lower
+            attrs["target_upper_pct"] = decision.upper
+        direction = None if decision is None else (decision.direction if bps is None else (bps > 0) - (bps < 0))
+        verb = "statement" if direction is None else {1: "raised", -1: "lowered", 0: "maintained"}[direction]
+        return EventDraft("MONETARY_POLICY", "RATE_DECISION", "FOMC statement: target range " + verb, title,
+                          published.date(), published, FOMC_ACTOR, attrs,
+                          [Target("INTEREST_RATE", "US_POLICY_RATE", None if bps is None else float(bps))],
+                          Source(link, title, FED_PUBLISHER, "OFFICIAL_PRIMARY", published, page, "text/html"), "FOMC")
+
+    def fomc_history(self, changes: list[tuple[date, float, float]], log_line: Log) -> list[EventDraft]:
+        """The statements of past rate changes, from (effective date, new upper target, previous upper target): the
+        decision day is the effective date minus 1 to 3 days (first statement page that exists) or the day itself."""
+        out: list[EventDraft] = []
+        for effective, upper, previous in changes:
+            page = day = None
+            for back in (1, 0, 2, 3):
+                day = effective - timedelta(days=back)
+                try:
+                    page = self._get(FOMC_STATEMENT.format(day=day))
+                    break
+                except RuntimeError:
+                    continue
+            if page is None:
+                log_line(f"FOMC history: no statement found for the change effective {effective}")
+                continue
             decision = signals.rate_decision(html_text(page))
-            attrs: dict = {}
-            if decision is not None:
-                attrs["rate_change_bps"] = decision.change_bps
-                attrs["target_lower_pct"] = decision.lower
-                attrs["target_upper_pct"] = decision.upper
-            verb = ("statement" if decision is None
-                    else "raised" if decision.change_bps > 0 else "lowered" if decision.change_bps < 0 else "maintained")
-            out.append(EventDraft("MONETARY_POLICY", "RATE_DECISION", "FOMC statement: target range " + verb, title,
-                                  published.date(), published, "Federal Open Market Committee", attrs,
-                                  [Target("INTEREST_RATE", "US_POLICY_RATE", None if decision is None else float(decision.change_bps))],
-                                  Source(link, title, "Board of Governors of the Federal Reserve System", "OFFICIAL_PRIMARY", published,
-                                         page, "text/html")))
+            if decision is None or abs(decision.upper - upper) > 1e-9:
+                log_line(f"FOMC history: statement of {day} says {None if decision is None else decision.upper}, FRED {upper}; skipped")
+                continue
+            published = datetime.combine(day, FOMC_RELEASE, NEW_YORK).astimezone(timezone.utc)
+            out.append(self.fomc_draft(FOMC_STATEMENT.format(day=day), "Federal Reserve issues FOMC statement", published, page,
+                                       round((upper - previous) * 100)))
         return out
 
     def news(self, feed_url: str) -> list[EventDraft]:

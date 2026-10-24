@@ -151,6 +151,12 @@ def insider_ingest(params: dict, log: Log) -> None:
     log(f"insiders: {r.datasets} data sets, {r.filings} recent Form 4 filings, {r.transactions} transactions stored")
 
 
+def event_backfill(params: dict, log: Log) -> None:
+    """ADR-0009: the official policy events since 2019 (material Federal Register streams, FOMC rate changes)."""
+    from .events import backfill
+    backfill.run_job(params, log)
+
+
 def universe_expand(params: dict, log: Log) -> None:
     sec = SecClientFactory().configured()
     ingest = FilingIngestionService()
@@ -196,4 +202,5 @@ TASKS = {
     "UNIVERSE_EXPAND": universe_expand,
     "INSIDER_INGEST": insider_ingest,
     "EARNINGS_INGEST": earnings_ingest,
+    "EVENT_BACKFILL": event_backfill,
 }

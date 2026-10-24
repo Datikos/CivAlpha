@@ -92,6 +92,21 @@ class MacroService:
                                    date.fromisoformat(str(o.get("realtime_start"))), None if end == "9999-12-31" else date.fromisoformat(end)))
         return self.insert(obs)
 
+    def current_values(self, series_id: str, start: date) -> list[tuple[date, float | None]]:
+        """The series' observations from `start` as published today, without vintages: for a series that is never revised
+        (the FOMC's target range, ADR-0009) and whose daily history has more vintage dates than ALFRED allows (2,000).
+        The response is stored as evidence; nothing goes into macro_observation."""
+        if self.fred is None or not self.fred.enabled:
+            raise Problem("FRED_API_KEY is not set")
+        base = self.fred.base_url
+        key = quote_plus(self.fred.api_key)
+        body = self._get(f"{base}/series/observations?file_type=json&series_id={series_id}&observation_start={start.isoformat()}&api_key={key}")
+        self.docs.store(NewDocument("MACRO", "FRED (Federal Reserve Bank of St. Louis)",
+                                    f"{base}/series/observations?series_id={series_id}&observation_start={start.isoformat()}",
+                                    None, f"{series_id} current values", None, "application/json", body))
+        return [(date.fromisoformat(str(o.get("date"))), None if str(o.get("value")) == "." else float(o.get("value")))
+                for o in json.loads(body).get("observations") or []]
+
     def _get(self, url: str) -> bytes:
         if self.http is not None:
             r = self.http.get(url)

@@ -28,7 +28,7 @@ import pandas as pd
 from .base import prior_high, prior_low, rsi, sma
 from .panel import MarketPanel
 
-STUDY_VERSION = "setups-0.1.0"
+STUDY_VERSION = "setups-0.2.0"       # 0.2.0 (2026-10-24): calendar-day blocks in the bootstrap
 HORIZONS = (5, 21, 63)
 BLOCK = 21
 N_BOOT = 1000
@@ -52,6 +52,7 @@ class SetupConfig:
     rate_shock: float = -0.01
     cluster_buyers: int = 2
     cluster_sellers: int = 3
+    informed_sellers: int = 2
     reaction_move: float = 0.05
     pre_earnings_days: int = 5
 
@@ -145,6 +146,14 @@ def _insider_cluster_sell(p: MarketPanel, cfg: SetupConfig) -> pd.DataFrame:
     return edge(p.insiders()["insider_sellers_21d"] >= cfg.cluster_sellers)
 
 
+def _insider_informed_buy(p: MarketPanel, cfg: SetupConfig) -> pd.DataFrame:
+    return edge(p.insiders()["insider_informed_buyers_21d"] >= 1)
+
+
+def _insider_informed_sell(p: MarketPanel, cfg: SetupConfig) -> pd.DataFrame:
+    return edge(p.insiders()["insider_informed_sellers_21d"] >= cfg.informed_sellers)
+
+
 def _breakout_52w(p: MarketPanel, cfg: SetupConfig) -> pd.DataFrame:
     return edge(p.px > prior_high(p.px, 252))
 
@@ -225,6 +234,14 @@ def setups() -> list[Setup]:
         Setup("INSIDER_CLUSTER_SELL", "INSIDER", "Insider cluster selling",
               "Three or more different insiders with open-market sales made public within 21 trading days",
               "The sell side of the same literature: usually diversification, sometimes not", _insider_cluster_sell),
+        Setup("INSIDER_INFORMED_BUY", "INSIDER", "An informed insider buys",
+              "The first close at which an open-market purchase is public that is neither under a Rule 10b5-1 plan nor routine "
+              "(the insider did not trade in this calendar month in each of the three previous years); from 2023-07",
+              "Opportunistic insider trades carry the information, routine ones do not (Cohen, Malloy & Pomorski 2012); ADR-0010",
+              _insider_informed_buy),
+        Setup("INSIDER_INFORMED_SELL", "INSIDER", "Informed insiders sell",
+              "Two or more different insiders with informed open-market sales made public within 21 trading days; from 2023-07",
+              "The sell side of the same classification: planned and routine sales removed; ADR-0010", _insider_informed_sell),
         Setup("BREAKOUT_52W", "TREND", "New 52-week high",
               "First close above the highest close of the previous 252 trading days", "Breakout and 52-week-high momentum (George & Hwang 2004)", _breakout_52w),
         Setup("NEW_LOW_52W", "REVERSAL", "New 52-week low",
@@ -258,18 +275,29 @@ def forward_excess(p: MarketPanel, h: int) -> pd.DataFrame:
 
 # --------------------------------------------------------------------------- statistics
 def block_bootstrap(date_idx: np.ndarray, y: np.ndarray, block: int = BLOCK, n_boot: int = N_BOOT, seed: int = SEED) -> tuple[float, float, float]:
-    """(2.5th, 97.5th percentile, standard error) of mean(y), resampling blocks of `block` consecutive dates."""
+    """(2.5th, 97.5th percentile, standard error) of mean(y), resampling blocks of `block` consecutive calendar days
+    over the span the rows cover; a day without a row contributes nothing to a resample. Blocks of calendar days, not
+    of the dates that have rows: a setup that fired on 19 dates (RATE_SHOCK, 2026-10-24) would otherwise put all 19 in
+    every 21-date block and get an interval of almost zero width. NaN when the span holds fewer than two blocks."""
+    nan = float("nan")
     if len(y) == 0:
-        return float("nan"), float("nan"), float("nan")
-    dates = np.unique(date_idx)
-    per = pd.Series(y.astype(float)).groupby(date_idx).agg(["sum", "count"]).reindex(dates)
-    s, c = per["sum"].to_numpy(), per["count"].to_numpy()
+        return nan, nan, nan
+    lo = int(np.min(date_idx))
+    span = int(np.max(date_idx)) - lo + 1
+    n_blocks = span // block
+    if n_blocks < 2:
+        return nan, nan, nan
+    per = pd.Series(y.astype(float)).groupby(np.asarray(date_idx) - lo).agg(["sum", "count"]).reindex(range(span), fill_value=0)
+    s, c = per["sum"].to_numpy(float), per["count"].to_numpy(float)
     rng = np.random.default_rng(seed)
-    n_blocks = max(1, len(dates) // block)
-    starts = rng.integers(0, max(1, len(dates) - block + 1), size=(n_boot, n_blocks))
-    pick = (starts[:, :, None] + np.arange(block)[None, None, :]).reshape(n_boot, -1) % len(dates)
-    boots = s[pick].sum(axis=1) / c[pick].sum(axis=1)
-    return float(np.percentile(boots, 2.5)), float(np.percentile(boots, 97.5)), float(np.std(boots, ddof=1)) if n_boot > 1 else float("nan")
+    starts = rng.integers(0, span - block + 1, size=(n_boot, n_blocks))
+    pick = (starts[:, :, None] + np.arange(block)[None, None, :]).reshape(n_boot, -1)
+    counts = c[pick].sum(axis=1)
+    ok = counts > 0
+    boots = s[pick].sum(axis=1)[ok] / counts[ok]
+    if len(boots) < 2:
+        return nan, nan, nan
+    return float(np.percentile(boots, 2.5)), float(np.percentile(boots, 97.5)), float(np.std(boots, ddof=1))
 
 
 def bonferroni_z(tests: int, alpha: float = 0.05) -> float:

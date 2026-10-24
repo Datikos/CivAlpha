@@ -46,7 +46,7 @@ def load_bundle(engine: Engine) -> DataBundle:
     facts = _utc(_dates(facts, ["period_start", "period_end"]), ["accepted_at"])
     expo = _utc(_q(engine, """SELECT id, company_id, target_type, target_code, exposure_channel, share::float8 AS share, basis,
                                    confidence, method, available_at, passage_id, filing_id FROM company_exposure"""), ["available_at"])
-    events = _utc(_q(engine, "SELECT id, category, event_type, title, published_at, evidence_status, attributes FROM policy_event"), ["published_at"])
+    events = _utc(_q(engine, "SELECT id, category, event_type, title, published_at, evidence_status, stream, attributes FROM policy_event"), ["published_at"])
     events["attributes"] = events["attributes"].apply(lambda a: a if isinstance(a, dict) else json.loads(a or "{}"))
     targets = _q(engine, "SELECT event_id, target_type, target_code, magnitude::float8 AS magnitude FROM event_target")
     macro = _dates(_q(engine, "SELECT series_id, obs_date, value::float8 AS value, realtime_start, realtime_end FROM macro_observation"),
@@ -55,7 +55,8 @@ def load_bundle(engine: Engine) -> DataBundle:
     filings = _utc(_q(engine, "SELECT id, company_id, accession_no, form_type, items, accepted_at, source_document_id FROM filing"), ["accepted_at"])
     releases = _utc(_q(engine, "SELECT company_id, filing_id, accepted_at, guidance_tone FROM earnings_release"), ["accepted_at"])
     insiders = _utc(_dates(_q(engine, """SELECT company_id, available_at, trans_date, trans_code, acquired, shares::float8 AS shares,
-                                                price::float8 AS price, owner_cik, owner_name FROM insider_transaction"""), ["trans_date"]), ["available_at"])
+                                                price::float8 AS price, owner_cik, owner_name, relationship, title, plan_10b5_1
+                                         FROM insider_transaction"""), ["trans_date"]), ["available_at"])
     if bench.empty:
         raise ValueError("No benchmark ETF prices are loaded. Update prices, or import a prices CSV that includes "
                          "the sector benchmark ETFs of your companies, before evaluating or issuing forecasts.")

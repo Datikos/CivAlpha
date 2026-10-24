@@ -7,7 +7,7 @@ Availability rules
   prices          bar for trade date d is available at close(d) = d 21:00 UTC (after the US close)
   xbrl facts      accepted_at (EDGAR acceptance time) <= as_of; latest acceptance wins per fact key
   exposures       available_at (acceptance time of the supporting filing) <= as_of
-  events          published_at (official publication time) <= as_of, evidence_status == OFFICIAL
+  events          published_at (official publication time) <= as_of, evidence_status == OFFICIAL, stream in MODEL_STREAMS
   macro           ALFRED vintages: realtime_start <= as_of date <= realtime_end (null = still current)
   universe        valid_from <= as_of date < valid_to (null = open)
 """
@@ -18,6 +18,9 @@ from datetime import date, datetime, time, timezone
 import pandas as pd
 
 CLOSE_HOUR_UTC = 21  # data cutoff for a trading date: after the 16:00 New York close in both EST and EDT
+# ADR-0009: the official event streams the models read; anti-dumping case notices (AD_CVD) and other trade documents
+# are stored and shown but would match every company exposed to a country for a narrow product
+MODEL_STREAMS = ("PRESIDENTIAL", "USTR_301", "SECTION_232", "EXPORT_CONTROL", "FOMC", "MANUAL")
 
 
 def close_ts(d: date | pd.Timestamp) -> pd.Timestamp:
@@ -67,7 +70,7 @@ def events_as_of(events: pd.DataFrame, as_of, lookback_days: int | None = None, 
     if lookback_days is not None:
         m &= events["published_at"] > as_of - pd.Timedelta(days=lookback_days)
     if official_only:
-        m &= events["evidence_status"] == "OFFICIAL"
+        m &= (events["evidence_status"] == "OFFICIAL") & events["stream"].isin(MODEL_STREAMS)
     return events[m]
 
 

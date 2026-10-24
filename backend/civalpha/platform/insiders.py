@@ -10,6 +10,7 @@ Only non-derivative transactions are stored (common stock, not options), with th
 S (open-market sale) are the informative ones; grants (A), exercises (M), tax withholding (F) and gifts (G) are kept for
 the record but not counted as a signal. `available_at` is the end of the filing day in New York: the data sets carry
 no acceptance time, and the end of the day is never earlier than the true acceptance (safe for point-in-time use).
+`plan_10b5_1` (ADR-0010) is the filing's Rule 10b5-1 checkbox: TRUE, FALSE, or None before the 2023 form.
 """
 from __future__ import annotations
 
@@ -32,6 +33,7 @@ from .universe import UniverseService
 DATASET_URLS = ("https://www.sec.gov/files/structureddata/data/insider-transactions-data-sets/{name}.zip",
                 "https://www.sec.gov/files/datastandardsinnovation/data/insider-transactions-data-sets/{name}.zip")
 SIGNAL_CODES = frozenset({"P", "S"})
+PLAN_FLAG_FROM = date(2023, 4, 1)     # the Form 4 checkbox for Rule 10b5-1 trades is mandatory from this filing date
 RELATIONSHIPS = ("Officer", "Director", "TenPercentOwner", "Other")
 _MONTHS = {m: i for i, m in enumerate(["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"], 1)}
 
@@ -54,6 +56,7 @@ class Transaction:
     ownership: str | None
     security_title: str | None
     issuer_cik: str
+    plan_10b5_1: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -111,6 +114,20 @@ def _relationship(rel: str | None, is_director=None, is_officer=None, is_ten=Non
     return "Other"
 
 
+def plan_flag(v: str | None) -> bool | None:
+    """The 10b5-1 checkbox as the data sets ("1", "0", "true", "false", empty) and the XML ("1", "true", ...) write it."""
+    t = (v or "").strip().lower()
+    return True if t in ("1", "true") else False if t in ("0", "false") else None
+
+
+def dataset_plan_flags(zip_bytes: bytes) -> dict[str, bool | None]:
+    """Accession number -> 10b5-1 flag of every Form 4 in a data set (no AFF10B5ONE column before 2023-Q1: all None)."""
+    z = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    with z.open("SUBMISSION.tsv") as f:
+        rows = csv.DictReader(io.TextIOWrapper(f, encoding="utf-8", errors="replace"), delimiter="\t")
+        return {r["ACCESSION_NUMBER"]: plan_flag(r.get("AFF10B5ONE")) for r in rows if (r.get("DOCUMENT_TYPE") or "").startswith("4")}
+
+
 def parse_dataset(zip_bytes: bytes, issuer_ciks: set[str]) -> list[Transaction]:
     """Non-derivative transactions of Forms 4 (and 4/A) whose issuer is one of `issuer_ciks` (10-digit)."""
     z = zipfile.ZipFile(io.BytesIO(zip_bytes))
@@ -119,12 +136,12 @@ def parse_dataset(zip_bytes: bytes, issuer_ciks: set[str]) -> list[Transaction]:
         with z.open(name) as f:
             yield from csv.DictReader(io.TextIOWrapper(f, encoding="utf-8", errors="replace"), delimiter="\t")
 
-    subs: dict[str, tuple[str, date]] = {}
+    subs: dict[str, tuple[str, date, bool | None]] = {}
     for r in rows("SUBMISSION.tsv"):
         cik = pad_cik(r.get("ISSUERCIK") or "")
         filed = _date(r.get("FILING_DATE"))
         if cik in issuer_ciks and (r.get("DOCUMENT_TYPE") or "").startswith("4") and filed is not None:
-            subs[r["ACCESSION_NUMBER"]] = (cik, filed)
+            subs[r["ACCESSION_NUMBER"]] = (cik, filed, plan_flag(r.get("AFF10B5ONE")))
     if not subs:
         return []
     owners: dict[str, tuple[str | None, str, str, str | None]] = {}
@@ -138,7 +155,7 @@ def parse_dataset(zip_bytes: bytes, issuer_ciks: set[str]) -> list[Transaction]:
         a = r.get("ACCESSION_NUMBER")
         if a not in subs:
             continue
-        cik, filed = subs[a]
+        cik, filed, plan = subs[a]
         td = _date(r.get("TRANS_DATE"))
         shares = _num(r.get("TRANS_SHARES"))
         code = (r.get("TRANS_CODE") or "").strip()
@@ -149,7 +166,7 @@ def parse_dataset(zip_bytes: bytes, issuer_ciks: set[str]) -> list[Transaction]:
                                (r.get("TRANS_ACQUIRED_DISP_CD") or "").strip().upper() == "A", shares,
                                _num(r.get("TRANS_PRICEPERSHARE")), _num(r.get("SHRS_OWND_FOLWNG_TRANS")),
                                (r.get("DIRECT_INDIRECT_OWNERSHIP") or "").strip() or None,
-                               (r.get("SECURITY_TITLE") or "").strip() or None, cik))
+                               (r.get("SECURITY_TITLE") or "").strip() or None, cik, plan))
     return out
 
 
@@ -166,6 +183,7 @@ def parse_form4_xml(xml: bytes, accession_no: str, filed: date) -> list[Transact
     """The ownershipDocument of a Form 4: reporting owner and non-derivative transactions."""
     root = ET.fromstring(xml)
     issuer = pad_cik(_text(root, "issuer/issuerCik") or "")
+    plan = plan_flag(_text(root, "aff10b5One"))
     ro = root.find("reportingOwner")
     owner_cik = owner_name = title = None
     rel = "Other"
@@ -188,7 +206,7 @@ def parse_form4_xml(xml: bytes, accession_no: str, filed: date) -> list[Transact
                                (_text(t, "transactionAmounts/transactionAcquiredDisposedCode") or "").upper() == "A", shares,
                                _num(_text(t, "transactionAmounts/transactionPricePerShare")),
                                _num(_text(t, "postTransactionAmounts/sharesOwnedFollowingTransaction")),
-                               _text(t, "ownershipNature/directOrIndirectOwnership"), _text(t, "securityTitle"), issuer))
+                               _text(t, "ownershipNature/directOrIndirectOwnership"), _text(t, "securityTitle"), issuer, plan))
     return out
 
 
@@ -217,6 +235,7 @@ class InsiderIngestionService:
             cik = self.tickers.cik_of(c["id"])
             if cik:
                 by_cik[pad_cik(cik)] = int(c["id"])
+        self.backfill_plan_flags(log)
         n_sets = n_filings = n_rows = 0
         latest_set_end: date | None = None
         quarters = quarters_back(today, self.lookback_years)
@@ -254,6 +273,34 @@ class InsiderIngestionService:
         p.finish()
         log(f"insiders: {n_sets} data sets loaded, {n_filings} recent Form 4 filings read, {n_rows} transactions stored")
         return Result(n_sets, n_filings, n_rows)
+
+    def backfill_plan_flags(self, log: Log) -> int:
+        """ADR-0010: rows stored before the 10b5-1 flag was read get it from their stored document (no download). Only
+        documents that still have rows filed since the form change with the flag NULL are read."""
+        docs = self.db.all("""SELECT DISTINCT source_document_id AS id, source FROM insider_transaction
+                              WHERE plan_10b5_1 IS NULL AND filed_date >= :d AND source_document_id IS NOT NULL ORDER BY 1""",
+                           d=PLAN_FLAG_FROM)
+        n = 0
+        for d in docs:
+            doc = self.docs.get(d["id"])
+            body = self.docs.content(doc) if doc is not None else None
+            if not body:
+                continue
+            if d["source"] == "form4-xml":
+                acc = self.db.scalars("SELECT DISTINCT accession_no FROM insider_transaction WHERE source_document_id = :d", d=d["id"])
+                flags = {a: plan_flag(_text(ET.fromstring(body), "aff10b5One")) for a in acc}
+            else:
+                flags = dataset_plan_flags(body)
+            known = {a: f for a, f in flags.items() if f is not None}
+            if known:
+                n += self.db.execute("""
+                    UPDATE insider_transaction t SET plan_10b5_1 = v.f
+                    FROM unnest(CAST(:a AS text[]), CAST(:f AS boolean[])) AS v(a, f)
+                    WHERE t.source_document_id = :d AND t.accession_no = v.a AND t.plan_10b5_1 IS NULL""",
+                                     a=list(known), f=list(known.values()), d=d["id"])
+        if n:
+            log(f"insiders: 10b5-1 flag read for {n} stored transactions")
+        return n
 
     def _recent_form4(self, sec: SecClient, cik: str, cid: int, after: date | None) -> tuple[int, int]:
         doc = self.docs.latest_by_locator(f"https://data.sec.gov/submissions/CIK{cik}.json", None)
@@ -293,12 +340,13 @@ class InsiderIngestionService:
                 n += self.db.execute("""
                     INSERT INTO insider_transaction (company_id, accession_no, trans_sk, owner_cik, owner_name, relationship, title,
                         trans_date, filed_date, available_at, trans_code, acquired, shares, price, shares_after, ownership,
-                        security_title, source, source_document_id)
-                    VALUES (:c, :a, :sk, :oc, :on, :rel, :title, :td, :fd, :at, :code, :acq, :sh, :pr, :after, :own, :sec, :src, :doc)
+                        security_title, source, source_document_id, plan_10b5_1)
+                    VALUES (:c, :a, :sk, :oc, :on, :rel, :title, :td, :fd, :at, :code, :acq, :sh, :pr, :after, :own, :sec, :src, :doc, :plan)
                     ON CONFLICT (accession_no, trans_sk) DO NOTHING""",
                     c=cid, a=t.accession_no, sk=t.trans_sk, oc=t.owner_cik, on=t.owner_name, rel=t.relationship, title=t.title,
                     td=t.trans_date, fd=t.filed_date, at=end_of_day_new_york(t.filed_date), code=t.trans_code, acq=t.acquired,
-                    sh=t.shares, pr=t.price, after=t.shares_after, own=t.ownership, sec=t.security_title, src=source, doc=doc_id)
+                    sh=t.shares, pr=t.price, after=t.shares_after, own=t.ownership, sec=t.security_title, src=source, doc=doc_id,
+                    plan=t.plan_10b5_1)
         return n
 
 

@@ -129,3 +129,15 @@ def test_study_on_noise_supports_nothing_and_lists_fresh_triggers():
             assert 0 <= s["daysAgo"] < 5
     assert res["today"]["stockCount"] <= 6 and "setups tested" in res["headline"]
     json.dumps(_clean(res))
+
+
+def test_a_setup_that_fired_on_few_dates_gets_a_wide_interval():
+    """2026-10-24: RATE_SHOCK fired 104 times on 19 dates; blocks of 21 firing dates put all 19 in every resample and the
+    interval collapsed (+0.3% to +0.3% around a mean of +0.5%). Blocks of calendar days keep the dates' spread."""
+    rng = np.random.default_rng(3)
+    dates = np.sort(rng.choice(np.arange(0, 1900), size=19, replace=False))
+    date_idx = np.repeat(dates, 6)[:104]
+    y = rng.normal(0.005, 0.08, size=len(date_idx)) + np.repeat(rng.normal(0, 0.05, size=19), 6)[:104]   # a common shock per date
+    lo, hi, se = setups.block_bootstrap(date_idx, y)
+    assert lo < y.mean() < hi and hi - lo > 0.02 and se > 0.005
+    assert np.isnan(setups.block_bootstrap(np.array([5, 5, 6]), np.array([0.1, 0.2, 0.3]))[0])    # one block: no interval

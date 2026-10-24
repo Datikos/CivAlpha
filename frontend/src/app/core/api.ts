@@ -119,6 +119,11 @@ export class ApiService {
     return this.http.post<Job>(`${BASE}/admin/evaluate`, {});
   }
 
+  /** ADR-0009: the official policy events since `from` (default 2019-01-01). */
+  backfillEvents(from?: string | null): Observable<Job> {
+    return this.http.post<Job>(`${BASE}/admin/events/backfill`, { from: from || null });
+  }
+
   issueForecasts(asOfDate?: string | null): Observable<Job> {
     return this.http.post<Job>(`${BASE}/admin/forecasts/issue`, asOfDate ? { asOfDate } : {});
   }

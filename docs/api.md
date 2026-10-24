@@ -126,10 +126,13 @@ A path reads: event → target (country/sector/product/cost) → company exposur
 `GET /api/events?category=MONETARY_POLICY|TRADE_TARIFF`
 ```json
 [{ "id": 5, "category": "TRADE_TARIFF", "eventType": "TARIFF_IMPOSED", "title": "...", "eventDate": "2025-04-02",
-   "publishedAt": "2025-04-02T20:00:00Z", "firstSeenAt": "...", "evidenceStatus": "OFFICIAL", "actorName": "USTR",
+   "publishedAt": "2025-04-02T20:00:00Z", "firstSeenAt": "...", "evidenceStatus": "OFFICIAL", "stream": "USTR_301", "actorName": "USTR",
    "targets": [{"targetType": "COUNTRY", "targetCode": "CN", "magnitude": 25}], "sourceCount": 2,
    "affectedCompanyCount": 7, "version": 1 }]
 ```
+`stream` (ADR-0009) is null for a news-only event; the models read `PRESIDENTIAL`, `USTR_301`, `SECTION_232`,
+`EXPORT_CONTROL`, `FOMC` and `MANUAL` (an official event added with `POST /api/events`), not `AD_CVD` or `OTHER_TRADE`.
+
 `GET /api/events/{id}`
 ```json
 { "...list fields...": "", "summary": "...", "attributes": {"severity": 0.8},
@@ -341,15 +344,20 @@ announcement that followed the same announcement last year (else 91 days after t
 `GET /api/companies/{symbol}/insiders?limit=60` — insider transactions (SEC Forms 4) as of now:
 ```json
 { "symbol": "META", "price": 712.1, "priceDate": "2026-10-02", "transactionCount": 143, "newestAvailableAt": "2026-10-02T03:59:59Z",
-  "windows": {"21d": {"buys": 0, "sells": 3, "buyers": 0, "sellers": 2, "netValue": -4200000.0, "boughtValue": 0.0, "soldValue": 4200000.0},
+  "windows": {"21d": {"buys": 0, "sells": 3, "buyers": 0, "sellers": 2, "netValue": -4200000.0, "boughtValue": 0.0, "soldValue": 4200000.0,
+                      "informedBuys": 0, "informedSells": 1, "plannedSells": 2, "routineTrades": 0},
               "63d": {"...": 0}, "252d": {"...": 0}},
   "transactions": [{"id": 1, "accessionNo": "0001127602-26-012345", "ownerName": "Zuckerberg Mark", "ownerCik": "0001548760",
                     "relationship": "Officer", "title": "Chairman and CEO", "transDate": "2026-09-30", "filedDate": "2026-10-02",
                     "availableAt": "2026-10-03T03:59:59Z", "transCode": "S", "codeLabel": "Open-market sale", "acquired": false,
                     "shares": 10000, "price": 705.5, "value": 7055000.0, "sharesAfter": 330000, "ownership": "I", "securityTitle": "Class A Common Stock",
-                    "source": "form4-xml", "signal": true, "documentUrl": "/api/documents/88", "url": "https://www.sec.gov/Archives/..."}],
+                    "source": "form4-xml", "signal": true, "quality": "PLANNED", "role": "CEO_CFO", "tradingPlan": true,
+                    "documentUrl": "/api/documents/88", "url": "https://www.sec.gov/Archives/..."}],
   "note": "..." }
 ```
+`quality` (ADR-0010, open-market trades only, else null): `PLANNED` (Rule 10b5-1 box ticked), `ROUTINE` (the insider
+traded in this calendar month in each of the three previous years), `INFORMED` (neither) or `NOT_CLASSIFIABLE`;
+`tradingPlan` is the box itself (null before the 2023 form); `role` is `CEO_CFO` from the title, else the relationship.
 Windows count open-market purchases (P) and sales (S) only, by the time the filing became available (the end of the filing
 day in New York); other codes (grants A, exercises M, tax withholding F, gifts G, ...) are listed with `signal` false. Sources:
 the SEC's quarterly insider-transactions data sets for the lookback window plus each company's Form 4 XML filings newer than
@@ -485,6 +493,9 @@ response is `401`. `GET /api/meta` reports `adminTokenRequired`.
 * `POST /api/admin/strategies/backtest` → job — backtest every strategy and store a new run (also part of every pipeline run)
 * `POST /api/admin/earnings/ingest` → job — read the press-release exhibit of every results 8-K not yet read and classify its guidance tone (also part of every pipeline run)
 * `POST /api/admin/insiders/ingest` → job — load insider transactions (Forms 4) for every tracked company (also part of every pipeline run)
+* `POST /api/admin/events/backfill` body `{"from": "2019-01-01", "to": null}` (both optional) → job `EVENT_BACKFILL` —
+  the official policy events of that range (ADR-0009): the material Federal Register streams year by year and the FOMC
+  statements of every change in FRED's upper target (needs `FRED_API_KEY`); safe to rerun, 400 when `from` is after `to`
 * `POST /api/admin/setups/study` → job — run the setup playbook and store it (also part of every pipeline run)
 * `POST /api/admin/doublers/study` → job — run the doubler study and store it (also part of every pipeline run)
 * `POST /api/admin/strategies/decide` body `{"asOfDate": "2026-09-30"}` (optional) → job — store the AI's decisions for

@@ -13,7 +13,7 @@ from ...dividends import BUYBACK_CONCEPT, PAYOUT_CONCEPTS, dividend_profile, pay
 from ...earnings import announcements, next_estimate, session_excess
 from ...evaluation import LIVE_TEST, live_test_verdict
 from ...returns import total_return_index
-from ... import pit
+from ... import insider_quality, pit
 from ...strategies.ai import AI_RANK_SIZED_KEY, BOOK_KEY
 from ..errors import BadRequest, NotFound
 from ..llm import provider
@@ -353,16 +353,31 @@ INSIDER_CODE_LABELS = {"P": "Open-market purchase", "S": "Open-market sale", "A"
                        "X": "Option exercise (in the money)", "W": "Will or inheritance"}
 
 
+def _insider_classes(cid: int) -> dict[int, str]:
+    """ADR-0010: the class of each of the company's open-market trades (row id -> class), from its whole history; the
+    data start is the first availability in the table (the first data set), as in the models."""
+    trades = pd.DataFrame(db().all("""
+        SELECT id, company_id, coalesce(owner_cik, owner_name) AS owner, trans_date, available_at, plan_10b5_1
+        FROM insider_transaction WHERE company_id = :id AND trans_code IN ('P', 'S')""", id=cid))
+    if trades.empty:
+        return {}
+    start = db().scalar("SELECT min(available_at) FROM insider_transaction")
+    q = insider_quality.classify(trades, pd.Timestamp(start).date())
+    return dict(zip(trades["id"].astype(int), q))
+
+
 @router.get("/companies/{symbol}/insiders")
 def company_insiders(symbol: str, limit: int = Query(60, ge=1, le=500)):
     """Insider transactions (Forms 4) as of now: open-market buying and selling over the last 21, 63 and 252 trading days
-    (distinct insiders, counts, net dollar value) and the latest transactions."""
+    (distinct insiders, counts, net dollar value) and the latest transactions, each open-market trade with its ADR-0010
+    class (PLANNED, ROUTINE, INFORMED, NOT_CLASSIFIABLE) and role (CEO_CFO from the title)."""
     cid = resolve(symbol)
+    quality = _insider_classes(cid)
     last = db().one("SELECT close, trade_date FROM price_bar WHERE company_id = :id ORDER BY trade_date DESC LIMIT 1", id=cid)
     rows = camel_all(db().all("""
         SELECT t.id, t.accession_no, t.owner_name, t.owner_cik, t.relationship, t.title, t.trans_date, t.filed_date, t.available_at,
                t.trans_code, t.acquired, t.shares::float8 AS shares, t.price::float8 AS price, t.shares_after::float8 AS shares_after,
-               t.ownership, t.security_title, t.source, t.source_document_id, sd.url AS source_url
+               t.ownership, t.security_title, t.source, t.source_document_id, sd.url AS source_url, t.plan_10b5_1 AS trading_plan
         FROM insider_transaction t LEFT JOIN source_document sd ON sd.id = t.source_document_id
         WHERE t.company_id = :id ORDER BY t.available_at DESC, t.trans_date DESC, t.id DESC LIMIT :n""", id=cid, n=limit))
     closes = {c["trade_date"]: float(c["close"]) for c in db().all(
@@ -371,6 +386,8 @@ def company_insiders(symbol: str, limit: int = Query(60, ge=1, le=500)):
     for r in rows:
         r["codeLabel"] = INSIDER_CODE_LABELS.get(r["transCode"], r["transCode"])
         r["signal"] = r["transCode"] in ("P", "S")
+        r["quality"] = quality.get(r["id"])
+        r["role"] = insider_quality.insider_role(r["relationship"], r["title"])
         ref = _close_on_or_before(closes, close_days, r["transDate"])
         p = r["price"]
         suspect = ref is not None and (p is None or p <= 0 or p > INSIDER_PRICE_TOLERANCE * ref or p < ref / INSIDER_PRICE_TOLERANCE)
@@ -378,7 +395,7 @@ def company_insiders(symbol: str, limit: int = Query(60, ge=1, le=500)):
         used = ref if suspect else p
         r["value"] = None if used is None else r["shares"] * used
         with_url(r)
-    signals = db().all("""SELECT acquired, shares::float8 AS shares, price::float8 AS price, trans_date, available_at,
+    signals = db().all("""SELECT id, acquired, shares::float8 AS shares, price::float8 AS price, trans_date, available_at,
                                  coalesce(owner_cik, owner_name) AS owner
                           FROM insider_transaction WHERE company_id = :id AND trans_code IN ('P', 'S')
                             AND available_at > now() - make_interval(days => :d)""", id=cid, d=int(252 * 1.45))
@@ -386,7 +403,8 @@ def company_insiders(symbol: str, limit: int = Query(60, ge=1, le=500)):
     windows = {}
     for label, days in (("21d", 21), ("63d", 63), ("252d", 252)):
         since = now - timedelta(days=int(days * 1.45))
-        w = {"buys": 0, "sells": 0, "netValue": 0.0, "boughtValue": 0.0, "soldValue": 0.0}
+        w = {"buys": 0, "sells": 0, "netValue": 0.0, "boughtValue": 0.0, "soldValue": 0.0,
+             "informedBuys": 0, "informedSells": 0, "plannedSells": 0, "routineTrades": 0}
         buyers, sellers = set(), set()
         for t in signals:
             if t["available_at"] <= since:
@@ -400,6 +418,11 @@ def company_insiders(symbol: str, limit: int = Query(60, ge=1, le=500)):
                 w["buys"] += 1; w["boughtValue"] += v; w["netValue"] += v; buyers.add(t["owner"])
             else:
                 w["sells"] += 1; w["soldValue"] += v; w["netValue"] -= v; sellers.add(t["owner"])
+            q = quality.get(t["id"])
+            w["informedBuys"] += int(q == "INFORMED" and t["acquired"])
+            w["informedSells"] += int(q == "INFORMED" and not t["acquired"])
+            w["plannedSells"] += int(q == "PLANNED" and not t["acquired"])
+            w["routineTrades"] += int(q == "ROUTINE")
         windows[label] = {**w, "buyers": len(buyers), "sellers": len(sellers)}
     total = db().scalar("SELECT count(*) FROM insider_transaction WHERE company_id = :id", id=cid)
     newest = db().scalar("SELECT max(available_at) FROM insider_transaction WHERE company_id = :id", id=cid)
@@ -463,7 +486,7 @@ def exposures(symbol: str, asOf: str | None = None):  # noqa: N803
             ORDER BY x.target_type, x.target_code, x.exposure_channel, x.available_at DESC, x.id DESC
         )
         SELECT e.id AS event_id, e.title AS event_title, e.category AS event_category, e.published_at AS event_published_at,
-               e.evidence_status, t.target_type, t.target_code, ex.id AS exposure_id, ex.exposure_channel AS channel, ex.basis,
+               e.evidence_status, e.stream, t.target_type, t.target_code, ex.id AS exposure_id, ex.exposure_channel AS channel, ex.basis,
                ex.confidence, ex.share, ex.passage_id, f.accession_no AS filing_accession_no, f.id AS filing_id
         FROM ex JOIN event_target t ON t.target_type = ex.target_type AND t.target_code = ex.target_code
         JOIN policy_event e ON e.id = t.event_id AND e.published_at <= :asof

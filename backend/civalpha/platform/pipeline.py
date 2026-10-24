@@ -133,7 +133,12 @@ class Pipeline:
                 log(f"FRED {name} failed ({type(e).__name__}: {str(e)[:120]}); continuing with the stored observations")
 
     def policy_events(self, log: Log, sources=None) -> None:
-        """Official and news events: each source is already isolated (LiveEventSources._safe); storing each event is too."""
+        """Official and news events: each source is already isolated (LiveEventSources._safe); storing each event is too.
+        Official events stored before streams existed are classified first (ADR-0009)."""
+        try:
+            self.events.classify_unstreamed(log)
+        except Exception as e:  # noqa: BLE001 - classification is repeated on the next run
+            log(f"event streams not classified ({type(e).__name__}: {str(e)[:120]})")
         for d in (sources or LiveEventSources()).collect(log):
             try:
                 r = self.events.ingest(d)

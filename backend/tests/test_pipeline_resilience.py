@@ -10,7 +10,7 @@ def bare_pipeline(fetch, ingest=None) -> Pipeline:
     p = Pipeline.__new__(Pipeline)            # no database: only the two steps under test
     p.s = SimpleNamespace(fred=SimpleNamespace(enabled=True, series=["FEDFUNDS", " CPIAUCSL"]))
     p.macro = SimpleNamespace(fetch_fred=fetch)
-    p.events = SimpleNamespace(ingest=ingest or (lambda d: SimpleNamespace(created=True, event_id=7)))
+    p.events = SimpleNamespace(ingest=ingest or (lambda d: SimpleNamespace(created=True, event_id=7)), classify_unstreamed=lambda log: {})
     return p
 
 

@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from .. import insider_quality as iq
 from .. import pit
 from ..dividends import daily_dividend_features
 from ..earnings import DAYS_CAP, REACTION_WINDOW, TONE_VALUE, next_estimate, session_excess
@@ -126,7 +127,9 @@ class MarketPanel:
         """Insider signals at each close (date x company), from Form 4 trades available at or before that close:
         insider_buyers_21d / insider_sellers_21d (distinct insiders with open-market purchases / sales that became public in
         the last 21 trading days), insider_net_63d (net open-market dollar value over 63 trading days / market cap; 0 when
-        nothing was filed). Cached on the panel."""
+        nothing was filed). ADR-0010, on INFORMED trades only (insider_quality): insider_informed_net_63d (net dollars / market
+        cap) and insider_exec_buyers_63d (distinct CEO/CFO buyers), both NaN before the first classifiable month;
+        insider_informed_buyers_21d / insider_informed_sellers_21d for the setups. Cached on the panel."""
         if self._ins is None:
             self._ins = _insider_matrices(self)
         return self._ins
@@ -140,6 +143,16 @@ class MarketPanel:
 
 
 INSIDER_SHORT_WINDOW = 21
+
+
+def _distinct_in_window(at: np.ndarray, owners: np.ndarray, T: int, window: int) -> np.ndarray:
+    """For every close s, the number of distinct owners among trades known at closes (s - window, s]."""
+    out = np.zeros(T)
+    for t in np.unique(at):
+        for s in range(t, min(T, t + window)):
+            w = (at > s - window) & (at <= s)
+            out[s] = len(set(owners[w]))
+    return out
 
 
 def _earnings_matrices(p: "MarketPanel") -> dict[str, pd.DataFrame]:
@@ -207,12 +220,36 @@ def _insider_matrices(p: "MarketPanel") -> dict[str, pd.DataFrame]:
                 w = (at > s - INSIDER_SHORT_WINDOW) & (at <= s)
                 buyers[s, j] = len(set(owners[w & is_buy]))
                 sellers[s, j] = len(set(owners[w & ~is_buy]))
+    inf_net = np.zeros((T, N))
+    exec_buyers = np.zeros((T, N))
+    inf_buyers = np.zeros((T, N))
+    inf_sellers = np.zeros((T, N))
+    for j, c in enumerate(cids):
+        times, value, is_buy, owners, informed, execs = p.bundle.insider_quality_trades(c)
+        if not informed.any():
+            continue
+        at = np.searchsorted(close_ns, times[informed], side="left")
+        ok = at < T
+        at, value, is_buy, owners, execs = at[ok], value[informed][ok], is_buy[informed][ok], owners[informed][ok], execs[informed][ok]
+        daily = np.zeros(T)
+        np.add.at(daily, at, value)
+        cum = np.cumsum(daily)
+        inf_net[:, j] = cum - np.concatenate([np.zeros(INSIDER_WINDOW), cum[:-INSIDER_WINDOW]])
+        exec_buyers[:, j] = _distinct_in_window(at[is_buy & execs], owners[is_buy & execs], T, INSIDER_WINDOW)
+        inf_buyers[:, j] = _distinct_in_window(at[is_buy], owners[is_buy], T, INSIDER_SHORT_WINDOW)
+        inf_sellers[:, j] = _distinct_in_window(at[~is_buy], owners[~is_buy], T, INSIDER_SHORT_WINDOW)
     mcap = p.fundamentals()["market_cap"].to_numpy(float)
     with np.errstate(divide="ignore", invalid="ignore"):
         net_rel = np.where(mcap > 0, net / mcap, np.nan)
-    return {"insider_buyers_21d": pd.DataFrame(buyers, index=cal, columns=cids),
-            "insider_sellers_21d": pd.DataFrame(sellers, index=cal, columns=cids),
-            "insider_net_63d": pd.DataFrame(net_rel, index=cal, columns=cids)}
+        inf_rel = np.where(mcap > 0, inf_net / mcap, np.nan)
+    first = iq.classifiable_from(iq.data_start(p.bundle.insiders))
+    unknown = T if first is None else int(np.searchsorted(cal.values, np.datetime64(first)))
+    inf_rel[:unknown] = np.nan              # before the first classifiable month nothing can be called informed
+    exec_buyers[:unknown] = np.nan
+    mk = lambda a: pd.DataFrame(a, index=cal, columns=cids)  # noqa: E731
+    return {"insider_buyers_21d": mk(buyers), "insider_sellers_21d": mk(sellers), "insider_net_63d": mk(net_rel),
+            "insider_informed_net_63d": mk(inf_rel), "insider_exec_buyers_63d": mk(exec_buyers),
+            "insider_informed_buyers_21d": mk(inf_buyers), "insider_informed_sellers_21d": mk(inf_sellers)}
 
 
 def _fundamental_matrices(p: "MarketPanel") -> dict[str, pd.DataFrame]:

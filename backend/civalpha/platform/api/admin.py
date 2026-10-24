@@ -7,7 +7,7 @@ from datetime import date
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..errors import BadRequest, NotFound
 from ..jobs import Jobs
@@ -119,6 +119,21 @@ def earnings_ingest():
 def insider_ingest():
     """Load insider transactions (SEC Forms 4) for every tracked company: the quarterly data sets plus recent filings."""
     return _submit("INSIDER_INGEST")
+
+
+class EventBackfillIn(BaseModel):
+    start: date | None = Field(None, alias="from")
+    to: date | None = None
+
+
+@router.post("/events/backfill")
+def event_backfill(body: EventBackfillIn | None = None):
+    """ADR-0009: load the official policy events since 2019 (or `from`): material Federal Register streams and FOMC rate
+    changes. Safe to rerun; events already on record are not stored twice."""
+    b = body or EventBackfillIn()
+    if b.start is not None and b.to is not None and b.start > b.to:
+        raise BadRequest("from must not be after to")
+    return _submit("EVENT_BACKFILL", {"from": None if b.start is None else b.start.isoformat(), "to": None if b.to is None else b.to.isoformat()})
 
 
 @router.post("/prices/import")

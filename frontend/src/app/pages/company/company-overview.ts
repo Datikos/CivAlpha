@@ -7,7 +7,7 @@ import { LiveQuotesService, nyTime } from '../../core/live-quotes.service';
 import { apiUrl, valueOf } from '../../core/api';
 import { FORMAT_PIPES } from '../../core/format';
 import { latestByModel } from '../../core/forecast-utils';
-import { DividendProfile, EarningsProfile, ForecastSummary, GuidanceTone, InsiderProfile, MODEL_KINDS, PriceSeries } from '../../core/models';
+import { DividendProfile, EarningsProfile, ForecastSummary, GuidanceTone, InsiderProfile, InsiderQuality, MODEL_KINDS, PriceSeries } from '../../core/models';
 import { UI } from '../../shared/ui';
 import { VIZ } from '../../shared/viz';
 import { CompanyContext } from './company-context';
@@ -158,7 +158,7 @@ const RANGE_DAYS: Record<Range, number> = { '6M': 183, '1Y': 365, '3Y': 3 * 365,
 
       <div class="card">
         <div class="filters" style="justify-content: space-between; margin-bottom: 0.5rem">
-          <h3 style="margin: 0">Insiders <app-help text="What officers, directors and 10% owners bought and sold in the open market, from their SEC Forms 4. Purchases carry information; sales mostly do not. Grants, option exercises and gifts are listed but not counted." topic="insiders" label="insider transactions" /></h3>
+          <h3 style="margin: 0">Insiders <app-help text="What officers, directors and 10% owners bought and sold in the open market, from their SEC Forms 4. Purchases carry information; sales mostly do not. Each open-market trade is marked: planned (a Rule 10b5-1 plan, ticked on the form since 2023), routine (the insider traded in the same month in each of the three previous years), informed (neither), or not classifiable (less than three years of history). Grants, option exercises and gifts are listed but not counted." topic="insiders" label="insider transactions" /></h3>
           @if (ins(); as i) {
             @if (i.windows['63d'].buyers + i.windows['63d'].sellers > 0) {
               <span class="badge" [class]="'badge tone-' + (i.windows['63d'].netValue > 0 ? 'good' : i.windows['63d'].netValue < 0 ? 'bad' : 'neutral')">
@@ -180,6 +180,10 @@ const RANGE_DAYS: Record<Range, number> = { '6M': 183, '1Y': 365, '3Y': 3 * 365,
                   <div class="stat-label">Last {{ w.label }}</div>
                   <div class="stat-value"><app-delta [value]="i.windows[w.key].netValue" kind="num" [digits]="0" /><span class="unit">USD net</span></div>
                   <div class="stat-sub">{{ i.windows[w.key].buyers }} buying · {{ i.windows[w.key].sellers }} selling · {{ i.windows[w.key].buys + i.windows[w.key].sells }} trades</div>
+                  <div class="stat-sub" title="Informed: neither under a Rule 10b5-1 plan nor routine (ADR-0010)">
+                    informed {{ i.windows[w.key].informedBuys }} buys / {{ i.windows[w.key].informedSells }} sales ·
+                    planned {{ i.windows[w.key].plannedSells }} sales · routine {{ i.windows[w.key].routineTrades }}
+                  </div>
                 </div>
               }
             </div>
@@ -191,9 +195,16 @@ const RANGE_DAYS: Record<Range, number> = { '6M': 183, '1Y': 365, '3Y': 3 * 365,
                 <tbody>
                   @for (t of shownInsiders(); track t.id) {
                     <tr [class.quiet]="!t.signal">
-                      <td><strong>{{ t.ownerName }}</strong><div class="small muted">{{ t.title || t.relationship }}</div></td>
+                      <td>
+                        <strong>{{ t.ownerName }}</strong>
+                        @if (t.role === 'CEO_CFO') { <span class="chip tone-info" title="Chief executive or chief financial officer">CEO/CFO</span> }
+                        <div class="small muted">{{ t.title || t.relationship }}</div>
+                      </td>
                       <td>
                         <span class="badge" [class]="'badge tone-' + (t.signal ? (t.acquired ? 'good' : 'bad') : 'neutral')">{{ t.acquired ? '▲' : '▼' }} {{ t.codeLabel }}</span>
+                        @if (t.quality; as q) {
+                          <span class="chip" [class.tone-good]="q === 'INFORMED'" [title]="qualityHelp[q]">{{ qualityLabel[q] }}</span>
+                        }
                       </td>
                       <td class="nowrap">{{ t.transDate }}</td>
                       <td class="num">{{ t.shares | num }}</td>
@@ -435,6 +446,18 @@ export class CompanyOverview {
   protected readonly ins = computed(() => valueOf(this.insiders));
 
   protected readonly INSIDERS_SHOWN = 8;
+  protected readonly qualityLabel: Record<InsiderQuality, string> = {
+    PLANNED: 'planned',
+    ROUTINE: 'routine',
+    INFORMED: 'informed',
+    NOT_CLASSIFIABLE: 'not classifiable',
+  };
+  protected readonly qualityHelp: Record<InsiderQuality, string> = {
+    PLANNED: 'Made under a Rule 10b5-1 trading plan set up in advance (the box on the Form 4)',
+    ROUTINE: 'The insider traded in this calendar month in each of the three previous years: a habit, not news',
+    INFORMED: 'Neither planned nor routine: the trades the research finds informative (ADR-0010)',
+    NOT_CLASSIFIABLE: 'Less than three years of this insider\'s history (or of the data) to tell routine from informed',
+  };
 
   protected readonly allInsiders = signal(false);
 

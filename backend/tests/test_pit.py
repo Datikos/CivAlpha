@@ -63,8 +63,17 @@ def test_universe_membership_is_point_in_time():
 def test_events_need_official_evidence_and_publication():
     ev = pd.DataFrame({"id": [1, 2, 3], "category": "TRADE_TARIFF", "event_type": "TARIFF_IMPOSED", "title": "x",
                        "published_at": pd.to_datetime(["2024-01-01T20:00Z", "2024-01-05T20:00Z", "2024-01-02T20:00Z"], utc=True),
-                       "evidence_status": ["OFFICIAL", "OFFICIAL", "NEWS_ONLY"], "attributes": [{}, {}, {}]})
+                       "evidence_status": ["OFFICIAL", "OFFICIAL", "NEWS_ONLY"], "stream": ["PRESIDENTIAL", "PRESIDENTIAL", None],
+                       "attributes": [{}, {}, {}]})
     assert pit.events_as_of(ev, ts("2024-01-03"))["id"].tolist() == [1]
+
+
+def test_events_of_streams_the_models_do_not_read_are_left_out():
+    """ADR-0009: an anti-dumping case notice is official but not a material stream."""
+    ev = pd.DataFrame({"id": [1, 2, 3, 4], "category": "TRADE_TARIFF", "event_type": "TARIFF_IMPOSED", "title": "x",
+                       "published_at": pd.to_datetime(["2024-01-01T20:00Z"] * 4, utc=True), "evidence_status": "OFFICIAL",
+                       "stream": ["AD_CVD", "OTHER_TRADE", "SECTION_232", None], "attributes": [{}] * 4})
+    assert pit.events_as_of(ev, ts("2024-01-03"))["id"].tolist() == [3]
 
 
 def test_exposures_latest_version_available():

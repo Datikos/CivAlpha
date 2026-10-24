@@ -1,9 +1,15 @@
 import os
 import shutil
 import sys
+import time
 from pathlib import Path
 
 import pytest
+
+# the containers run in UTC: date.today() must agree with PostgreSQL's current_date, or a company added between local
+# midnight and UTC midnight (00:00-04:00 in Tbilisi) is not a member yet
+os.environ["TZ"] = "UTC"
+time.tzset()
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))

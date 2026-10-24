@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 
 from ..dividends import DIV_FEATURES
-from .ai import AI_FEATURES, AiConfig, dataset, feature_kind, feature_label
+from .ai import AI_FEATURES, INSIDER_QUALITY_FEATURES, AiConfig, dataset, feature_kind, feature_label
 from .panel import MarketPanel
 
 STUDY_VERSION = "signals-0.1.0"
@@ -137,7 +137,7 @@ def summarize(series: list[dict], cfg: SignalConfig, z_needed: float, tests: int
 
 def run_study(p: MarketPanel, cfg: SignalConfig | None = None, features: list[str] | None = None) -> dict:
     cfg = cfg or SignalConfig()
-    features = features or (AI_FEATURES + [f for f in DIV_FEATURES if f not in AI_FEATURES])
+    features = features or (AI_FEATURES + [f for f in DIV_FEATURES if f not in AI_FEATURES] + INSIDER_QUALITY_FEATURES)
     df = dataset(p, AiConfig(horizon=cfg.horizon))
     tests = len(features)
     z_needed = float(_N.inv_cdf(1 - 0.025 / max(1, tests)))

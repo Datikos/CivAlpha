@@ -43,7 +43,7 @@ def make_bundle(n_days=400, n_companies=4, seed=0, events=None, targets=None, ex
                                                                               "share", "basis", "confidence", "method", "available_at", "passage_id", "filing_id"])
     if len(exposures) == 0:
         exposures["available_at"] = pd.to_datetime(exposures["available_at"], utc=True)
-    events = events if events is not None else pd.DataFrame(columns=["id", "category", "event_type", "title", "published_at", "evidence_status", "attributes"])
+    events = events if events is not None else pd.DataFrame(columns=["id", "category", "event_type", "title", "published_at", "evidence_status", "stream", "attributes"])
     if len(events) == 0:
         events["published_at"] = pd.to_datetime(events["published_at"], utc=True)
     targets = targets if targets is not None else pd.DataFrame(columns=["event_id", "target_type", "target_code", "magnitude"])

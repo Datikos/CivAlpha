@@ -14,7 +14,8 @@ def _bundle(perturb_future_after=None, include_future_event=True):
                         [fact("LongTermDebtNoncurrent", 100 * c, None, "2020-03-31", "A0", "2020-04-10T15:00Z", company_id=c) for c in (1, 2, 3, 4)])
     events = pd.DataFrame({"id": [1, 2], "category": "TRADE_TARIFF", "event_type": "TARIFF_IMPOSED", "title": ["past", "future"],
                            "published_at": pd.to_datetime(["2021-01-04T20:00Z", "2021-03-01T20:00Z"], utc=True),
-                           "evidence_status": "OFFICIAL", "attributes": [{"severity": 0.5}, {"severity": 0.9}]})
+                           "evidence_status": "OFFICIAL", "stream": "PRESIDENTIAL",
+                           "attributes": [{"severity": 0.5}, {"severity": 0.9}]})
     targets = pd.DataFrame({"event_id": [1, 2], "target_type": "COUNTRY", "target_code": "CN", "magnitude": [25, 25]})
     exposures = pd.DataFrame({"id": [1, 2], "company_id": [1, 2], "target_type": "COUNTRY", "target_code": "CN",
                               "exposure_channel": "REVENUE", "share": [0.3, 0.1], "basis": "DIRECTLY_REPORTED", "confidence": "HIGH",

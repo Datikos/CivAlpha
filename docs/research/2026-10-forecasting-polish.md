@@ -95,6 +95,11 @@ Augmented better in 7 of 21 folds (sign test p = 0.19). Long/short simulation af
 -1.60% per 21-day period over 62 periods (t = -1.54). Profitability claim: NOT supported by this evidence.
 ```
 
+*Later (2026-10-24, ADR-0009):* when this was measured, `trade_shock` and `rate_shock` were zero on every training day
+before 2026-03: the only official events were 54 from 2026. With 571 official events loaded for 2019 to 2026 (the
+material Federal Register streams and 23 FOMC rate changes), evaluation of job 237 gives baseline −0.006, augmented
+−0.017 (AUC 0.505 vs 0.498): the augmented model is still worse, now on events that exist.
+
 | Model | Feature set | Label | n | Brier skill | AUC | Top-10% net excess (CI) |
 |---|---|---|---|---|---|---|
 | BASELINE | LOGIT_BASELINE_10 | 21d | 6,028 | -0.006 | 0.506 | -2.63% (-4.71% to -1.56%) |
@@ -154,6 +159,9 @@ over 21-day blocks of as-of dates, and the lab Sharpe of the same probabilities 
 | plus policy events | 42 | -0.027 (-0.047, -0.017) | 0.512 (0.477, 0.532) | -0.020 (-0.032, -0.012) | 0.506 (0.485, 0.521) | 0.74 | 0.79 / -29.9% |
 
 *not a skill metric: one trading rule on one five-year window.
+
+*Later (2026-10-24, ADR-0009):* the "plus policy events" row above had no event history. Rerun with it (job 240, 21-day
+label): plus policy events −0.030 (−0.049, −0.018), AUC 0.508, against FULL −0.025 (−0.042, −0.014), AUC 0.512.
 
 Headline as stored: "10-day label: the production set (GBM_AI_39) has Brier skill -0.021 (95% CI -0.033 to -0.012) and AUC
 0.504 (CI 0.485 to 0.519); across the 7 variants Brier skill spans -0.022 to -0.017 and AUC 0.501 to 0.506. 21-day label:

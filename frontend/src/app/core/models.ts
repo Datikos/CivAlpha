@@ -287,6 +287,28 @@ export interface ExposureResponse {
 export type EventCategory = 'MONETARY_POLICY' | 'TRADE_TARIFF';
 export const EVENT_CATEGORIES: readonly EventCategory[] = ['MONETARY_POLICY', 'TRADE_TARIFF'];
 
+/** ADR-0009: the statutory instrument an official event belongs to; the models read the first six only. */
+export type EventStream =
+  | 'PRESIDENTIAL'
+  | 'USTR_301'
+  | 'SECTION_232'
+  | 'EXPORT_CONTROL'
+  | 'FOMC'
+  | 'MANUAL'
+  | 'AD_CVD'
+  | 'OTHER_TRADE';
+export const MODEL_STREAMS: readonly EventStream[] = ['PRESIDENTIAL', 'USTR_301', 'SECTION_232', 'EXPORT_CONTROL', 'FOMC', 'MANUAL'];
+export const STREAM_LABELS: Record<EventStream, string> = {
+  PRESIDENTIAL: 'Presidential proclamation / order',
+  USTR_301: 'Section 301 (Trade Representative)',
+  SECTION_232: 'Section 232 (national security)',
+  EXPORT_CONTROL: 'Export controls (Entity List)',
+  FOMC: 'FOMC rate decision',
+  MANUAL: 'Entered by hand',
+  AD_CVD: 'Anti-dumping / countervailing case',
+  OTHER_TRADE: 'Other trade document',
+};
+
 export interface PolicyEventTarget {
   targetType: string;
   targetCode: string;
@@ -302,6 +324,7 @@ export interface PolicyEvent {
   publishedAt: string | null;
   firstSeenAt: string | null;
   evidenceStatus: 'OFFICIAL' | 'NEWS_ONLY' | string;
+  stream: EventStream | null;
   actorName: string | null;
   targets: PolicyEventTarget[];
   sourceCount: number;
@@ -1021,7 +1044,15 @@ export interface InsiderWindow {
   netValue: number;
   boughtValue: number;
   soldValue: number;
+  /** ADR-0010: open-market trades by class within the window */
+  informedBuys: number;
+  informedSells: number;
+  plannedSells: number;
+  routineTrades: number;
 }
+
+/** ADR-0010: PLANNED (Rule 10b5-1), ROUTINE (same month in each of the three previous years), INFORMED, or not classifiable. */
+export type InsiderQuality = 'PLANNED' | 'ROUTINE' | 'INFORMED' | 'NOT_CLASSIFIABLE';
 
 export interface InsiderTransaction {
   id: number;
@@ -1045,6 +1076,12 @@ export interface InsiderTransaction {
   source: string;
   /** true for open-market purchases and sales (the informative codes) */
   signal: boolean;
+  /** the class of an open-market trade (null for grants, exercises, gifts, ...) */
+  quality: InsiderQuality | null;
+  /** CEO_CFO when the title names the chief executive or financial officer, else the relationship */
+  role: string;
+  /** the filing's Rule 10b5-1 box; null before the 2023 form */
+  tradingPlan: boolean | null;
   documentUrl: string | null;
   url: string | null;
 }

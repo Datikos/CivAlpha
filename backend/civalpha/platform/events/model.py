@@ -41,6 +41,7 @@ class EventDraft:
     attributes: dict[str, Any] | None
     targets: list[Target] | None
     source: Source | None
+    stream: str | None = None       # ADR-0009 (streams.STREAMS); None: decided by EventService.ingest
 
     Target = Target
     Source = Source

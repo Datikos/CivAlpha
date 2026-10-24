@@ -4,7 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { apiUrl, valueOf } from '../core/api';
 import { FORMAT_PIPES } from '../core/format';
-import { EVENT_CATEGORIES, PolicyEvent } from '../core/models';
+import { EVENT_CATEGORIES, EventStream, MODEL_STREAMS, PolicyEvent, STREAM_LABELS } from '../core/models';
 import { Icon } from '../shared/icon';
 import { UI } from '../shared/ui';
 import { VIZ } from '../shared/viz';
@@ -34,6 +34,18 @@ import { EventForm } from './event-form';
       }
     </details>
 
+    @if (res.hasValue()) {
+      <div class="alert alert-info small">
+        <strong>{{ modelled() }}</strong> official events are read by the models@if (firstModelled(); as d) {<span>
+            (from {{ d }})</span>}; {{ notModelled() }} are stored but not read: anti-dumping case notices and other trade documents name a
+        narrow product but would hit every company exposed to the country, and news-only reports are never read.
+        @if (!historyLoaded()) {
+          Only recent events are loaded: <a routerLink="/admin">Admin → Load official event history</a> adds the
+          official ones since 2019 (ADR-0009).
+        }
+      </div>
+    }
+
     <div class="filters">
       <label class="field">
         Category
@@ -50,6 +62,17 @@ import { EventForm } from './event-form';
           <option value="">Any</option>
           <option value="OFFICIAL">Official</option>
           <option value="NEWS_ONLY">News only</option>
+        </select>
+      </label>
+      <label class="field">
+        Stream
+        <select [ngModel]="stream()" (ngModelChange)="stream.set($event)">
+          <option value="">Any</option>
+          <option value="MODEL">Read by the models</option>
+          <option value="NOT_MODEL">Not read by the models</option>
+          @for (s of streams; track s) {
+            <option [value]="s">{{ streamLabels[s] }}</option>
+          }
         </select>
       </label>
       <label class="field">
@@ -74,6 +97,7 @@ import { EventForm } from './event-form';
                 <th>Event</th>
                 <th>Category</th>
                 <th>Evidence</th>
+                <th>Stream</th>
                 <th>Targets</th>
                 <th class="num">Sources</th>
                 <th class="num">Companies</th>
@@ -95,6 +119,18 @@ import { EventForm } from './event-form';
                   </td>
                   <td class="nowrap">{{ e.category | human }}</td>
                   <td><app-evidence-badge [status]="e.evidenceStatus" /></td>
+                  <td>
+                    @if (e.stream; as st) {
+                      <span
+                        class="chip"
+                        [class.tone-good]="inModels(st)"
+                        [title]="inModels(st) ? 'Read by the models' : 'Stored, not read by the models'"
+                        >{{ streamLabels[st] }}</span
+                      >
+                    } @else {
+                      <span class="muted small" title="News-only events have no stream and are not read by the models">—</span>
+                    }
+                  </td>
                   <td>
                     <div class="chips">
                       @for (t of e.targets; track $index) {
@@ -126,6 +162,9 @@ export class EventsPage {
   protected readonly categories = EVENT_CATEGORIES;
   protected readonly category = signal('');
   protected readonly evidence = signal('');
+  protected readonly stream = signal('');
+  protected readonly streams = Object.keys(STREAM_LABELS) as EventStream[];
+  protected readonly streamLabels = STREAM_LABELS;
   protected readonly q = signal('');
   protected readonly formOpen = signal(false);
 
@@ -136,6 +175,7 @@ export class EventsPage {
     const ev = this.evidence();
     return [...(valueOf(this.res) ?? [])]
       .filter((e) => !ev || e.evidenceStatus === ev)
+      .filter((e) => this.streamMatches(e))
       .filter(
         (e) =>
           !q ||
@@ -150,4 +190,33 @@ export class EventsPage {
           (b.publishedAt ?? '').localeCompare(a.publishedAt ?? ''),
       );
   });
+
+  private readonly all = computed(() => valueOf(this.res) ?? []);
+  protected readonly modelled = computed(() => this.all().filter((e) => this.read(e)).length);
+  protected readonly notModelled = computed(() => this.all().length - this.modelled());
+  protected readonly firstModelled = computed(
+    () =>
+      this.all()
+        .filter((e) => this.read(e) && e.eventDate)
+        .map((e) => e.eventDate as string)
+        .sort()[0] ?? null,
+  );
+  /** The history is loaded once an official event older than 2026 exists (ADR-0009 loads 2019 onwards). */
+  protected readonly historyLoaded = computed(() => (this.firstModelled() ?? '9999') < '2026-01-01');
+
+  protected inModels(s: EventStream): boolean {
+    return MODEL_STREAMS.includes(s);
+  }
+
+  private read(e: PolicyEvent): boolean {
+    return e.evidenceStatus === 'OFFICIAL' && !!e.stream && this.inModels(e.stream);
+  }
+
+  private streamMatches(e: PolicyEvent): boolean {
+    const f = this.stream();
+    if (!f) return true;
+    if (f === 'MODEL') return this.read(e);
+    if (f === 'NOT_MODEL') return !this.read(e);
+    return e.stream === f;
+  }
 }

@@ -64,8 +64,13 @@ from .panel import MarketPanel
 TECH_FEATURES = ["dist_sma50", "dist_sma200", "rsi2", "rsi14", "boll_z", "donchian_pos", "mom_12_1", "rev_5d", "vol_21", "dd_52w"]
 INSIDER_PANEL_FEATURES = ["insider_buyers_21d", "insider_sellers_21d"]     # insider_net_63d already comes with AUGMENTED_FEATURES
 EARNINGS_PANEL_FEATURES = ["days_since_earnings", "days_to_earnings_est"]  # earn_react_last and guidance_last come with AUGMENTED_FEATURES
+# ADR-0010: informed trades only (not a Rule 10b5-1 plan, not routine); measured in signal health and the ablation, not in
+# the book's inputs
+INSIDER_QUALITY_FEATURES = ["insider_informed_net_63d", "insider_exec_buyers_63d"]
 INSIDER_LABELS = {"insider_buyers_21d": "Insiders buying in the open market, last 21 days (distinct)",
-                  "insider_sellers_21d": "Insiders selling in the open market, last 21 days (distinct)"}
+                  "insider_sellers_21d": "Insiders selling in the open market, last 21 days (distinct)",
+                  "insider_informed_net_63d": "Informed insiders' net open-market buying, 63 days / market cap (no plan, not routine)",
+                  "insider_exec_buyers_63d": "CEO/CFO with an informed open-market purchase, last 63 days (distinct)"}
 AI_FEATURES = BASELINE_FEATURES + TECH_FEATURES + FUND_FEATURES + INSIDER_PANEL_FEATURES + EARNINGS_PANEL_FEATURES
 # the same model with the tariff / rate-shock / fed-funds x leverage features (the AUGMENTED forecast model's additions)
 AI_EVENTS_FEATURES = AI_FEATURES + EVENT_FEATURES
@@ -188,7 +193,7 @@ def dataset(p: MarketPanel, cfg: AiConfig) -> pd.DataFrame:
     for name in DIV_FEATURES:
         df[name] = div[name].to_numpy(float)[cal_pos, col_pos]
     ins = p.insiders()
-    for name in INSIDER_PANEL_FEATURES:
+    for name in INSIDER_PANEL_FEATURES + INSIDER_QUALITY_FEATURES:
         df[name] = ins[name].to_numpy(float)[cal_pos, col_pos]
     earn = p.earnings()
     for name in EARNINGS_PANEL_FEATURES:

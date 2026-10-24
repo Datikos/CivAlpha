@@ -262,6 +262,32 @@ const JOBS_SHOWN = 10;
         </div>
         <div class="step">
           <div>
+            <strong>Load official event history</strong>
+            <div class="small muted">
+              Presidential tariff actions, Section 301 and 232, Entity List rules (Federal Register) and FOMC rate
+              changes since the date given (ADR-0009). Run once, then re-evaluate; safe to rerun. The rate changes need
+              <span class="mono">FRED_API_KEY</span>.
+            </div>
+          </div>
+          <div class="inline-form">
+            <input
+              type="date"
+              [ngModel]="eventsFrom()"
+              (ngModelChange)="eventsFrom.set($event ?? '')"
+              aria-label="Events from"
+            />
+            <button
+              type="button"
+              class="btn"
+              [disabled]="busy()"
+              (click)="run('Event history', api.backfillEvents(eventsFrom() || null))"
+            >
+              Load
+            </button>
+          </div>
+        </div>
+        <div class="step">
+          <div>
             <strong>Evaluate models</strong>
             <div class="small muted">Walk-forward evaluation of BASELINE vs AUGMENTED.</div>
           </div>
@@ -527,6 +553,7 @@ export class AdminPage {
   protected readonly busy = signal(false);
   protected readonly notice = signal<{ ok: boolean; text: string } | null>(null);
   protected readonly issueDate = signal('');
+  protected readonly eventsFrom = signal('2019-01-01');
   protected readonly secSymbol = signal('');
   protected readonly file = signal<File | null>(null);
   protected readonly selectedId = signal<number | null>(null);

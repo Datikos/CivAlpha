@@ -64,7 +64,7 @@ class DataBundle:
     bench_tr: dict[str, np.ndarray]  # benchmark symbol -> total-return index
     facts: pd.DataFrame
     exposures: pd.DataFrame
-    events: pd.DataFrame             # id, category, event_type, title, published_at, evidence_status, attributes
+    events: pd.DataFrame             # id, category, event_type, title, published_at, evidence_status, stream, attributes
     targets: pd.DataFrame            # event_id, target_type, target_code, magnitude
     macro: pd.DataFrame
     membership: pd.DataFrame
@@ -76,6 +76,8 @@ class DataBundle:
     releases: pd.DataFrame = field(default_factory=pd.DataFrame)  # earnings releases: company_id, filing_id, accepted_at, guidance_tone
     _fund_snap: dict = field(default_factory=dict)
     _insider_by_company: dict = field(default_factory=dict)
+    _insider_quality_by_company: dict = field(default_factory=dict)
+    _insider_classes: pd.DataFrame | None = None
     _ann_by_company: dict = field(default_factory=dict)
     _close_ns: np.ndarray | None = None
     _expo_snap: dict = field(default_factory=dict)
@@ -153,6 +155,32 @@ class DataBundle:
             self._insider_by_company[company_id] = (np.array([pd.Timestamp(x).value for x in t["available_at"]], dtype=np.int64),
                                                     sign * value, t["acquired"].to_numpy(bool), owners)
         return self._insider_by_company[company_id]
+
+    def insider_classes(self) -> pd.DataFrame:
+        """ADR-0010: the open-market trades with `owner`, `quality` (insider_quality.classify) and `exec` (a CEO or CFO),
+        computed once over every company (the classification of a trade only looks at earlier trades)."""
+        if self._insider_classes is None:
+            from . import insider_quality as iq
+            t = self.insiders[self.insiders["trans_code"].isin(INSIDER_CODES)].copy() if len(self.insiders) else self.insiders.copy()
+            t["owner"] = t["owner_cik"].fillna(t["owner_name"]).astype(str) if len(t) else pd.Series(dtype=str)
+            t["quality"] = iq.classify(t, iq.data_start(self.insiders)) if len(t) else pd.Series(dtype=object)
+            t["exec"] = [iq.insider_role(r, ti) == "CEO_CFO" for r, ti in zip(t["relationship"], t["title"])] if len(t) else pd.Series(dtype=bool)
+            self._insider_classes = t
+        return self._insider_classes
+
+    def insider_quality_trades(self, company_id: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """(available_at ns, signed dollar value, is_buy, owner key, informed, CEO/CFO) of the company's open-market trades."""
+        if company_id not in self._insider_quality_by_company:
+            c = self.insider_classes()
+            t = c[c["company_id"] == company_id].sort_values("available_at", kind="stable") if len(c) else c
+            price = plausible_prices(t, self.close.get(company_id), self.calendar)
+            value = t["shares"].astype(float).to_numpy() * price
+            sign = np.where(t["acquired"].to_numpy(bool), 1.0, -1.0)
+            self._insider_quality_by_company[company_id] = (
+                np.array([pd.Timestamp(x).value for x in t["available_at"]], dtype=np.int64), sign * value,
+                t["acquired"].to_numpy(bool), t["owner"].astype(str).to_numpy(), (t["quality"] == "INFORMED").to_numpy(bool),
+                t["exec"].to_numpy(bool))
+        return self._insider_quality_by_company[company_id]
 
     def insider_signal(self, company_id: int, as_of: pd.Timestamp, since: pd.Timestamp) -> dict:
         """Open-market insider trades that became available in (since, as_of]: net dollar value, distinct buyers and sellers."""
@@ -464,7 +492,8 @@ def plausible_prices(trades: pd.DataFrame, close: np.ndarray | None, calendar: p
 
 
 def _insider_frame(insiders) -> pd.DataFrame:
-    cols = ["company_id", "available_at", "trans_date", "trans_code", "acquired", "shares", "price", "owner_cik", "owner_name"]
+    cols = ["company_id", "available_at", "trans_date", "trans_code", "acquired", "shares", "price", "owner_cik", "owner_name",
+            "relationship", "title", "plan_10b5_1"]
     if insiders is None or len(insiders) == 0:
         out = pd.DataFrame(columns=cols)
         out["available_at"] = pd.to_datetime(out["available_at"], utc=True)

@@ -113,6 +113,7 @@ Phase 2, data (2026-10-06):
       max drawdown -26.6% -> -27.9%; AI_GBM 0.91 -> 0.79; AI_GBM_TSTOP10 0.91 -> 0.22; AI_CONF 0.47 -> 0.70. With the
       policy-event features added back the standard rule is now 0.89 against 0.79 without them, the reverse of the
       10-day result that dropped them on 2026-10-06 morning: that decision was lab noise, as ground rule 1 says.
+      *(2026-10-24, ADR-0009: neither run had event history; the tariff and rate inputs were zero before 2026-03.)*
       EW_SIZED 0.71 against AI_SIZED 0.72: the sizing explains the book. Walk-forward AI_BOOK_21 unchanged (Brier
       skill -0.025, AUC 0.513). The AI's own top-10% coverage at 21 days: 55% right, +1.73% per position after costs
       (CI +0.25% to +2.92%), the first coverage row with a CI above zero; one window, 4,204 calls, not pre-registered.

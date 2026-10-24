@@ -23,7 +23,7 @@ log = logging.getLogger("civalpha.api.events")
 
 CATEGORIES = {"MONETARY_POLICY", "TRADE_TARIFF"}
 LIST_SQL = """
-    SELECT e.id, e.category, e.event_type, e.title, e.event_date, e.published_at, e.first_seen_at, e.evidence_status,
+    SELECT e.id, e.category, e.event_type, e.title, e.event_date, e.published_at, e.first_seen_at, e.evidence_status, e.stream,
            a.name AS actor_name, e.version, e.summary, e.attributes,
            (SELECT count(*) FROM event_source s WHERE s.event_id = e.id) AS source_count,
            (SELECT count(DISTINCT x.company_id) FROM event_target t JOIN company_exposure x

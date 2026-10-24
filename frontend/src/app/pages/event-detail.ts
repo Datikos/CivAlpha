@@ -3,7 +3,7 @@ import { Component, computed, input } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { apiUrl, valueOf } from '../core/api';
 import { FORMAT_PIPES } from '../core/format';
-import { ModelKind, PolicyEventDetail } from '../core/models';
+import { EventStream, MODEL_STREAMS, ModelKind, PolicyEventDetail, STREAM_LABELS } from '../core/models';
 import { Icon } from '../shared/icon';
 import { UI } from '../shared/ui';
 import { VIZ } from '../shared/viz';
@@ -23,6 +23,12 @@ import { VIZ } from '../shared/viz';
             <p class="muted">
               {{ e.category | human }} · {{ e.eventType | human }}{{ e.actorName ? ' · ' + e.actorName : '' }} ·
               <app-evidence-badge [status]="e.evidenceStatus" />
+              @if (e.stream; as st) {
+                · <span class="chip" [class.tone-good]="inModels(st)">{{ streamLabels[st] }}</span>
+                @if (!inModels(st)) {
+                  <span class="small">not read by the models</span>
+                }
+              }
             </p>
           </div>
         </div>
@@ -76,6 +82,7 @@ import { VIZ } from '../shared/viz';
           <div class="empty-box">
             No forecast has moved on account of this event yet.
             @if (e.evidenceStatus !== 'OFFICIAL') { News-only events stay out of the models until an official document is linked. }
+            @else if (e.stream && !inModels(e.stream)) { Its stream is stored but not read by the models (ADR-0009). }
             @else if (!e.affectedCompanies.length) { No tracked company has a documented exposure to its targets. }
             @else { Forecasts dated after {{ e.eventDate }} will appear here once issued. }
           </div>
@@ -274,6 +281,7 @@ import { VIZ } from '../shared/viz';
   `,
 })
 export class EventDetailPage {
+  protected readonly streamLabels = STREAM_LABELS;
   readonly id = input.required<string>();
   protected readonly res = httpResource<PolicyEventDetail>(() => apiUrl.event(this.id()));
 
@@ -323,4 +331,8 @@ export class EventDetailPage {
       ([k, v]) => [k, typeof v === 'object' ? JSON.stringify(v) : String(v)] as [string, string],
     ),
   );
+
+  protected inModels(s: EventStream): boolean {
+    return MODEL_STREAMS.includes(s);
+  }
 }

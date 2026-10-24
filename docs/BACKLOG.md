@@ -1,7 +1,8 @@
 # Backlog
 
-State on 2026-10-24: 17 open items (#16 closed, #26 added the same day) across 5 ADRs (ADR-0002, ADR-0003, ADR-0004,
-ADR-0005, ADR-0008), the two live-test documents and the October 2026 research report. Rows leave when their item is ticked in its ADR; a new item goes into
+State on 2026-10-24: 20 open items (#16 closed; #26 to #29 added the same day; ADR-0009 and ADR-0010 implemented and
+measured, nothing left open in them) across 6 ADRs (ADR-0002, ADR-0003, ADR-0004, ADR-0005, ADR-0008, ADR-0009), the two
+live-test documents and the October 2026 research report. Rows leave when their item is ticked in its ADR; a new item goes into
 an ADR first, then here (rows marked "needs an ADR" are proposals that get one when started). Row numbers never move.
 Sizes: S up to a day, M a few days, L a week or more.
 
@@ -11,6 +12,7 @@ Sizes: S up to a day, M a few days, L a week or more.
 |---|---|---|---|---|
 | 17 | Guard against double adjustments: the pipeline flags a day whose total-return move exceeds 50%, the Corporate actions page warns when a feed action lands on a day that already has a hand-entered one, and the price sync does not store a feed `SPLIT` on a day with a hand-entered `SPIN_OFF` (a full history re-download would otherwise bring back the CTVA row deleted under #16). Measured 2026-10-20: CTVA was the only such day of 14 total-return moves beyond 50% | proposal of 2026-10-20 (needs an ADR) | — | S |
 | 26 | Spin-offs the feed encodes as split factors: 18 of the 77 feed `SPLIT` rows (PFE 2020, MRK 2021, IBM 2021, T 2022, GE 2023 and 2024, FDX 2026, ...) are spin-offs. The total return is right for them, but market cap (and with it sales and earnings yield) is scaled by the factor until the next filed share count, and every earlier dividend is divided by it (yield and growth). Found 2026-10-24 under #16 | ADR-0003 Phase 3 (needs an ADR) | — | M |
+| 28 | The company page's price chart compares raw closes across a split: the sector ETFs split 2-for-1 on 2025-12-05 (XLK, XLY, XLB, XLE, XLU), so AAPL shows "excess +70.6%" over the last year. Display only: the models' total-return index applies the splits | found 2026-10-24 (needs an ADR or a fix) | — | S |
 | 18 | Move the evening run off 02:30 Tbilisi: 7 runs between 2026-10-09 and 2026-10-23 lost the network or started hours late while the Mac slept; the catch-up recovered each. Suggested `CIVALPHA_PIPELINE_CRON=0 0 7 * * TUE-SAT` (07:00 New York, the previous day's session) | ADR-0008 | owner (`.env`) | S |
 
 ## P1, before the live test resolves
@@ -26,6 +28,8 @@ Sizes: S up to a day, M a few days, L a week or more.
 
 | # | Task | Ref | Needs | Size |
 |---|---|---|---|---|
+| 29 | Event targets for the products tariffs name but exposures do not: 175 of the 442 trade events the models read have no target (copper, lumber, pharmaceuticals, heavy vehicles have no exposure keyword), so they hit nobody. The next lever for the events after ADR-0009 found no help; needs the exposure extraction re-run | ADR-0009 (Revisit; needs an ADR) | — | M |
+| 27 | The date-block bootstrap of `evaluation.date_block_bootstrap` and `doublers._block_bootstrap_rate` resamples blocks of the dates that have rows; the setup playbook's version collapsed for a setup on 19 dates (ADR-0009). Both run on hundreds of dates today; move them to calendar-day blocks too, or prove they cannot collapse | ADR-0009 (Found while measuring) | — | S |
 | 7 | Backdate universe membership for the 312 companies added on 2026-10-05 | research report §Open | owner's call (survivorship bias) | M |
 | 19 | Corporate-action matching rule v2: count a cash dividend worth at least 2% of the close on the ex-date as a match (Danaher and 3M's feed-adjusted spin-offs show as gaps today), measured on the same evaluation as v1; the dividend inputs see those two distributions as dividends of 11–14% | ADR-0003 (Revisit) | — | S |
 | 20 | Jev classifier for 8-Ks: run the pre-registered comparison against the keyword rule, adopt only if it passes | ADR-0003 phase 2 | `TYPESAFE_API_KEY` (owner) | M |

@@ -2,18 +2,20 @@
 
 Every event keeps a link to at least one stored source document. Reports of an event already on record are attached
 to it instead of creating a duplicate; an official document arriving for a news-only event upgrades its evidence
-status (new event version).
+status (new event version). An official event carries its stream (ADR-0009): the draft's, or FOMC for a monetary
+decision and MANUAL for an official event entered by hand; news-only events have none.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from datetime import date, datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable
 
 from ..errors import BadRequest
 from ..sql import Db, db, jsonb
 from ..storage import DocumentStore, NewDocument, SourceDocument
-from . import dedup
+from . import dedup, streams
 from .model import EventDraft, Target
 
 
@@ -63,6 +65,8 @@ class EventService:
             raise BadRequest("an event needs a source URL (original evidence)")
         with self.db.transaction():
             s = d.source
+            stream = None if not s.official else d.stream or ("FOMC" if d.category == "MONETARY_POLICY" else "MANUAL")
+            attributes = self._sized(d)
             doc = self.docs.store(NewDocument("OFFICIAL_EVENT" if s.official else "NEWS", s.publisher, s.url, None, s.title,
                                               s.published_at, s.content_type, s.content))
             dup = dedup.find_duplicate(d, self._nearby(d.category, d.event_date))
@@ -72,9 +76,9 @@ class EventService:
                 status = self.db.scalar("SELECT evidence_status FROM policy_event WHERE id = :id", id=dup)
                 if s.official and status == "NEWS_ONLY":
                     self.db.execute("""
-                        UPDATE policy_event SET evidence_status = 'OFFICIAL', published_at = :p, version = version + 1,
+                        UPDATE policy_event SET evidence_status = 'OFFICIAL', stream = :st, published_at = :p, version = version + 1,
                                attributes = attributes || CAST(:a AS jsonb) WHERE id = :id""",
-                                    p=d.published_at, a=jsonb(d.attributes or {}), id=dup)
+                                    st=stream, p=d.published_at, a=jsonb(attributes), id=dup)
                     self._insert_targets(dup, d.targets)
                     self._record_actor(dup, d, doc)
                     upgraded = True
@@ -82,16 +86,54 @@ class EventService:
             actor = None if d.actor_name is None else self.actor_id(d.actor_name)
             event_id = self.db.scalar("""
                 INSERT INTO policy_event (category, event_type, title, summary, actor_id, event_date, published_at, evidence_status,
-                                          attributes, dedup_key)
-                VALUES (:c, :t, :title, :s, :actor, :d, :p, :status, CAST(:a AS jsonb), :key) RETURNING id""",
+                                          stream, attributes, dedup_key)
+                VALUES (:c, :t, :title, :s, :actor, :d, :p, :status, :st, CAST(:a AS jsonb), :key) RETURNING id""",
                 c=d.category, t=d.event_type, title=d.title, s=d.summary, actor=actor, d=d.event_date, p=d.published_at,
-                status="OFFICIAL" if s.official else "NEWS_ONLY", a=jsonb(d.attributes or {}),
+                status="OFFICIAL" if s.official else "NEWS_ONLY", st=stream, a=jsonb(attributes),
                 key=f"{d.category}|{d.event_date.isoformat()}|{' '.join(dedup.tokens_java_order(d.title))}")
             self._insert_targets(event_id, d.targets)
             self._link_source(event_id, doc.id, s.role)
             if s.official:
                 self._record_actor(event_id, d, doc)
             return IngestResult(event_id, False, False, True)
+
+    def _sized(self, d: EventDraft) -> dict:
+        """The draft's attributes; a rate change whose statement does not state its size ("lower ... to 2 to 2-1/4 percent")
+        gets it from the previous official decision's upper target."""
+        attrs = dict(d.attributes or {})
+        upper = attrs.get("target_upper_pct")
+        if d.category != "MONETARY_POLICY" or "rate_change_bps" in attrs or upper is None:
+            return attrs
+        prev = self.db.scalar("""
+            SELECT (attributes->>'target_upper_pct')::float8 FROM policy_event
+            WHERE category = 'MONETARY_POLICY' AND evidence_status = 'OFFICIAL' AND event_date < :d AND attributes->>'target_upper_pct' IS NOT NULL
+            ORDER BY event_date DESC LIMIT 1""", d=d.event_date)
+        if prev is not None:
+            attrs["rate_change_bps"] = round((float(upper) - prev) * 100)
+        return attrs
+
+    def classify_unstreamed(self, log: Callable[[str], None] | None = None) -> dict[str, int]:
+        """ADR-0009: official events stored before streams existed get one, from their stored Federal Register record (an
+        official trade event without one was entered by hand: MANUAL); a material stream also gets its severity."""
+        counts: dict[str, int] = {}
+        rows = self.db.all("SELECT id, category FROM policy_event WHERE evidence_status = 'OFFICIAL' AND stream IS NULL ORDER BY id")
+        for r in rows:
+            stream = "FOMC" if r["category"] == "MONETARY_POLICY" else "MANUAL"
+            for doc_id in self.db.scalars("""
+                    SELECT sd.id FROM event_source es JOIN source_document sd ON sd.id = es.source_document_id
+                    WHERE es.event_id = :e AND sd.publisher = 'Federal Register' AND sd.content_type = 'application/json'
+                    ORDER BY sd.id""", e=r["id"]):
+                body = self.docs.content(self.docs.get(doc_id))
+                if body:
+                    stream = streams.classify(json.loads(body))
+                    break
+            extra = {"severity": streams.severity(stream)} if r["category"] == "TRADE_TARIFF" and streams.modelled(stream) else {}
+            self.db.execute("UPDATE policy_event SET stream = :s, attributes = attributes || CAST(:a AS jsonb) WHERE id = :id",
+                            s=stream, a=jsonb(extra), id=r["id"])
+            counts[stream] = counts.get(stream, 0) + 1
+        if log is not None and counts:
+            log("event streams: " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())) + " classified")
+        return counts
 
     def _nearby(self, category: str, day: date) -> list[dedup.Existing]:
         rows = self.db.all("""

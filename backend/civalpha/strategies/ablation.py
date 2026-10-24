@@ -25,9 +25,9 @@ from ..features import EVENT_FEATURES, INSIDER_FEATURES, DataBundle, build_panel
 from ..fundamentals import FUND_FEATURES
 from ..returns import HORIZON
 from . import backtest, registry, stats
-from .ai import (AI_FEATURE_SET, AI_FEATURES, AI_KEY, AI_SIZED_KEY, EARNINGS_PANEL_FEATURES, INSIDER_PANEL_FEATURES, TECH_FEATURES,
-                 AiConfig, attach_book_features, dataset, decide_positions, size_by_volatility, technical_features,
-                 walk_forward_probabilities)
+from .ai import (AI_FEATURE_SET, AI_FEATURES, AI_KEY, AI_SIZED_KEY, EARNINGS_PANEL_FEATURES, INSIDER_PANEL_FEATURES, INSIDER_QUALITY_FEATURES,
+                 TECH_FEATURES, AiConfig, attach_book_features, dataset, decide_positions, size_by_volatility,
+                 technical_features, walk_forward_probabilities)
 from .panel import MarketPanel
 from .service import LabConfig
 
@@ -39,7 +39,7 @@ GROUPS = {
     "insider": INSIDER_FEATURES + INSIDER_PANEL_FEATURES,
     "earnings": EARNINGS_FEATURES + EARNINGS_PANEL_FEATURES,
 }
-ADDITIONS = {"dividends": DIV_FEATURES, "policy_events": EVENT_FEATURES}
+ADDITIONS = {"dividends": DIV_FEATURES, "policy_events": EVENT_FEATURES, "insider_quality": INSIDER_QUALITY_FEATURES}   # ADR-0010
 NOT_SKILL = "not a skill metric: one trading rule on one five-year window"
 
 
@@ -73,7 +73,8 @@ def _specs(v: Variant, h: int) -> list[ModelSpec]:
 
 def walk_forward_rows(bundle: DataBundle, cfg: EvalConfig, ai_cfg: AiConfig, progress=None) -> list[dict]:
     """Walk-forward Brier skill and AUC (with CIs) of every variant at both horizons."""
-    panel = attach_book_features(bundle, build_panel(bundle, sample_every=cfg.sample_every), ai_cfg, extra=list(DIV_FEATURES))
+    panel = attach_book_features(bundle, build_panel(bundle, sample_every=cfg.sample_every), ai_cfg,
+                                 extra=[f for feats in ADDITIONS.values() for f in feats])
     rows = []
     for v in variants():
         if progress:

@@ -1,6 +1,6 @@
 """Policy events: dedup rules, text signals, vocabulary (ported EventRulesTest), ingestion against PostgreSQL,
 and the live feeds against a mock HTTP transport."""
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -63,7 +63,17 @@ def test_parses_fomc_statement_rate_decisions():
     assert r.lower == 4.0
     assert r.upper == 4.25
     r = signals.rate_decision("the Committee decided to raise the target range for the federal funds rate to 5-1/4 to 5-1/2 percent.")
-    assert r is not None and r.upper == 5.5
+    assert r is not None and r.upper == 5.5 and r.change_bps is None and r.direction == 1    # the size comes from the previous range
+    # 2019-07-31 and the holds of 2026 (ADR-0009): no "by", and "at" instead of "to"
+    r = signals.rate_decision("the Committee decided to lower the target range for the federal funds rate to 2 to 2-1/4 percent.")
+    assert (r.change_bps, r.lower, r.upper, r.direction) == (None, 2.0, 2.25, -1)
+    r = signals.rate_decision("the Committee decided to maintain the target range for the federal funds rate at 4-1/4 to 4-1/2 percent.")
+    assert (r.change_bps, r.lower, r.upper, r.direction) == (0, 4.25, 4.5, 0)
+    # a bare fraction (2020-03-15, 2022-03-16, 2022-05-04)
+    r = signals.rate_decision("the Committee decided to lower the target range for the federal funds rate to 0 to 1/4 percent.")
+    assert (r.change_bps, r.lower, r.upper) == (None, 0.0, 0.25)
+    r = signals.rate_decision("the Committee decided to raise the target range for the federal funds rate to 3/4 to 1 percent")
+    assert (r.lower, r.upper) == (0.75, 1.0)
     r = signals.rate_decision("the Committee decided to maintain the target range for the federal funds rate at 4-1/4 to 4-1/2 percent "
                               "and to 4-1/4 to 4-1/2 percent.")
     assert r is not None and r.change_bps == 0
@@ -273,6 +283,17 @@ FR_JSON = b"""{"count":2,"results":[
 ]}"""
 
 
+EMPTY_FR = b'{"count":0,"total_pages":0,"results":[]}'
+
+
+def _fr_routes(first: bytes, start=None, end=None) -> dict:
+    """The four Federal Register queries of a live run (the last LIVE_DAYS days): `first` answers the presidential one."""
+    from civalpha.platform.events import live
+    end = end or date.today()
+    start = start or end - timedelta(days=live.LIVE_DAYS)
+    return {live.fr_url(c, start, end): (first if i == 0 else EMPTY_FR) for i, (_n, c) in enumerate(live.FR_QUERIES)}
+
+
 def _transport(routes, seen):
     routes = {str(httpx.URL(k)): v for k, v in routes.items()}   # httpx normalizes the host to lower case
 
@@ -292,7 +313,7 @@ def test_live_sources_parse_feeds_and_skip_failures():
 
     seen, lines = [], []
     feeds = ["https://Wire.Example/rss.xml", "  ", "https://broken.example/rss"]
-    src = _live({live.FEDERAL_REGISTER: FR_JSON, live.FED_RSS: FED_RSS,
+    src = _live({**_fr_routes(FR_JSON), live.FED_RSS: FED_RSS,
                  "https://www.federalreserve.gov/newsevents/pressreleases/monetary20250917a.htm": FOMC_HTML,
                  "https://Wire.Example/rss.xml": NEWS_RSS},
                 Events(True, True, feeds), seen)
@@ -306,7 +327,7 @@ def test_live_sources_parse_feeds_and_skip_failures():
     assert (fr.category, fr.event_type, fr.actor_name, fr.event_date) == \
         ("TRADE_TARIFF", "TARIFF_IMPOSED", "Trade Representative, Office of United States", date(2026, 9, 22))
     assert fr.published_at == datetime(2026, 9, 22, 13, 45, tzinfo=timezone.utc)
-    assert fr.attributes == {"severity": 0.5, "auto_extracted": True, "document_number": "2026-01234"}
+    assert fr.attributes == {"severity": 0.8, "auto_extracted": True, "document_number": "2026-01234"} and fr.stream == "USTR_301"
     assert {(t.target_type, t.target_code, t.magnitude) for t in fr.targets} == {("COUNTRY", "CN", 50.0), ("PRODUCT", "SEMICONDUCTORS", 50.0)}
     assert fr.source.role == "OFFICIAL_PRIMARY" and fr.source.content_type == "application/json"
     assert fr.source.content.startswith(b'{"title":"Notice of Action')
@@ -315,7 +336,7 @@ def test_live_sources_parse_feeds_and_skip_failures():
     assert fed.summary == "Federal Reserve issues FOMC statement"
     assert fed.attributes == {"rate_change_bps": -25, "target_lower_pct": 4.25, "target_upper_pct": 4.5}
     assert fed.targets == [Target("INTEREST_RATE", "US_POLICY_RATE", -25.0)]
-    assert fed.event_date == date(2025, 9, 17) and fed.source.content == FOMC_HTML
+    assert fed.event_date == date(2025, 9, 17) and fed.source.content == FOMC_HTML and fed.stream == "FOMC"
     assert fed.source.publisher == "Board of Governors of the Federal Reserve System"
 
     assert (n1.category, n1.event_type, n1.summary) == ("TRADE_TARIFF", "TARIFF_IMPOSED", "New duties on chips from China")

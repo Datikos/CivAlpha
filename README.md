@@ -24,7 +24,8 @@ Requires Docker with Compose v2. The stack uses about 0.8 GB of RAM while idle a
      `CIVALPHA_PRICE_PROVIDER=yahoo` needs no key but uses an unofficial API, so personal research only.
    * **Optional:**
      * `FRED_API_KEY` (free) for macro series;
-     * `EVENTS_FEDERAL_REGISTER_ENABLED=true` and `EVENTS_FED_RSS_ENABLED=true` for official trade and rate events;
+     * `EVENTS_FEDERAL_REGISTER_ENABLED=true` and `EVENTS_FED_RSS_ENABLED=true` for official trade and rate events
+       (then once **Data & pipeline → Advanced → Load official event history** for the events since 2019, ADR-0009);
      * `EVENTS_NEWS_FEEDS` for news discovery;
      * `CIVALPHA_LLM_PROVIDER=anthropic` with `ANTHROPIC_API_KEY`.
 2. Start the stack:
@@ -81,6 +82,8 @@ Design decisions with alternatives are written down before they are built, in `d
 | ADR-0006 | Live prices for display, polled by the worker, never read by the models | Accepted, implemented 2026-10-07 |
 | ADR-0007 | The book does not size a stock whose price moved more than 50% without an explanation | Accepted, implemented 2026-10-15 |
 | ADR-0008 | Catch up a failed or missed evening pipeline run | Accepted, implemented 2026-10-15 |
+| ADR-0009 | Load seven years of official policy events, and only the material ones | Accepted, implemented and measured 2026-10-24: no help |
+| ADR-0010 | Tell informed insider trades from routine ones, and read them after a policy shock | Accepted, implemented and measured 2026-10-24: no help; shock reaction not testable |
 
 ## Architecture
 
@@ -127,7 +130,7 @@ no Kafka, Redis, graph database or Kubernetes. Forecasts and AI decisions are ap
 | Filings | `filing`, `xbrl_fact`, `filing_passage` | `accepted_at` (EDGAR acceptance time) is the availability time. Each fact keeps its accession, filed date and XBRL dimensions (for example `srt:StatementGeographicalAxis`). Each passage keeps its section, topic, character offsets and extractor version. |
 | Market | `price_bar` (raw closes, versioned), `price_bar_revision`, `corporate_action` | Adjustments come only from splits and dividends on their ex-dates. |
 | Macro | `macro_series`, `macro_observation` | ALFRED vintages (`realtime_start`/`realtime_end`). |
-| Events | `policy_event`, `event_source`, `event_target`, `policy_actor`, `actor_record` | Every event links to stored evidence. `evidence_status` is `OFFICIAL` or `NEWS_ONLY`. Actor profiles hold documented actions and votes only. |
+| Events | `policy_event`, `event_source`, `event_target`, `policy_actor`, `actor_record` | Every event links to stored evidence. `evidence_status` is `OFFICIAL` or `NEWS_ONLY`; an official event has a `stream` (ADR-0009), and the models read `PRESIDENTIAL`, `USTR_301`, `SECTION_232`, `EXPORT_CONTROL`, `FOMC` and `MANUAL` only. Actor profiles hold documented actions and votes only. |
 | Exposure | `company_exposure` | Each exposure records a target (country, product or interest rate), a channel and a share. `basis` is `DIRECTLY_REPORTED` or `ESTIMATED`, with a confidence and a method (`XBRL_DIMENSION`, `XBRL_RATIO`, `RULE_KEYWORD`, `SECTOR_MAP`, `LLM`). Each one links to a filing plus a passage or fact, and becomes available at `available_at` (the filing's acceptance time). |
 | Models | `model_version`, `forecast`, `forecast_outcome`, `model_evaluation`, `backtest_prediction` | A database trigger rejects `UPDATE` and `DELETE` on `forecast`. Outcomes are stored in a separate table. |
 | Strategies | `strategy_run`, `strategy_result`, `strategy_trade`, `strategy_decision`, `decision_explanation` | Backtest runs, decisions and explanations are written by the worker; decisions are append-only (trigger); language-model explanations live in their own table. |
@@ -145,7 +148,9 @@ How an event is linked to a company:
   divided by assets, insiders' net open-market buying over 63 trading days as a share of market cap, the market's
   reaction to the last earnings announcement, and the last release's guidance tone.
 * **Augmented model:** the baseline features plus:
-  * `trade_shock`: Σ over recent official tariff events of sign × severity × decay × exposure weight.
+  * `trade_shock`: Σ over recent official tariff events of sign × severity × decay × exposure weight. Only the
+    material streams count (presidential proclamations and orders, Section 301, Section 232, Entity List rules, and
+    events entered by hand); anti-dumping case notices are stored but not read (ADR-0009).
   * `rate_shock`: Σ over recent rate decisions of −Δrate × decay × leverage relative to the universe.
   * `fedfunds_chg_x_lev`: FEDFUNDS as published at the cutoff.
 * **Book model (`AI_BOOK_21`, since 2026-10-06):** the recorded book's input list (`GBM_AI_39`: the baseline features
@@ -225,6 +230,16 @@ of distinct insiders buying and selling in the last 21 trading days; the setup p
 buying (two or more insiders) and cluster selling (three or more); and every company page shows the trades. Code:
 `backend/civalpha/platform/insiders.py`; `backend/tests/test_platform_insiders.py`.
 
+Each open-market trade is also classed (ADR-0010, `backend/civalpha/insider_quality.py`): **planned** when the Form 4
+ticks the Rule 10b5-1 box (stored as `plan_10b5_1`, read from the data sets' `AFF10B5ONE` and the XML's `aff10b5One`;
+the box exists from 2023), **routine** when the same insider traded in the same calendar month in each of the three
+previous years (Cohen, Malloy & Pomorski 2012), **informed** when neither, and **not classifiable** with less than three
+years of history (nothing before 2023-07 here, the data start in 2020-07). Since 2023-07: 194 informed purchases and
+7,781 informed sales, against 70,790 planned sales. The company page marks each trade (and CEO/CFO from the title) and
+counts the classes per window. Two inputs on informed trades only, `insider_informed_net_63d` and
+`insider_exec_buyers_63d`, are measured in signal health and the feature ablation; they are not model inputs: on
+2026-10-24 both graded NOISE (ADR-0010). Tests: `backend/tests/test_insider_quality.py`.
+
 ## Signal health: which inputs carry information, and which are fading
 
 The **Signal health** page (`/signals`, also the last step of every pipeline run) computes, for every feature the AI
@@ -278,8 +293,9 @@ from data known then, each on the excess return over the sector ETF that followe
 | Event | an official tariff or rate shock first hitting an exposed or leveraged company (the model's shock features) |
 
 Every setup fires once per episode and is reported with how often it fired, the hit rate against the base rate of all
-stock-days, the mean and median excess with a block-bootstrap interval, the payoff asymmetry (average win over average
-loss), and a verdict: SUPPORTED only when the mean excess clears the Bonferroni-corrected bar for the 45 setup-horizon
+stock-days, the mean and median excess with a block-bootstrap interval (blocks of 21 calendar days over the span the
+firings cover, since 2026-10-24: blocks of firing dates gave a setup that fired on 19 dates an interval of almost zero
+width, ADR-0009), the payoff asymmetry (average win over average loss), and a verdict: SUPPORTED only when the mean excess clears the Bonferroni-corrected bar for the 45 setup-horizon
 pairs tested, SUGGESTIVE when only the plain 95% interval is above zero. The page also lists which setups fired in the
 last five sessions on which stocks: the daily scan. Code: `backend/civalpha/strategies/setups.py`;
 `backend/tests/test_setups.py` checks look-ahead per setup, edge triggering and that noise supports nothing.
@@ -347,7 +363,9 @@ strategies on the same data, the same out-of-sample window and the same costs. T
 
   The book recorded here is `AI_SIZED`: fixed entry (p ≥ 0.55, top 8) and exit (p < 0.48) thresholds, each position sized
   as 0.04 / annualized 21-day volatility, capped at 20%, no leverage. The model behind it leaves out the policy-event
-  features (tariff and rate shocks, fed funds × leverage) since the lab showed the book does better without them. The
+  features (tariff and rate shocks, fed funds × leverage) since the lab showed the book does better without them
+  (that comparison had no event history: the tariff and rate inputs were zero before 2026-03. Rerun on 2026-10-24 with
+  official events since 2019, ADR-0009: still no help). The
   Strategy lab backtests it next to the standard rule (`AI_GBM`), a replacement rule that lets a stronger candidate take
   the weakest holding's slot (`AI_RANK`, `AI_RANK_VOL`, `AI_RANK_SIZED` with a conviction tilt) and the model with the
   event features added back (`AI_WITH_EVENTS`), so the price of each decision-layer idea stays visible.
@@ -457,8 +475,8 @@ Code: `backend/civalpha/platform/portfolio.py`, `backend/civalpha/platform/api/p
 | Daily prices and corporate actions (automatic) | off | `CIVALPHA_PRICE_PROVIDER=yahoo` (no key; unofficial, personal research only) or `tiingo` + `TIINGO_API_KEY` (free key) | Runs with every pipeline run and on **Update prices**. Downloads are incremental, re-checking the last week of bars so corrections are versioned. Bars are stored under the ticker valid on each date. |
 | Daily prices and corporate actions | CSV importer | Upload in Admin, or drop `prices*.csv` / `corporate_actions*.csv` into the `civdata` volume under `/data/imports` and run the pipeline | Columns: `symbol,date,open,high,low,close,volume` and `symbol,ex_date,action_type(SPLIT\|CASH_DIVIDEND),value,announced_at`. Use raw (unadjusted) prices. Vendor adapters implement `PriceProvider` (`backend/civalpha/platform/market/providers.py`). |
 | FRED / ALFRED | off | `FRED_API_KEY` (free) | Fetches every vintage of `FEDFUNDS` and `CPIAUCSL`. |
-| Federal Register API (official trade notices) | off | `EVENTS_FEDERAL_REGISTER_ENABLED=true` | No key needed. Event targets are extracted with deterministic rules. |
-| Federal Reserve monetary press RSS (FOMC statements) | off | `EVENTS_FED_RSS_ENABLED=true` | Parses the rate change from the statement text. |
+| Federal Register API (official trade actions) | off | `EVENTS_FEDERAL_REGISTER_ENABLED=true` | No key needed. Four queries, one per material stream (presidential tariff proclamations and orders, Trade Representative documents on Section 301, Section 232, Entity List rules), for the last 14 days on each run; **Load official event history** runs the same queries year by year from 2019. Event targets are extracted with deterministic rules. |
+| Federal Reserve monetary press RSS (FOMC statements) | off | `EVENTS_FED_RSS_ENABLED=true` | Parses the rate change from the statement text (a hold as 0; a change without "by ..." takes its size from the previous decision). The history of rate changes comes from FRED's upper target `DFEDTARU` and the statement of each decision day (needs `FRED_API_KEY`). |
 | News RSS (discovery only) | off | `EVENTS_NEWS_FEEDS=url1,url2` | Stays `NEWS_ONLY` and is excluded from features until an official document is linked. |
 | LLM-assisted exposure extraction | off | `CIVALPHA_LLM_PROVIDER=anthropic`, `ANTHROPIC_API_KEY` (model `CIVALPHA_LLM_MODEL`, default `claude-opus-5-5`) | Optional. Output is schema-constrained and stored as `ESTIMATED` with confidence no higher than MEDIUM. Any failure means no hints, never a failed ingest. |
 | LLM review of AI entries | advisory | `CIVALPHA_LLM_REVIEW=off|advisory|veto` (needs the LLM above) | A schema-constrained second opinion on each ENTER, stored with the brief it saw. `veto` turns a DISAGREE into STAY_OUT; any failure means no review, never a missed decision. |
@@ -642,6 +660,16 @@ The suite covers:
   fundamentals and the time machine;
 * the platform: SEC parsers (incl. XXE), passage rules, dedup, FOMC parsing, ticker resolution, price providers
   and sync;
+* insider trade classes (`test_insider_quality.py`, ADR-0010): the Rule 10b5-1 flag from data-set and XML shapes and
+  for rows stored before it was read, the role from the title (NaN-safe), planned / routine / informed / not
+  classifiable on a constructed history, that a later trade never changes an earlier class, that the informed inputs are
+  NaN before three years of data and count informed trades only without looking ahead, and the insiders endpoint;
+* the event history (`test_event_history.py`, ADR-0009): the stream rules on real document shapes, the four Federal
+  Register queries with pagination and one event per document, full-text targets for a presidential order without
+  any in its title, FOMC changes from the upper target with the decision day's statement (a disagreeing one skipped),
+  streams stored and defaulted, a size-less rate change sized from the previous decision, stored events classified
+  from their Federal Register record, an anti-dumping notice changing no feature, a rerun storing nothing twice, and
+  the owner-only endpoint;
 * a Testcontainers PostgreSQL suite (needs Docker) for migrations, ticker changes, revised filings, price
   versioning, forecast and decision immutability, API smoke tests and the MCP server (tools, token rule, host check);
 * the portfolio advice (`test_portfolio.py`): the rule order (data before risk before model), trims to the volatility
@@ -683,8 +711,10 @@ docs/      api.md (REST contract and MCP tools); research/ (dated research notes
 * **Prices.** The Yahoo and Tiingo adapters were built against their documented response formats but could not
   be exercised against the live services from the build environment. The trading calendar comes from benchmark
   bars. Yahoo's closes are split-adjusted: a newly reported split triggers a full re-download of that symbol, so
-  stored bars stay consistent. Neither provider reports spin-offs: the parent's close drops by the value distributed
-  and nothing in the feed explains it (CTVA lost 84% on 2026-10-01 when it distributed Vylor one-for-one). Such a
+  stored bars stay consistent. Spin-offs are reported late or not at all: the parent's close drops by the value
+  distributed (CTVA lost 84% on 2026-10-01 when it distributed Vylor one-for-one; Tiingo delivered it a week later as a
+  split factor of 6.665, and both were applied until 2026-10-24, ADR-0003). Tiingo encodes every spin-off as a split
+  factor, which market cap and the dividend history then read as a share split (BACKLOG #26). Such a
   distribution is recorded by hand as a `SPIN_OFF` corporate action whose value is the per-share market value of the
   shares received at the ex-date close; the total-return index treats it like a cash dividend. `python -m
   civalpha.integrity` scans every series for 21-day volatility above 200%, one-day total returns beyond 50%, and
