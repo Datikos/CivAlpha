@@ -17,7 +17,8 @@ is issued by a run at the same hour.
 ## Decision
 
 1. **The rule** (`platform/catchup.py`, `decide`): after the schedule has fired for the latest NYSE session (16:30 New
-   York close), if not every active benchmark ETF (one with a bar in the last 10 days) has that session's bar, no
+   York close), if not every active benchmark ETF (one with a bar in the last 10 days) has that session's bar or no
+   live forecast was issued for that session, no
    `PIPELINE_RUN` is queued or running, the last one finished at least 60 minutes ago, and fewer than 6 catch-up runs
    were made for that session, the worker queues a `PIPELINE_RUN` with params `{"trigger": "catch-up", "session",
    "attempt", "reason"}`.
@@ -58,3 +59,7 @@ too), alerting a person when all 6 attempts fail, unscheduled closures.
    Monday before the close, no catch-up when the prices arrived, before the schedule fired, on Thanksgiving, while a run is
    queued, within an hour of the last run, after 6 attempts, without a schedule; the job's params and the attempt count.
 3. [x] README (schedule, known limitations), `.env.example`.
+4. [x] *Found in use (2026-10-20):* the run of 2026-10-19 (job 218) lost the network, continued on stored prices and
+   re-issued 2026-10-16; a manual price sync (job 219) then loaded the session's bars before the catch-up was due, and
+   prices alone counted as done, so 2026-10-19 would have had no forecasts, decisions or advice. A session now counts
+   as done only when its live forecasts exist too; test `test_prices_from_a_separate_sync_do_not_count_as_a_finished_session`.

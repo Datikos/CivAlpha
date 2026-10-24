@@ -596,7 +596,8 @@ on another interface, list the host names clients use in `CIVALPHA_MCP_ALLOWED_H
   Example: `0 30 22 * * MON-FRI` runs the pipeline after the US close. Scheduled runs are logged like manual jobs
   and are skipped while a job of the same type is queued or running. When the evening pipeline run fails or never runs
   (the network dropped, the machine slept), the worker catches it up: it queues another run, at least an hour apart and
-  at most 6 times per session, until every active benchmark ETF has the session's bar; NYSE holidays are skipped
+  at most 6 times per session, until every active benchmark ETF has the session's bar and the session's forecasts
+  exist; NYSE holidays are skipped
   (ADR-0008).
 
 ## Environment variables
@@ -620,6 +621,10 @@ on the Universe page; 20–50 symbols is a sensible size.
 * **"price sync failed" / "request limit reached"**
   * The provider refused the requests (for example Tiingo's free plan allows 50 requests an hour). The pipeline
     continues with the prices already stored; try again later.
+* **"FRED FEDFUNDS failed (...); continuing with the stored observations" or "event ... skipped" in a pipeline log**
+  * FRED or an event source was unreachable or answered with something that is not JSON (FRED did so from 2026-10-21
+    22:36 to 2026-10-22 06:41 UTC). The run goes on with the stored data and makes forecasts, decisions and advice;
+    the next run fetches what was missed. Before 2026-10-24 such a failure stopped the whole run.
 * **"The CivAlpha backend is unavailable (HTTP 502)" while the api container is healthy**
   * Since 2026-10-07 nginx looks the api up through Docker's DNS on every request (`resolver 127.0.0.11`, cached
     10 s, `frontend/nginx.conf`), so recreating the api container no longer leaves it pointing at the old address.

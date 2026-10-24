@@ -15,8 +15,9 @@ def ny(s: str) -> datetime:
     return datetime.fromisoformat(s).replace(tzinfo=NY)
 
 
-def run(now, through, active=False, last=None, attempts=0, cron=CRON):
-    return decide(ny(now), cron, "America/New_York", through, active, ny(last) if last else None, attempts)
+def run(now, through, active=False, last=None, attempts=0, cron=CRON, forecasts="same"):
+    fc = through if forecasts == "same" else forecasts
+    return decide(ny(now), cron, "America/New_York", through, active, ny(last) if last else None, attempts, fc)
 
 
 def test_nyse_sessions_and_holidays():
@@ -38,6 +39,12 @@ def test_a_failed_friday_run_is_caught_up_over_the_weekend():
     assert run("2026-10-19T03:00", date(2026, 10, 15), last="2026-10-16T19:00", attempts=2) == date(2026, 10, 16)
 
 
+def test_prices_from_a_separate_sync_do_not_count_as_a_finished_session():
+    """2026-10-19: the evening run lost the network, a manual price sync then loaded the bars; the forecasts were missing."""
+    assert run("2026-10-19T21:00", date(2026, 10, 19), last="2026-10-19T19:44", forecasts=date(2026, 10, 16)) == date(2026, 10, 19)
+    assert run("2026-10-19T21:00", date(2026, 10, 19), last="2026-10-19T19:44", forecasts=date(2026, 10, 19)) is None
+
+
 def test_nothing_is_caught_up_when_it_is_not_needed():
     assert run("2026-10-17T10:00", date(2026, 10, 16), last="2026-10-16T19:00") is None          # the prices arrived
     assert run("2026-10-16T17:00", date(2026, 10, 15)) is None                                    # the schedule has not fired yet
@@ -53,6 +60,7 @@ def test_check_queues_one_run_with_its_reason_and_counts_attempts(tdb):
         tdb.execute("INSERT INTO price_bar (company_id, symbol, trade_date, close, provider) VALUES (NULL, :s, :d, 100, 't')",
                     s=sym, d=date.fromisoformat(last))
     tdb.execute("DELETE FROM pipeline_job")
+    # (no live forecasts in the test database: prices alone are missing for the session here)
     c = CatchUp(CRON, "America/New_York", tdb)
     job = c.check(ny("2026-10-17T10:00"))
     assert job is not None and job["job_type"] == "PIPELINE_RUN"

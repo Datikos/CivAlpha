@@ -113,17 +113,35 @@ class Pipeline:
             p.step("SEC filings skipped")
             log("SEC_USER_AGENT is not set (your name and contact e-mail, required by the SEC); SEC filings skipped")
         p.step("macro series")
-        if self.s.fred.enabled:
-            for series in self.s.fred.series:
-                log(f"FRED {series}: {self.macro.fetch_fred(series.strip())} observations")
-        else:
-            log("FRED_API_KEY not set; macro series skipped")
+        self.macro_series(log)
         p.step("policy events")
-        for d in LiveEventSources().collect(log):
-            r = self.events.ingest(d)
+        self.policy_events(log)
+        self.after_ingest(log, p)
+
+    def macro_series(self, log: Log) -> None:
+        """FRED series, each on its own: a network failure or an outage answer (2026-10-21/22: an empty body, five runs
+        failed) is logged and the run goes on with the stored observations; the models read vintages, so one missed
+        update changes nothing they knew."""
+        if not self.s.fred.enabled:
+            log("FRED_API_KEY not set; macro series skipped")
+            return
+        for series in self.s.fred.series:
+            name = series.strip()
+            try:
+                log(f"FRED {name}: {self.macro.fetch_fred(name)} observations")
+            except Exception as e:  # noqa: BLE001 - a macro outage must not stop forecasts, decisions and advice
+                log(f"FRED {name} failed ({type(e).__name__}: {str(e)[:120]}); continuing with the stored observations")
+
+    def policy_events(self, log: Log, sources=None) -> None:
+        """Official and news events: each source is already isolated (LiveEventSources._safe); storing each event is too."""
+        for d in (sources or LiveEventSources()).collect(log):
+            try:
+                r = self.events.ingest(d)
+            except Exception as e:  # noqa: BLE001 - one event's evidence download must not stop the run
+                log(f"event {d.title[:80]!r} skipped ({type(e).__name__}: {str(e)[:120]})")
+                continue
             if r.created:
                 log(f"event {r.event_id}: {d.title}")
-        self.after_ingest(log, p)
 
     def after_ingest(self, log: Log, p: Progress | None = None) -> None:
         """The AFTER_STEPS model steps; `p`, when given, advances one step per stage."""

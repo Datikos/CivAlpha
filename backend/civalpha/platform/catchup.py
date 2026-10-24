@@ -2,7 +2,7 @@
 slept), the worker runs it again so the day's prices, forecasts, decisions and advice still arrive.
 
 The rule (`decide`, pure): after the schedule has fired for the latest NYSE session, if not every active benchmark ETF has
-that session's bar, no pipeline run is queued or running, the last one finished at least RETRY_MINUTES ago, and fewer
+that session's bar or no live forecast was issued for it, no pipeline run is queued or running, the last one finished at least RETRY_MINUTES ago, and fewer
 than MAX_ATTEMPTS catch-up runs were made for that session, queue a PIPELINE_RUN with trigger "catch-up". Attempts are
 counted from the job table, so a worker restart does not reset them. Market holidays come from the NYSE calendar below,
 so a holiday is never "missing".
@@ -67,13 +67,16 @@ def last_session(now: datetime) -> date:
 
 
 def decide(now: datetime, cron: str, zone: str, benchmarks_through: date | None, pipeline_active: bool,
-           last_finished: datetime | None, attempts: int) -> date | None:
-    """The session to catch up, or None. `benchmarks_through`: the oldest latest-bar date among active benchmark ETFs."""
+           last_finished: datetime | None, attempts: int, forecasts_through: date | None = None) -> date | None:
+    """The session to catch up, or None. A session is done when every active benchmark ETF has its bar
+    (`benchmarks_through`, the oldest latest-bar date among them) and live forecasts were issued for it
+    (`forecasts_through`): prices loaded by a separate price sync leave the forecasts, decisions and advice undone."""
     expr = (cron or "").strip()
     if not expr or expr == "-" or pipeline_active:
         return None
     session = last_session(now)
-    if benchmarks_through is not None and benchmarks_through >= session:
+    if (benchmarks_through is not None and benchmarks_through >= session
+            and forecasts_through is not None and forecasts_through >= session):
         return None
     fields = expr.split()
     prev = croniter(expr, now.astimezone(ZoneInfo(zone)), second_at_beginning=len(fields) == 6).get_prev(datetime)
@@ -105,10 +108,13 @@ class CatchUp:
         attempts = self.db.scalar("""SELECT count(*) FROM pipeline_job WHERE job_type = 'PIPELINE_RUN'
                                      AND params->>'trigger' = 'catch-up' AND params->>'session' = :s""", s=session.isoformat())
         last_finished = self.db.scalar("SELECT max(finished_at) FROM pipeline_job WHERE job_type = 'PIPELINE_RUN'")
-        target = decide(now, self.cron, self.zone, through, self.jobs.running("PIPELINE_RUN"), last_finished, int(attempts))
+        forecasts = self.db.scalar("SELECT max(as_of_date) FROM forecast WHERE issue_mode = 'LIVE'")
+        target = decide(now, self.cron, self.zone, through, self.jobs.running("PIPELINE_RUN"), last_finished, int(attempts),
+                        forecasts)
         if target is None:
             return None
+        why = ("benchmark prices" if through is None or through < target else "live forecasts") + f" for {target} missing after the scheduled run"
         job = self.jobs.submit("PIPELINE_RUN", {"trigger": "catch-up", "session": target.isoformat(), "attempt": int(attempts) + 1,
-                                                "reason": f"benchmark prices for {target} missing after the scheduled run"})
+                                                "reason": why})
         log.warning("catch-up: queued pipeline run %s for session %s (attempt %d of %d)", job["id"], target, attempts + 1, MAX_ATTEMPTS)
         return job

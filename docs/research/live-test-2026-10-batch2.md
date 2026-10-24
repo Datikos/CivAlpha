@@ -69,4 +69,29 @@ ORDER BY s.as_of_date, s.company_id;
 
 ## 5. Amendments
 
-(none yet; the fingerprint is added here when the 10th as-of date has been issued)
+### Amendment 1 (2026-10-18): the population is closed
+
+The 10th as-of date (2026-10-16) was issued on 2026-10-17 07:37 UTC by a catch-up run (job 215, ADR-0008) after the
+scheduled run of 2026-10-16 lost the network. Computed with `python -m civalpha.livetest 2` on 2026-10-18 12:33 UTC
+(md5 of `series_key:version` pairs joined by commas in `series_key` order, the batch-1 definition):
+
+| Model | As-of dates | Forecasts | Model versions used | Fingerprint |
+|---|---|---|---|---|
+| AI_BOOK_21 | 2026-10-05 to 2026-10-16 (10) | 3,159 | 17 `model_version` rows (retrained at each issue) | `52cf870d001d5ddbcde9c913acc39277` |
+
+Facts recorded with it, all consequences of the rule in section 2, which is unchanged:
+
+* **2026-10-09 contributes 0 forecasts.** Its scheduled run (job 186) lost the network (DNS failures from 23:45 UTC);
+  all 351 forecasts were issued on 2026-10-12 14:16 UTC, after the three-day limit. The date still counts as one of the
+  ten, so the population is 9 x 351 = 3,159 forecasts, not about 3,510.
+* **Re-issues inside the window count.** 9 series of 2026-10-14 carry version 2 (2026-10-15 05:46 UTC) and 15 series
+  of 2026-10-15 carry version 2 or 3 (2026-10-17), all within three days; the fingerprint uses those versions.
+* **2026-10-16's window is open until 2026-10-19 00:00 UTC.** A pipeline run before then that changes a forecast of that
+  date adds a version that belongs to the population and changes the fingerprint. No scheduled run falls in that window
+  (the next is 2026-10-19 22:30 UTC) and the catch-up is idle while the prices are complete. The scorer checks this
+  fingerprint (`livetest.BATCHES["2"]`); if it reports `fingerprintMatches: false` after that instant, the population
+  rule stands and this amendment gets the corrected fingerprint with the reason.
+* **Confirmed final on 2026-10-19 07:57 UTC**, after that window closed: no version above 1 exists for 2026-10-16 and
+  the scorer reports `fingerprintMatches: true`. Outcomes resolve as the 21-trading-day windows close, from 2026-11-03
+  (as-of 2026-10-05) to 2026-11-16 (as-of 2026-10-16); the verdict is due by 2026-11-30 (section 3: INCOMPLETE below
+  95% resolved by then).

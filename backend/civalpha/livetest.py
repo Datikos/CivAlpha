@@ -74,7 +74,9 @@ WHERE issue_mode = 'LIVE' AND model_kind = '{BATCH2_MODEL}' AND as_of_date >= DA
 ORDER BY as_of_date LIMIT {BATCH2_DATES}
 """
 BATCHES = {"1": {"sql": POPULATION_SQL, "models": MODELS, "fingerprint": FINGERPRINT},
-           "2": {"sql": BATCH2_SQL, "models": (BATCH2_MODEL,), "fingerprint": None}}
+           "2": {"sql": BATCH2_SQL, "models": (BATCH2_MODEL,),
+                 # closed 2026-10-18 (live-test-2026-10-batch2.md, amendment 1): 10 dates, 3,159 forecasts
+                 "fingerprint": {BATCH2_MODEL: "52cf870d001d5ddbcde9c913acc39277"}}}
 
 
 def fingerprint(rows: pd.DataFrame) -> dict:
