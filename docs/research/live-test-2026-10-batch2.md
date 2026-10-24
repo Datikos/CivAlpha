@@ -95,3 +95,18 @@ Facts recorded with it, all consequences of the rule in section 2, which is unch
   the scorer reports `fingerprintMatches: true`. Outcomes resolve as the 21-trading-day windows close, from 2026-11-03
   (as-of 2026-10-05) to 2026-11-16 (as-of 2026-10-16); the verdict is due by 2026-11-30 (section 3: INCOMPLETE below
   95% resolved by then).
+
+### Amendment 2 (2026-10-24): CTVA's inputs were counted twice; the population is unchanged
+
+From 2026-10-08 00:12 UTC to 2026-10-24 the corporate-action table held the Vylor spin-off of 2026-10-01 twice: the
+hand-entered `SPIN_OFF` (68.26 per share) and the feed's `SPLIT` (6.665), which Tiingo uses to encode a spin-off. CTVA's
+total-return index showed +95.8% on 2026-10-01 instead of +4.1%, and its market cap was 6.665 times too high (sales and
+earnings yield 6.665 times too low). The feed's row was deleted on 2026-10-24 by the owner's decision (BACKLOG #16,
+audit event 150).
+
+* **7 of the 3,159 forecasts** (CTVA, as-of 2026-10-07 to 2026-10-16, issued from 2026-10-08 05:30 UTC) were made
+  on those inputs; CTVA's 2 earlier ones (as-of 2026-10-05 and 2026-10-06) were not. They stay in the population: the
+  rule in section 2 has no exclusion for input errors, and adding one after the fact is the kind of change this
+  pre-registration forbids. The fingerprint is unchanged.
+* **Outcomes are not affected.** Every window starts after 2026-10-01, and no outcome had resolved when the row was
+  deleted (the first resolves after 2026-11-03).

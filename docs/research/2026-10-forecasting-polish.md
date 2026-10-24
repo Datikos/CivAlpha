@@ -67,6 +67,10 @@ FISV 2025-10, CV 2026-01); 13 one-day total returns beyond 50%, 12 of them with 
 TRGP 2020-03-09, PRPO, HOOD, CAR, CVNA, CRCL, AGIO 2025-11-19). They match known market events; AGIO was not checked
 against a filing. None were changed. CTVA no longer appears.
 
+*Later (2026-10-24):* the feed delivered the same distribution on 2026-10-08 as a split factor of 6.665, so CTVA showed
++95.8% on 2026-10-01 until that row was deleted; the series above is again the stored one (ADR-0003 Phase 3, BACKLOG
+#16).
+
 **Null values with contributions.** The logistic models fill a missing input with the training median; the factor now
 says `imputed: true, imputation: "training median"`. The gradient-boosted model fills nothing: the trees route missing
 values on a learned branch, so the contribution is the effect of having no value; a column with no training values is

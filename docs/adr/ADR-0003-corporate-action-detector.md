@@ -9,7 +9,8 @@
 The total-return index (`returns.total_return_index`) is only as right as the corporate-action table. The price feed
 (Tiingo) reports splits and cash dividends; it reported nothing when Corteva distributed Vylor one-for-one on
 2026-10-01, so CTVA's 84% "loss" entered every feature and the sizing for four days until it was entered by hand
-(`docs/research/2026-10-forecasting-polish.md` section 3). The integrity scan (`civalpha.integrity`) catches such a
+(`docs/research/2026-10-forecasting-polish.md` section 3). The feed delivered the distribution a week later, on
+2026-10-08, as a split factor (6.665), so it was then counted twice (Phase 3, 2026-10-24). The integrity scan (`civalpha.integrity`) catches such a
 break only when the one-day move exceeds 50%. A spin-off worth 10% to 30% of the parent passes it silently.
 
 The announcement is public before the price breaks: Corteva's 8-K of 2026-09-15 stated the one-for-one distribution
@@ -167,4 +168,18 @@ Phase 3:
       8-Ks of 2026-06-25 and 2026-07-10), outside the reconciliation window that starts 5 days before the filing; the
       feed had recorded it (split 1.241 on 2026-06-01). The page therefore shows the feed's actions from 60 days before
       the 8-K, so the owner can link them; the pre-registered rule is unchanged.
-- [ ] Review the feed-gap list (125 on 2026-10-14; the owner's work on the page).
+- [x] CTVA counted twice (2026-10-24, BACKLOG #16, owner's choice): the hand-entered `SPIN_OFF` 8279 (68.26) and the
+      feed's `SPLIT` 8330 (6.665, delivered 2026-10-08) both applied on 2026-10-01, so the total-return index showed
+      +95.8% that day. The feed's row was deleted (audit event 150), not the hand-entered one: the split factor is also
+      read as a share split by the market cap (`features.market_cap_at`, `strategies/panel.py`), the per-share
+      fundamentals (`fundamentals.split_factor_after`) and the dividend history (`dividends.dividend_profile`), and
+      Corteva's share count did not change. After it: +4.1% on 2026-10-01 from Vylor's close, market cap about $8.3B
+      instead of $55B, 13 return flags in the integrity scan instead of 14. Candidate 8248 (the 8-K of 2026-04-14) was
+      linked to 8279. A full history re-download would bring 8330 back (the nightly sync overlaps 7 days only); BACKLOG
+      #17 is the guard.
+      *Found while doing it:* Tiingo encodes every spin-off as a split factor: 18 of the 77 feed splits have a ratio that
+      is not a whole or simple fraction, and all 18 are spin-offs (PFE 2020, MRK 2021, IBM 2021, T 2022, GE 2023 and
+      2024, FDX 2026, ...). The total return is right for them; market cap and dividend history treat them as share
+      splits (BACKLOG #26).
+- [ ] Review the feed-gap list (125 on 2026-10-14; the owner's work on the page). 118 done by 2026-10-24; left: PRPO's
+      reverse-split 8-K of 2024-05-06 and 6 confirmed pending distributions to enter when they happen.
