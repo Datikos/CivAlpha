@@ -39,6 +39,7 @@ def java_map(m: dict) -> str:
     return "{" + ", ".join(f"{k}={v}" for k, v in m.items()) + "}"
 
 
+WEEKLY = "not a study day (CIVALPHA_STUDY_DAYS, ADR-0012): skipped "
 AFTER_STEPS = 7   # evaluation, forecasts, outcomes, strategy lab, doubler study, setup playbook, signal health
 
 
@@ -57,7 +58,10 @@ class Pipeline:
         self.decisions = DecisionService(self.db)
 
     # ------------------------------------------------------------------ configured pipeline
-    def run_configured(self, log: Log) -> None:
+    def run_configured(self, log: Log, studies: bool = True) -> None:
+        """`studies` False (a scheduled run on a weekday that is not a study day, ADR-0012): the walk-forward evaluation,
+        the strategy lab's backtest and the doubler, setup and signal studies wait for the study day; prices, filings,
+        events, live forecasts, outcomes, decisions and advice run as always."""
         companies = self.universe.companies()
         if not companies:
             raise Problem("The universe is empty. Add companies on the Universe page first.")
@@ -128,7 +132,7 @@ class Pipeline:
         self.macro_series(log)
         p.step("policy events")
         self.policy_events(log)
-        self.after_ingest(log, p)
+        self.after_ingest(log, p, studies)
 
     def macro_series(self, log: Log) -> None:
         """FRED series, each on its own: a network failure or an outage answer (2026-10-21/22: an empty body, five runs
@@ -160,8 +164,9 @@ class Pipeline:
             if r.created:
                 log(f"event {r.event_id}: {d.title}")
 
-    def after_ingest(self, log: Log, p: Progress | None = None) -> None:
-        """The AFTER_STEPS model steps; `p`, when given, advances one step per stage."""
+    def after_ingest(self, log: Log, p: Progress | None = None, studies: bool = True) -> None:
+        """The AFTER_STEPS model steps; `p`, when given, advances one step per stage; without `studies` the weekly ones
+        are skipped and say so."""
         step = p.step if p is not None else (lambda label: None)
         if self.market.latest_benchmark_date() is None:
             log(f"No benchmark ETF prices are loaded ({', '.join(self.market.missing_benchmarks())}); skipping evaluation and "
@@ -173,7 +178,10 @@ class Pipeline:
         if warning:
             log(warning)
         step("walk-forward evaluation")
-        log("walk-forward evaluation: " + str(ml.evaluate(engine())["verdict"]))
+        if studies:
+            log("walk-forward evaluation: " + str(ml.evaluate(engine())["verdict"]))
+        else:
+            log(WEEKLY + "walk-forward evaluation")
         step("live forecasts")
         live = self.forecasts.issue_live(None, "Scheduled issue")
         log(f"live forecasts: {live.created} created, {live.unchanged} unchanged")
@@ -185,31 +193,31 @@ class Pipeline:
             log(f"portfolio advice outcomes skipped: {e}")
         step("strategy lab")
         try:
-            log("strategy lab: " + str(strategy_lab.backtest_strategies(engine())["summary"]))
-            d = self.decisions.decide(None, log)
-            log(f"AI decisions: {d.created} stored, {d.existing} already existed, {d.explained} explained")
+            if studies:
+                log("strategy lab: " + str(strategy_lab.backtest_strategies(engine())["summary"]))
+            else:
+                log(WEEKLY + "strategy lab")
         except Exception as e:  # noqa: BLE001 - the lab is optional; forecasts above are already stored
             log(f"strategy lab skipped: {e}")
+        try:   # the decisions train their own model (strategies.decide): nightly, whatever the lab does
+            d = self.decisions.decide(None, log)
+            log(f"AI decisions: {d.created} stored, {d.existing} already existed, {d.explained} explained")
+        except Exception as e:  # noqa: BLE001
+            log(f"AI decisions skipped: {e}")
         try:   # ADR-0004: after the decisions it reads; counts only in the log
             a = PortfolioService(self.db, caller=SYSTEM).advise_all()
             if a.as_of is not None:
                 log(f"portfolio advice for {a.as_of}: {a.portfolios} portfolios, {a.created} rows stored, {a.existing} already existed")
         except Exception as e:  # noqa: BLE001
             log(f"portfolio advice skipped: {e}")
-        step("doubler study")
-        try:
-            log("doubler study: " + str(doublers.study(engine())["headline"]))
-        except Exception as e:  # noqa: BLE001
-            log(f"doubler study skipped: {e}")
-        step("setup playbook")
-        try:
-            log("setup playbook: " + str(setups.study(engine())["headline"]))
-        except Exception as e:  # noqa: BLE001
-            log(f"setup playbook skipped: {e}")
-        step("signal health")
-        try:
-            log("signal health: " + str(signals.study(engine())["headline"]))
-        except Exception as e:  # noqa: BLE001
-            log(f"signal health skipped: {e}")
+        for label, fn in (("doubler study", doublers.study), ("setup playbook", setups.study), ("signal health", signals.study)):
+            step(label)
+            if not studies:
+                log(WEEKLY + label)
+                continue
+            try:
+                log(f"{label}: " + str(fn(engine())["headline"]))
+            except Exception as e:  # noqa: BLE001
+                log(f"{label} skipped: {e}")
         if p is not None:
             p.finish()

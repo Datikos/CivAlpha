@@ -100,6 +100,7 @@ class Schedule:
     pipeline_cron: str      # cron expression; "-" or empty disables. 6 fields = seconds first (as before), 5 = standard
     outcomes_cron: str
     zone: str
+    study_days: str = "FRI"     # ADR-0012: scheduled runs on these days (in `zone`) also run the evaluation, the lab and the studies
 
 
 @dataclass(frozen=True)
@@ -167,7 +168,8 @@ def load() -> Settings:
         prices=Prices(provider=_env("CIVALPHA_PRICE_PROVIDER", "none"), tiingo_api_key=_env("TIINGO_API_KEY"),
                       history_start=date.fromisoformat(start) if start else date(2019, 1, 2)),
         schedule=Schedule(pipeline_cron=_env("CIVALPHA_PIPELINE_CRON", "-"), outcomes_cron=_env("CIVALPHA_OUTCOMES_CRON", "-"),
-                          zone=_env("CIVALPHA_SCHEDULE_ZONE", "America/New_York")),
+                          zone=_env("CIVALPHA_SCHEDULE_ZONE", "America/New_York"),
+                          study_days=_env("CIVALPHA_STUDY_DAYS", "FRI")),
         mcp=Mcp(allowed_hosts=_list("CIVALPHA_MCP_ALLOWED_HOSTS"), allowed_origins=_list("CIVALPHA_MCP_ALLOWED_ORIGINS")),
         auth_mode=_auth_mode(_env("CIVALPHA_AUTH", "token")),
         cookie_secure=_bool("CIVALPHA_COOKIE_SECURE", True),

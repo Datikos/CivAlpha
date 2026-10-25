@@ -227,9 +227,12 @@ class InsiderIngestionService:
         self.universe = universe or UniverseService(self.db)
         self.lookback_years = lookback_years
 
-    def ingest(self, sec: SecClient, log: Log, today: date | None = None) -> Result:
+    def ingest(self, sec: SecClient, log: Log, today: date | None = None, companies: list[dict] | None = None,
+               reread: bool = False) -> Result:
+        """`companies` defaults to today's members; the history load (ADR-0012) passes its own and `reread`, so data sets
+        already stored are parsed again (from storage, no download) for companies they were not read for."""
         today = today or date.today()
-        companies = self.universe.companies()
+        companies = companies if companies is not None else self.universe.companies()
         by_cik = {}
         for c in companies:
             cik = self.tickers.cik_of(c["id"])
@@ -242,8 +245,14 @@ class InsiderIngestionService:
         p = Progress(log, len(quarters) + len(by_cik), "insiders: data sets")
         for name in quarters:
             p.step(f"insiders: data set {name}")
-            if self.db.scalar("SELECT exists(SELECT 1 FROM source_document WHERE source_type = 'SEC_INSIDER_DATASET' AND title = :t)", t=name):
+            stored = self.db.scalar("SELECT max(id) FROM source_document WHERE source_type = 'SEC_INSIDER_DATASET' AND title = :t", t=name)
+            if stored is not None:
                 latest_set_end = _quarter_end(name)
+                if reread:
+                    doc = self.docs.get(stored)
+                    body = self.docs.content(doc) if doc is not None else None
+                    if body:
+                        n_rows += self._store(parse_dataset(body, set(by_cik)), by_cik, name, stored)
                 continue
             body = url = None
             for template in DATASET_URLS:

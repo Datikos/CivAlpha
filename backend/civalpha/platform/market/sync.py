@@ -119,17 +119,7 @@ class PriceSyncService:
                     # a new split re-scales the provider's whole history: re-download so stored bars stay consistent
                     log(f"{t.symbol}: new split detected; re-downloading full history")
                     s = p.fetch(t.symbol, start, to)
-                bars = [b for b in s.bars if not b.date > to and b.close is not None]
-                d = self.docs.store(NewDocument("PRICE_FILE", p.name, s.locator, None, f"{t.symbol} daily prices {from_}..{to}", None,
-                                                s.content_type, s.raw))
-                # store each bar under the ticker valid on its date (vendors report renamed stocks under today's symbol)
-                spans = [] if t.company_id is None else [sp for sp in self.tickers.all_spans() if sp.company_id == t.company_id]
-                resolved = [Resolved(t.company_id, b if not spans else replace(b, symbol=symbol_on(spans, b.date, b.symbol)))
-                            for b in bars]
-                r = self.market.store(resolved, p.name, d.id)
-                actions = [ActionRow(a.symbol, a.ex_date, "SPLIT_INFO", a.value, a.announced_at)
-                           if p.split_adjusted and a.type == "SPLIT" else a for a in s.actions]
-                acts = self.market.store_actions(t.company_id, actions, p.name, d.id)
+                r, acts = self._store_series(p, t, s, from_, to)
                 inserted += r.inserted
                 corrected += r.revised
                 log(f"{t.symbol}: {r.inserted} new bars, {r.revised} corrected, {acts} corporate actions")
@@ -151,6 +141,56 @@ class PriceSyncService:
         if failed == len(targets) and targets:
             raise Problem("price sync failed for every symbol; check network access and the provider settings")
         return Summary(len(targets), failed, inserted, corrected)
+
+    def _store_series(self, p: PriceProvider, t: Target, s, from_: date, to: date):
+        bars = [b for b in s.bars if not b.date > to and b.close is not None]
+        d = self.docs.store(NewDocument("PRICE_FILE", p.name, s.locator, None, f"{t.symbol} daily prices {from_}..{to}", None,
+                                        s.content_type, s.raw))
+        # store each bar under the ticker valid on its date (vendors report renamed stocks under today's symbol)
+        spans = [] if t.company_id is None else [sp for sp in self.tickers.all_spans() if sp.company_id == t.company_id]
+        resolved = [Resolved(t.company_id, b if not spans else replace(b, symbol=symbol_on(spans, b.date, b.symbol)))
+                    for b in bars]
+        r = self.market.store(resolved, p.name, d.id)
+        actions = [ActionRow(a.symbol, a.ex_date, "SPLIT_INFO", a.value, a.announced_at)
+                   if p.split_adjusted and a.type == "SPLIT" else a for a in s.actions]
+        return r, self.market.store_actions(t.company_id, actions, p.name, d.id)
+
+    def backfill(self, targets: list[tuple[Target, date | None]], start: date, log: Log) -> Summary:
+        """ADR-0012: bars from `start` to the day before the first stored bar, or to `end` (the last trading day of a
+        company that stopped trading) when nothing is stored. A symbol whose stored history already reaches `start` costs
+        no request; a rerun resumes where the last one stopped."""
+        p = self.provider()
+        to = last_completed_session()
+        failed = inserted = corrected = 0
+        for i, (t, end) in enumerate(targets):
+            report(log, i, len(targets), f"history prices {t.symbol} ({i + 1}/{len(targets)})")
+            first = self._first_bar(t)
+            if first is not None and first <= start + timedelta(days=7):
+                continue
+            hi = first - timedelta(days=1) if first is not None else min(end or to, to)
+            if hi < start:
+                continue
+            try:
+                s = p.fetch(t.symbol, start, hi)
+                r, _acts = self._store_series(p, t, s, start, hi)
+                inserted += r.inserted
+                corrected += r.revised
+                if self.pause > 0:
+                    _time.sleep(self.pause)
+            except RateLimited as e:
+                log(f"{t.symbol}: {e}; stopping, a rerun resumes here")
+                failed += len(targets) - i
+                break
+            except Exception as e:  # noqa: BLE001 - one symbol must not stop the others
+                failed += 1
+                log(f"{t.symbol}: history prices FAILED {e}")
+        log(f"history prices: {len(targets)} symbols, {inserted} bars added, {corrected} corrected, {failed} failed")
+        return Summary(len(targets), failed, inserted, corrected)
+
+    def _first_bar(self, t: Target) -> date | None:
+        if t.company_id is None:
+            return self.db.scalar("SELECT min(trade_date) FROM price_bar WHERE company_id IS NULL AND symbol = :s", s=t.symbol)
+        return self.db.scalar("SELECT min(trade_date) FROM price_bar WHERE company_id = :c", c=t.company_id)
 
     def _last_bar(self, t: Target) -> date | None:
         if t.company_id is None:

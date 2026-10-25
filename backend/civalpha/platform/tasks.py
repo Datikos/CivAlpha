@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import os
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 from .. import service as ml
@@ -21,6 +22,7 @@ from .pipeline import Pipeline, java_map, java_set
 from .auth import SYSTEM
 from .portfolio import PortfolioService
 from .sec import FilingIngestionService, SecClientFactory
+from .settings import settings
 from .sql import engine
 from .tickers import TickerResolver
 from .universe import UniverseService
@@ -37,8 +39,25 @@ def _benchmarks(log: Log) -> None:
         log(warning)
 
 
+def study_day(params: dict, now: datetime | None = None) -> bool:
+    """ADR-0012: a run started by hand always runs the studies; a scheduled or catch-up run only on CIVALPHA_STUDY_DAYS
+    (in the schedule's zone; FRI by default: the Friday evening run in New York, Saturday morning in Tbilisi)."""
+    if params.get("trigger") not in ("schedule", "catch-up"):
+        return True
+    s = settings().schedule
+    days = {d.strip().upper()[:3] for d in (s.study_days or "").split(",") if d.strip()}
+    if params.get("session"):            # a catch-up: the day of the session it catches up, not of the retry
+        day = date.fromisoformat(params["session"])
+    else:
+        day = (now or datetime.now(ZoneInfo(s.zone))).astimezone(ZoneInfo(s.zone)).date()
+    return day.strftime("%a").upper() in days
+
+
 def pipeline_run(params: dict, log: Log) -> None:
-    Pipeline().run_configured(log)
+    studies = study_day(params)
+    if not studies:
+        log("scheduled run on a weekday: the evaluation, the lab and the studies run on the study day (ADR-0012)")
+    Pipeline().run_configured(log, studies)
 
 
 def evaluate(params: dict, log: Log) -> None:
@@ -170,6 +189,12 @@ def company_events_classify(params: dict, log: Log) -> None:
     classify_job(params, log)
 
 
+def history_backfill(params: dict, log: Log) -> None:
+    """ADR-0012: the point-in-time universe and its data from 2015 (resumable; params `steps` runs a subset)."""
+    from .history_backfill import run_job
+    run_job(params, log)
+
+
 def universe_expand(params: dict, log: Log) -> None:
     sec = SecClientFactory().configured()
     ingest = FilingIngestionService()
@@ -218,4 +243,5 @@ TASKS = {
     "EVENT_BACKFILL": event_backfill,
     "COMPANY_EVENTS_BACKFILL": company_events_backfill,
     "COMPANY_EVENTS_CLASSIFY": company_events_classify,
+    "HISTORY_BACKFILL": history_backfill,
 }

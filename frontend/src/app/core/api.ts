@@ -120,6 +120,11 @@ export class ApiService {
     return this.http.post<Job>(`${BASE}/admin/evaluate`, {});
   }
 
+  /** ADR-0012: the point-in-time universe and its data from 2015 (resumable; several hours the first time). */
+  backfillHistory(): Observable<Job> {
+    return this.http.post<Job>(`${BASE}/admin/history/backfill`, {});
+  }
+
   /** ADR-0011 decision 9: Claude reads the item 5.02 sections not yet read (a Message Batch), or collects it. */
   classifyCompanyEvents(): Observable<Job> {
     return this.http.post<Job>(`${BASE}/admin/company-events/classify`, {});

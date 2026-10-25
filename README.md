@@ -84,7 +84,8 @@ Design decisions with alternatives are written down before they are built, in `d
 | ADR-0008 | Catch up a failed or missed evening pipeline run | Accepted, implemented 2026-10-15 |
 | ADR-0009 | Load seven years of official policy events, and only the material ones | Accepted, implemented and measured 2026-10-24: no help |
 | ADR-0010 | Tell informed insider trades from routine ones, and read them after a policy shock | Accepted, implemented and measured 2026-10-24: no help; shock reaction not testable |
-| ADR-0011 | Company events from 8-K items, stored apart from the filings | Accepted 2026-10-25 |
+| ADR-0011 | Company events from 8-K items, stored apart from the filings | Accepted, implemented and measured 2026-10-25 (33-company history) |
+| ADR-0012 | A point-in-time universe from 2015, so the history holds the companies that mattered then | Accepted 2026-10-25 |
 
 ## Architecture
 
@@ -512,6 +513,22 @@ With the sources configured, run **Data & pipeline → Run pipeline** (`POST /ap
 display it publicly. Check your vendor licence before connecting a provider or publishing derived output. Keep
 keys in `.env`, which git ignores, and never in source control.
 
+## The history universe (ADR-0012)
+
+The models, the walk-forward, the lab and the studies count only stock-days on which a company was a member. Today's
+universe begins on 2026-10-05 for most of its companies, so the history comes from a rule instead: on the first NYSE
+session of each April from 2015 the history universe is the 350 largest filers by public float known then (the SEC
+XBRL frames for the twelve months to 30 June of the year before, checked against assets and the implied share price),
+companies acquired or delisted since included. **Data & pipeline → Advanced → Load the point-in-time history**
+(`POST /api/admin/history/backfill`, job `HISTORY_BACKFILL`, resumable) adds those companies (tag `history`), their
+membership spans (universe `history-top350`, ending at the next reconstitution missed, the last trading day, or
+2026-10-05), and their prices, filings (no language model), insider trades, 8-K events, earnings releases and the policy
+events from 2015. Tickers come from the SEC index, the 10-K cover page or a Tiingo name match, each checked against
+Tiingo's trading dates; a predecessor registrant whose ticker a stored company holds counts for that company. Members
+per year: 322 (2015) to 357 (2026), against 31 to 34 before; 39 of 664 companies are left out (no ticker that trades
+on their first membership day), listed in ADR-0012. Companies of the past are never traded, advised or forecast live;
+the live models learn from them.
+
 ## Managing the universe
 
 The database is the source of truth for which stocks are tracked, and the **Universe** page is how you change it.
@@ -641,7 +658,11 @@ on another interface, list the host names clients use in `CIVALPHA_MCP_ALLOWED_H
   (the network dropped, the machine slept), the worker catches it up: it queues another run, at least an hour apart and
   at most 6 times per session, until every active benchmark ETF has the session's bar and the session's forecasts
   exist; NYSE holidays are skipped
-  (ADR-0008).
+  (ADR-0008). Scheduled and catch-up runs do the walk-forward evaluation, the strategy lab's backtest and the doubler,
+  setup and signal studies only on `CIVALPHA_STUDY_DAYS` (default `FRI` in the schedule's zone: the Friday evening run in
+  New York, which is Saturday morning in Tbilisi; a catch-up counts the day of the session it catches up); prices,
+  filings, events, live forecasts, outcomes, AI decisions and advice run every night, and a run started by hand does
+  everything (ADR-0012).
 
 ## Environment variables
 
@@ -685,6 +706,11 @@ The suite covers:
   fundamentals and the time machine;
 * the platform: SEC parsers (incl. XXE), passage rules, dedup, FOMC parsing, ticker resolution, price providers
   and sync;
+* the history universe (`test_history_universe.py`, ADR-0012): reconstitution dates and the frames known on them, scale
+  errors rejected, spans merged and cut at a missed year, the last trading day and the owner's start, name matching
+  across share-class suffixes and initials, the cover-page symbol, companies of the past added with their ticker and
+  spans while the owner's universe stays as it is, a predecessor counted for its stored successor, the price backfill
+  fetching only the missing years, and the weekly studies of scheduled and catch-up runs;
 * company events (`test_company_events.py`, ADR-0011): the 5.02 rule on departures, appointments, directors, pay and
   words too far apart (the item's heading never counts), item sections, events from the stored index with one fetch per
   5.02 and none for a document already stored, the 30-day window, reruns, a 5.02 read once its document arrives, nothing

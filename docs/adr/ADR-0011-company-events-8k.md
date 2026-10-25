@@ -1,6 +1,6 @@
 # ADR-0011: Company events from 8-K items, stored apart from the filings
 
-**Status:** Accepted (2026-10-25, owner: "1")
+**Status:** Accepted (2026-10-25, owner: "1"; implemented and measured 2026-10-25 on the 33-company history)
 **Date:** 2026-10-25
 **Deciders:** David Sakhelashvili (owner)
 
@@ -127,7 +127,18 @@ Phase 1, the data:
 - [x] Run the backfill; record the counts per kind and the rule's precision here.
 - [x] Decision 9: `V25__company_event_detail.sql`, `platform/exec_changes.py` (batch submit and collect, one-by-one reads
       in the pipeline), job `COMPANY_EVENTS_CLASSIFY`, `POST /api/admin/company-events/classify`, Admin step; tests.
-- [ ] Collect the batch; check the model's precision on a fresh sample (seed 77; the rule's check used seed 2026).
+- [x] Collect the batch; check the model's precision on a fresh sample (seed 77; the rule's check used seed 2026).
+
+*Decision 9 in numbers (2026-10-25):* batch `msgbatch_014r1YEomSd8Exq3tM2LPyJN`, submitted 00:31 UTC, ended 00:43 UTC:
+4,954 succeeded, 0 unreadable, 0 errored (collected by job 253). Kinds: CEO_DEPARTURE 236 (180 companies), CFO_DEPARTURE
+436 (246), OFFICER_DIRECTOR_CHANGE 4,313; 13 sections without text keep the rule's row. How the person left (CEO and CFO
+rows): not stated 304, retirement 202, resignation 121, termination 33, death or illness 11. Precision on a fresh sample,
+labelled by reading each section: CEO_DEPARTURE 34 of 40 (85%; the misses: appointments in a finance or legal division,
+a CFO appointment read as a CEO change twice, a CEO giving up only the President title, a spin-off's board formed, a CEO
+taking office months after the change was announced); CFO_DEPARTURE 19 of 20 (95%; Chevron's 2026 officer elections not
+settled by the excerpt); OFFICER_DIRECTOR_CHANGE 20 of 20 without a missed CEO or CFO change (follow-ups such as
+Norfolk Southern's "as previously disclosed" correctly left out). Both clear the 80% bar. The departure input has 672
+events (decision 6's 300 met); `distress_8k_63d` has 196 and is not measured.
 
 *Found while implementing:* the backfill (job 246, 2026-10-25, about 17 minutes) read 7,857 8-Ks of the lookback
 window (from 2020-10-24), fetched 3,706 documents with no failure, and stored: OFFICER_DIRECTOR_CHANGE 3,960 (346
@@ -138,9 +149,27 @@ of the Context exactly. DISTRESS together: 196 8-Ks. The batch of decision 9 (jo
 4,967 stored 5.02 documents have no item text).
 
 Phase 2, the measurement:
-- [ ] `db.load_bundle` loads the events; panel matrices; the six setups; the two inputs in signal health and the
-      ablation's additions (if at least 300 events each).
-- [ ] Run the setup playbook, signal health and the ablation; record the verdict here.
+- [x] `db.load_bundle` loads the events; panel matrices; the six setups; the departure input in signal health and the
+      ablation's additions (`distress_8k_63d` not, by the stop rule).
+- [x] Run the setup playbook, signal health and the ablation; record the verdict here.
 
+**Verdict (2026-10-25, jobs 254 to 256): nothing measurable, on a sample far smaller than the events.** The studies
+count member stock-days only, and 318 of the 352 companies are members from 2026-10-05 (the universe expansion;
+BACKLOG #7): the history holds 31 to 34 companies (31 in 2020, 34 in 2026). So 233 CEO-change firings become 22 on
+member days.
+
+| Test | Result | Reads as |
+|---|---|---|
+| CEO_DEPARTURE, 21 days | 20 firings, 40% beat the ETF, mean −2.6% (CI −7.0% to +2.8%) | NOT TESTABLE (30 needed) |
+| CFO_DEPARTURE, 21 / 63 days | 35 firings; 21 days 54%, +0.2%; 63 days 34%, −4.4% (CI −8.6% to −1.3%) | NOISE / NEGATIVE, not significant after 93 tests |
+| DISTRESS_8K, 63 days | 24 firings, +13.9% (CI +1.2% to +31.0%) | NOT TESTABLE; the sign is what a survivors-only sample shows |
+| MATERIAL_AGREEMENT, AGREEMENT_TERMINATED | 166 and 42 firings | NOISE |
+| ACQUISITION_COMPLETED | 18 firings | NOT TESTABLE |
+| Signal health, `exec_departure_63d` | mean monthly IC −0.010, t −0.51 (64 months) | NOISE |
+| Ablation, plus company events | Brier skill −0.025 (−0.042, −0.014), AUC 0.512; without: the same | no change |
+
+*Found while measuring:* the same restriction applies to ADR-0009 and ADR-0010: their "no help" verdicts were measured on
+about 33 companies, not the 352 their headlines name (`universeSize` counts any company that was ever a member). How
+to measure on more companies without survivorship bias is the owner's decision (BACKLOG #7, options of 2026-10-25).
 Phase 3, the screen:
 - [ ] `GET /api/companies/{symbol}/events`, the company-page card, guide entries, README, `docs/api.md`.

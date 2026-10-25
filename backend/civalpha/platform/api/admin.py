@@ -153,6 +153,22 @@ def company_events_classify():
     return _submit("COMPANY_EVENTS_CLASSIFY")
 
 
+class HistoryIn(BaseModel):
+    steps: list[str] | None = None
+
+
+@router.post("/history/backfill")
+def history_backfill(body: HistoryIn | None = None):
+    """ADR-0012: the yearly top 350 by public float from 2015 as membership of `history-top350`, with prices, filings
+    (no language model), insiders, 8-K events, earnings releases and policy events from 2015. Resumable; several hours
+    the first time. `steps`: a subset of universe, prices, filings, insiders, events8k, earnings, policy."""
+    from ..history_backfill import STEPS
+    steps = (body.steps if body and body.steps else None)
+    if steps is not None and any(s not in STEPS for s in steps):
+        raise BadRequest(f"steps: any of {', '.join(STEPS)}")
+    return _submit("HISTORY_BACKFILL", {"steps": steps})
+
+
 @router.post("/prices/import")
 async def price_import(file: UploadFile = File(...), provider: str = Form("CSV upload")):
     name = file.filename or "upload.csv"

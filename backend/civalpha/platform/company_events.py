@@ -99,12 +99,13 @@ class CompanyEventService:
         self.tickers = tickers or TickerResolver(self.db)
         self.universe = universe or UniverseService(self.db)
 
-    def update(self, sec: SecClient, log: Log, since: date | None = None, with_pages: bool = False) -> Summary:
-        """Events of the 8-Ks accepted on or after `since` (default: NIGHTLY_DAYS ago) for every member, from the stored
-        filing index (`with_pages`: also its stored older pages, for the history)."""
+    def update(self, sec: SecClient, log: Log, since: date | None = None, with_pages: bool = False,
+               companies: list[dict] | None = None) -> Summary:
+        """Events of the 8-Ks accepted on or after `since` (default: NIGHTLY_DAYS ago) for every member (or `companies`),
+        from the stored filing index (`with_pages`: also its stored older pages, for the history)."""
         since = since or date.today() - timedelta(days=NIGHTLY_DAYS)
         out = Summary()
-        companies = self.universe.companies()
+        companies = companies if companies is not None else self.universe.companies()
         p = Progress(log, len(companies), "8-K events")
         for i, c in enumerate(companies, 1):
             cid = int(c["id"])
