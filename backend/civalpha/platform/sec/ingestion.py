@@ -146,7 +146,11 @@ class FilingIngestionService:
                     if xml is not None:
                         self.docs.store(NewDocument("SEC_FILING", "SEC EDGAR", inst, f.accession_no, f"{symbol} {f.form} XBRL instance",
                                                     f.accepted_at, "application/xml", xml))
-                        dim_facts = parse_xbrl_instance(xml, INSTANCE_CONCEPTS, f.accession_no, f.form, f.filing_date)
+                        try:
+                            dim_facts = parse_xbrl_instance(xml, INSTANCE_CONCEPTS, f.accession_no, f.form, f.filing_date)
+                        except ValueError as e:   # an empty or broken instance (ARL, 2026-10-25): the company-facts API still has the facts
+                            log_line(f"{symbol}: {f.form} {f.report_date} instance skipped ({str(e)[:100]})")
+                            dim_facts = []
                         facts += self.insert_facts(company_id, dim_facts, by_acc, filing_ids, inst)
                 expo += self.exposures.derive_for_filing(fid)
         report(log_line, len(wanted) + 1, len(wanted) + 1, f"{symbol}: done")

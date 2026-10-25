@@ -226,8 +226,11 @@ def _java_trim(s: str) -> str:
 
 
 def _read_xml(b: bytes) -> etree._Element:
-    """XXE-safe: no DTDs at all (like disallow-doctype-decl), no entity expansion, no network access."""
-    parser = etree.XMLParser(resolve_entities=False, no_network=True, load_dtd=False, dtd_validation=False, remove_comments=False)
+    """XXE-safe: no DTDs at all (like disallow-doctype-decl), no entity expansion, no network access. `huge_tree` lifts
+    libxml2's 10 MB limit on one text node: a REIT's 10-K instance embeds its property schedule as one text block
+    (DOC, 2026-10-25, ADR-0012); with entities off and DOCTYPEs refused, the size is the only thing it changes."""
+    parser = etree.XMLParser(resolve_entities=False, no_network=True, load_dtd=False, dtd_validation=False, remove_comments=False,
+                             huge_tree=True)
     try:
         tree = etree.fromstring(b, parser).getroottree()
     except etree.XMLSyntaxError as e:

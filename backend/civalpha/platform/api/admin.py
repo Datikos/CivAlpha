@@ -155,6 +155,7 @@ def company_events_classify():
 
 class HistoryIn(BaseModel):
     steps: list[str] | None = None
+    symbols: list[str] | None = None       # a rerun for some companies only (the ones a step logged as failed)
 
 
 @router.post("/history/backfill")
@@ -166,7 +167,8 @@ def history_backfill(body: HistoryIn | None = None):
     steps = (body.steps if body and body.steps else None)
     if steps is not None and any(s not in STEPS for s in steps):
         raise BadRequest(f"steps: any of {', '.join(STEPS)}")
-    return _submit("HISTORY_BACKFILL", {"steps": steps})
+    symbols = [x.strip().upper() for x in (body.symbols or [])] if body else []
+    return _submit("HISTORY_BACKFILL", {"steps": steps, "symbols": symbols or None})
 
 
 @router.post("/prices/import")

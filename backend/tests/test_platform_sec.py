@@ -117,6 +117,19 @@ def test_xbrl_instance_extracts_geographic_dimensions():
     assert cn.taxonomy == "us-gaap"
 
 
+def test_an_instance_with_a_text_block_over_10_mb_is_read():
+    """DOC's 10-K instance (2026-10-25) holds one text node above libxml2's default 10 MB cap."""
+    block = "x" * 11_000_000
+    xml = ('<?xml version="1.0"?><xbrli:xbrl xmlns:xbrli="http://www.xbrl.org/2003/instance" xmlns:us-gaap="http://fasb.org/us-gaap/2024" '
+           'xmlns:iso4217="http://www.xbrl.org/2003/iso4217"><xbrli:unit id="usd"><xbrli:measure>iso4217:USD</xbrli:measure></xbrli:unit>'
+           '<xbrli:context id="FY"><xbrli:entity><xbrli:identifier scheme="http://www.sec.gov/CIK">1</xbrli:identifier></xbrli:entity>'
+           '<xbrli:period><xbrli:startDate>2024-01-01</xbrli:startDate><xbrli:endDate>2024-12-31</xbrli:endDate></xbrli:period></xbrli:context>'
+           f'<us-gaap:RealEstateTextBlock contextRef="FY">{block}</us-gaap:RealEstateTextBlock>'
+           '<us-gaap:Revenues contextRef="FY" unitRef="usd" decimals="-6">1000</us-gaap:Revenues></xbrli:xbrl>')
+    rows = parse_xbrl_instance(xml.encode(), {"Revenues"}, "acc-1", "10-K", date(2025, 2, 1))
+    assert [(r.concept, r.value) for r in rows] == [("Revenues", Decimal("1000"))]
+
+
 def test_xbrl_parser_rejects_external_entities():
     xxe = '<?xml version="1.0"?><!DOCTYPE x [<!ENTITY e SYSTEM "file:///etc/passwd">]><x>&e;</x>'
     with pytest.raises(ValueError):
@@ -276,3 +289,24 @@ def test_annual_report_yields_passages_dimensional_facts_and_exposures(tdb, univ
     # a second run neither re-fetches the document nor derives again
     again = service.ingest(FixtureSecClient(sec), intc, log.append)
     assert (again.filings, again.facts, again.passages, again.exposures) == (0, 0, 0, 0)
+
+
+def test_an_empty_instance_does_not_stop_the_ingest(tdb, universe, tmp_path):
+    """EDGAR served ARL's instance as an empty file (2026-10-25): the filing, its passages and the other facts still count."""
+    sec = tmp_path / "sec"
+    acc, doc = "0000050863-25-000011", "intc-20241228.htm"
+    archive = sec / "Archives" / "edgar" / "data" / "50863" / acc.replace("-", "")
+    archive.mkdir(parents=True)
+    (sec / "submissions").mkdir()
+    (sec / "submissions" / "CIK0000050863.json").write_text(json.dumps({
+        "cik": "0000050863", "name": "Intel", "tickers": ["INTC"], "filings": {"recent": {
+            "accessionNumber": [acc], "filingDate": ["2025-01-30"], "reportDate": ["2024-12-28"],
+            "acceptanceDateTime": ["2025-01-30T21:05:00.000Z"], "form": ["10-K"], "primaryDocument": [doc], "items": [""]}}}))
+    (archive / doc).write_text("<html><body><h2>Item 1A. Risk Factors</h2><p>We rely on manufacturing partners and suppliers in "
+                               "Taiwan for substantially all of our products; tariffs affecting Taiwan could increase our costs.</p></body></html>")
+    (archive / "intc-20241228_htm.xml").write_text("")
+    intc = TickerResolver(tdb).company_by_cik("0000050863")
+    log: list[str] = []
+    res = _service(tdb, universe, tmp_path).ingest(FixtureSecClient(sec), intc, log.append)
+    assert res.filings == 1 and res.passages == 1 and res.facts == 0
+    assert any("instance skipped (invalid XBRL instance" in line for line in log)

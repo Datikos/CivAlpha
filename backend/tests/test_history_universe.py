@@ -181,3 +181,13 @@ def test_a_predecessor_registrant_counts_for_its_stored_successor(universe, tdb,
     assert spans == [(date(2015, 4, 1), up.OWNER_START)]                     # predecessor 2015-16 + own 2017- merged
     assert merge_spans([(date(2017, 1, 1), date(2018, 1, 1)), (date(2015, 1, 1), date(2017, 1, 1)), (date(2020, 1, 1), date(2021, 1, 1))]) == \
         [(date(2015, 1, 1), date(2018, 1, 1)), (date(2020, 1, 1), date(2021, 1, 1))]
+
+
+def test_a_rerun_can_be_limited_to_some_companies(universe, tdb, tmp_path):
+    from civalpha.platform.history_backfill import STEP_WEIGHT, STEPS
+    from civalpha.platform.storage import DocumentStore
+    h = HistoryBackfill(tdb, sec=_Sec({}), tiingo=_Tiingo([], {}), docs=DocumentStore(tdb, tmp_path))
+    assert {c["symbol"] for c in h.companies()} == {"META", "INTC"}
+    h.symbols = {"INTC"}
+    assert [c["symbol"] for c in h.companies()] == ["INTC"]
+    assert set(STEP_WEIGHT) == set(STEPS) and STEP_WEIGHT["filings"] > sum(v for k, v in STEP_WEIGHT.items() if k != "filings")

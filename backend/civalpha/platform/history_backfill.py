@@ -47,6 +47,8 @@ HISTORY_START = date(2015, 1, 2)
 LOOKBACK_YEARS = 12              # 2026 - 12 = 2014: the first universe (2015-04) has a year of filings behind it
 HISTORY_TAG = "history"
 STEPS = ("universe", "prices", "filings", "insiders", "events8k", "earnings", "policy")
+# minutes of the first load (job 260, 2026-10-25), rounded: what the progress bar is weighted by
+STEP_WEIGHT = {"universe": 6, "prices": 10, "filings": 640, "insiders": 20, "events8k": 30, "earnings": 120, "policy": 5}
 TIINGO = "https://api.tiingo.com/tiingo/"
 STALE_DAYS = 10                  # a Tiingo ticker whose last bar is older than this has stopped trading
 MAX_NAME_HITS = 5                # Tiingo tickers tried per name (a name can carry several: share classes, relistings)
@@ -106,24 +108,28 @@ class HistoryBackfill:
         self.tiingo = tiingo or Tiingo(settings().prices.tiingo_api_key)
         self.tickers = TickerResolver(self.db)
         self.universe_svc = UniverseService(self.db)
+        self.symbols: set[str] = set()
 
     # ---------------------------------------------------------------- the companies the steps work on
     def companies(self) -> list[dict]:
         """Every company with a membership span (the owner's and the history's), with the symbol to fetch prices under
-        and the last trading day of one that stopped trading."""
-        return self.db.all("""
+        and the last trading day of one that stopped trading; only `self.symbols` when given (a rerun of the failed)."""
+        rows = self.db.all("""
             SELECT c.id, c.name, c.benchmark_symbol,
                    (SELECT th.symbol FROM ticker_history th WHERE th.company_id = c.id ORDER BY th.valid_from DESC LIMIT 1) AS symbol,
                    (SELECT th.valid_to FROM ticker_history th WHERE th.company_id = c.id ORDER BY th.valid_from DESC LIMIT 1) AS ticker_to
             FROM company c WHERE EXISTS (SELECT 1 FROM universe_membership m WHERE m.company_id = c.id) ORDER BY c.id""")
+        return [r for r in rows if not self.symbols or (r["symbol"] or "").upper() in self.symbols]
 
     def run(self, log: Log, steps: tuple[str, ...] = STEPS) -> dict:
+        """The progress bar moves by each step's share of a first load's time (STEP_WEIGHT), not one sixth each."""
         out: dict = {}
-        p = Progress(log, len(steps), "history")
+        p = Progress(log, sum(STEP_WEIGHT[s] for s in steps), "history")
         for s in steps:
             p.at(f"history: {s}")
             out[s] = getattr(self, "step_" + s)(p.child())
-            p.step()
+            for _ in range(STEP_WEIGHT[s]):
+                p.step()
         p.finish()
         return out
 
@@ -294,7 +300,11 @@ class HistoryBackfill:
 
 def run_job(params: dict, log: Log) -> None:
     steps = tuple(s for s in (params.get("steps") or STEPS) if s in STEPS)
-    out = HistoryBackfill().run(log, steps)
+    h = HistoryBackfill()
+    h.symbols = {str(x).upper() for x in params.get("symbols") or []}
+    if h.symbols:
+        log("history: only " + ", ".join(sorted(h.symbols)))
+    out = h.run(log, steps)
     u = out.get("universe")
     if u is not None:
         log("history universe summary: " + json.dumps({"years": u.years, "known": u.known, "added": u.added, "tickers": u.tickers,
