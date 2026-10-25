@@ -82,7 +82,8 @@ services:
     depends_on:
       api:
         condition: service_healthy
-    mem_limit: 2g
+    # ADR-0012: the walk-forward on the 2015 history peaks at 2.83 GB (2026-10-25); 2g killed job 263 mid-run
+    mem_limit: 5g
     restart: unless-stopped
 
   frontend:

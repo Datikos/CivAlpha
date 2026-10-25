@@ -168,6 +168,13 @@ member days.
 | Signal health, `exec_departure_63d` | mean monthly IC −0.010, t −0.51 (64 months) | NOISE |
 | Ablation, plus company events | Brier skill −0.025 (−0.042, −0.014), AUC 0.512; without: the same | no change |
 
+*The 2015 history (ADR-0012), 2026-10-25:* the history load added 19,598 8-Ks; their 11,493 item 5.02 sections went as a
+second batch (`msgbatch_01DpAYDLAsCLGFukJDj7d1qh`, submitted 17:58, ended 18:11 UTC, 11,493 succeeded, collected by job
+264; the owner approved the estimate of about $59): CEO_DEPARTURE 733, CFO_DEPARTURE 1,065, OFFICER_DIRECTOR_CHANGE
+9,798. In all, 969 CEO and 1,501 CFO changes, every one read by the model. Precision on a fresh sample of the second batch
+(seed 99, filings before 2020-10): CEO_DEPARTURE 26 of 30 (87%; the misses: three pay or employment agreements and the
+CEO of a business being spun off), CFO_DEPARTURE 10 of 10.
+
 *Found while measuring:* the same restriction applies to ADR-0009 and ADR-0010: their "no help" verdicts were measured on
 about 33 companies, not the 352 their headlines name (`universeSize` counts any company that was ever a member). How
 to measure on more companies without survivorship bias is the owner's decision (BACKLOG #7, options of 2026-10-25).

@@ -133,5 +133,19 @@ companies for 1 to 4 years each, against about 3,800 company-years. Members per 
 338, 347, 353, 354, 353, 354, 354, 355, 357 (2026); before this ADR 31 to 34.
 
 Phase 2:
-- [ ] Run the load; record companies, matches, stock-days, durations.
+- [x] Run the load; record companies, matches, stock-days, durations.
+
+*The load (job 260, 2026-10-25 05:23 to 17:28 UTC, 12 hours 5 minutes):* prices 1,016,300 bars for 640 symbols in 10
+minutes, none failed; filings for 629 companies in 9 hours 25 minutes at the SEC limit of 5 requests a second (21 failed:
+19 requests failed after retries, most of them in one SEC outage at 07:43; DOC's 10-K instance has a text node over
+libxml2's 10 MB limit, now read with `huge_tree`; ARL's instance came back empty, now logged and skipped: both fixed with
+tests, the 21 re-run as job 261); insiders 528,082 more transactions from 24 more quarterly data sets; 8-K events from
+19,598 8-Ks (8,859 documents fetched, none failed): CEO_DEPARTURE 1,594 and CFO_DEPARTURE 1,134 by the rule `exec-1`,
+OFFICER_DIRECTOR_CHANGE 9,111, MATERIAL_AGREEMENT 7,276, AGREEMENT_TERMINATED 776, ACQUISITION_COMPLETED 763,
+RESTRUCTURING 339, LISTING_NOTICE 222, IMPAIRMENT 160, AUDITOR_CHANGE 80, NON_RELIANCE 39, BANKRUPTCY 36,
+CYBER_INCIDENT 4; earnings 18,924 results releases read in 3 hours 46 minutes; policy events 125 more official events for
+2014 to 2018 (EXPORT_CONTROL 61, SECTION_232 25, PRESIDENTIAL 17, USTR_301 13, FOMC 9). The progress bar counted the
+seven steps as equal and sat at 16% through the filings; it is weighted by these durations now (`STEP_WEIGHT`). The
+owner approved reading the 11,622 item 5.02 sections of the history with Claude as ADR-0011 decision 9 did (job 262,
+one Message Batch, estimate about $59), so the CEO and CFO changes are measured on the model's reading, not the rule's.
 - [ ] Measure again (Decision 8); dated notes in ADR-0009 to ADR-0011, the README and the research report.
