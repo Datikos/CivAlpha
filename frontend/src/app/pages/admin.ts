@@ -288,6 +288,43 @@ const JOBS_SHOWN = 10;
         </div>
         <div class="step">
           <div>
+            <strong>Load 8-K company events</strong>
+            <div class="small muted">
+              CEO and CFO departures, restructuring, impairments, listing notices, auditor changes, agreements signed or
+              ended, from every 8-K of the SEC lookback window (ADR-0011). Run once (15–25 minutes: item 5.02 filings are
+              fetched from EDGAR); the pipeline then adds new ones. Safe to rerun.
+            </div>
+          </div>
+          <button
+            type="button"
+            class="btn"
+            [disabled]="busy()"
+            (click)="run('8-K company events', api.backfillCompanyEvents())"
+          >
+            Load
+          </button>
+        </div>
+        <div class="step">
+          <div>
+            <strong>Read executive changes with Claude</strong>
+            <div class="small muted">
+              Claude reads each 8-K item 5.02 not yet read and says whether the company's own CEO or CFO changed (ADR-0011).
+              The first run sends one Message Batch (about 5,000 sections, about $25 at half price, results within hours);
+              press again, or let the next pipeline run collect it. Needs the configured language model; costs nothing when
+              all is read.
+            </div>
+          </div>
+          <button
+            type="button"
+            class="btn"
+            [disabled]="busy()"
+            (click)="run('Executive changes by Claude', api.classifyCompanyEvents())"
+          >
+            Read
+          </button>
+        </div>
+        <div class="step">
+          <div>
             <strong>Evaluate models</strong>
             <div class="small muted">Walk-forward evaluation of BASELINE vs AUGMENTED.</div>
           </div>

@@ -353,6 +353,41 @@ INSIDER_CODE_LABELS = {"P": "Open-market purchase", "S": "Open-market sale", "A"
                        "X": "Option exercise (in the money)", "W": "Will or inheritance"}
 
 
+COMPANY_EVENT_LABELS = {
+    "CEO_DEPARTURE": "CEO departure", "CFO_DEPARTURE": "CFO departure", "OFFICER_DIRECTOR_CHANGE": "Officer or director change",
+    "MATERIAL_AGREEMENT": "Material agreement", "AGREEMENT_TERMINATED": "Agreement terminated",
+    "ACQUISITION_COMPLETED": "Acquisition or disposal completed", "BANKRUPTCY": "Bankruptcy or receivership",
+    "RESTRUCTURING": "Restructuring costs", "IMPAIRMENT": "Material impairment", "LISTING_NOTICE": "Listing notice",
+    "AUDITOR_CHANGE": "Auditor change", "NON_RELIANCE": "Non-reliance on past statements", "CYBER_INCIDENT": "Cybersecurity incident"}
+DISTRESS_KINDS = {"BANKRUPTCY", "RESTRUCTURING", "IMPAIRMENT", "LISTING_NOTICE", "AUDITOR_CHANGE", "NON_RELIANCE", "CYBER_INCIDENT"}
+
+
+@router.get("/companies/{symbol}/events")
+def company_events(symbol: str, limit: int = Query(50, ge=1, le=500), all_kinds: bool = Query(False, alias="all")):
+    """ADR-0011: events from the company's 8-Ks, newest first: the item, the kind, the acceptance time (when the market
+    could know), the evidence for kinds read from the text, and the filing on EDGAR. Officer and director changes that are
+    not a CEO or CFO departure are left out unless `all` is true."""
+    cid = resolve(symbol)
+    cik = TickerResolver().cik_of(cid)
+    rows = camel_all(db().all("""
+        SELECT e.id, e.accession_no, e.item, e.kind, e.accepted_at, e.filed_date, e.method, e.evidence, e.source_document_id
+        FROM company_event e WHERE e.company_id = :c AND (:all OR e.kind <> 'OFFICER_DIRECTOR_CHANGE')
+        ORDER BY e.accepted_at DESC, e.id LIMIT :n""", c=cid, all=all_kinds, n=limit))
+    for r in rows:
+        r["label"] = COMPANY_EVENT_LABELS.get(r["kind"], r["kind"])
+        r["distress"] = r["kind"] in DISTRESS_KINDS
+        doc = r.pop("sourceDocumentId")
+        r["documentUrl"] = None if doc is None else f"/api/documents/{doc}"
+        r["url"] = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{r['accessionNo'].replace('-', '')}/" if cik else None)
+    counts = {r["kind"]: r["n"] for r in db().all("""SELECT kind, count(*) AS n FROM company_event WHERE company_id = :c
+                                                       AND accepted_at > now() - interval '365 days' GROUP BY kind""", c=cid)}
+    return {"symbol": TickerResolver().current_symbol(cid), "events": rows, "lastYear": counts,
+            "since": value(db().scalar("SELECT min(accepted_at) FROM company_event")),
+            "note": "From the SEC filing index (item codes) and, for item 5.02, Claude's reading of the item's text (exec-llm-1; the keyword "
+                    "rule exec-1 where no model was configured; ADR-0011). "
+                    "An 8-K counts from the first close at or after its acceptance."}
+
+
 def _insider_classes(cid: int) -> dict[int, str]:
     """ADR-0010: the class of each of the company's open-market trades (row id -> class), from its whole history; the
     data start is the first availability in the table (the first data set), as in the models."""

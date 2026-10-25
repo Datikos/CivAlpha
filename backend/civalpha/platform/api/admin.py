@@ -136,6 +136,23 @@ def event_backfill(body: EventBackfillIn | None = None):
     return _submit("EVENT_BACKFILL", {"from": None if b.start is None else b.start.isoformat(), "to": None if b.to is None else b.to.isoformat()})
 
 
+@router.post("/company-events/backfill")
+def company_events_backfill(body: EventBackfillIn | None = None):
+    """ADR-0011: company events from every 8-K since `from` (default: the SEC lookback window), read from the stored filing
+    indexes; item 5.02 documents are fetched from EDGAR. Safe to rerun."""
+    b = body or EventBackfillIn()
+    return _submit("COMPANY_EVENTS_BACKFILL", {"from": None if b.start is None else b.start.isoformat()})
+
+
+@router.post("/company-events/classify")
+def company_events_classify():
+    """ADR-0011 decision 9: Claude reads the item 5.02 sections not yet read (one Message Batch at half price), or collects
+    the batch already submitted. Needs a configured language model."""
+    if not settings().llm.enabled:
+        raise BadRequest("no language model is configured (CIVALPHA_LLM_PROVIDER=anthropic and ANTHROPIC_API_KEY)")
+    return _submit("COMPANY_EVENTS_CLASSIFY")
+
+
 @router.post("/prices/import")
 async def price_import(file: UploadFile = File(...), provider: str = Form("CSV upload")):
     name = file.filename or "upload.csv"

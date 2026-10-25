@@ -7,7 +7,7 @@ import { LiveQuotesService, nyTime } from '../../core/live-quotes.service';
 import { apiUrl, valueOf } from '../../core/api';
 import { FORMAT_PIPES } from '../../core/format';
 import { latestByModel } from '../../core/forecast-utils';
-import { DividendProfile, EarningsProfile, ForecastSummary, GuidanceTone, InsiderProfile, InsiderQuality, MODEL_KINDS, PriceSeries } from '../../core/models';
+import { CompanyEvent, CompanyEvents, DividendProfile, EarningsProfile, ForecastSummary, GuidanceTone, InsiderProfile, InsiderQuality, MODEL_KINDS, PriceSeries } from '../../core/models';
 import { UI } from '../../shared/ui';
 import { VIZ } from '../../shared/viz';
 import { CompanyContext } from './company-context';
@@ -232,6 +232,49 @@ const RANGE_DAYS: Record<Range, number> = { '6M': 183, '1Y': 365, '3Y': 3 * 365,
 
       <div class="card">
         <div class="filters" style="justify-content: space-between; margin-bottom: 0.5rem">
+          <h3 style="margin: 0">Company events (8-K) <app-help text="Events the company had to report to the SEC on Form 8-K within four business days: a CEO or CFO leaving (read from item 5.02's text), restructuring, impairments, listing notices, auditor changes, restatements, cyber incidents, material agreements signed or ended, acquisitions completed. Each counts from the first market close after the SEC accepted the filing. Whether any of them was followed by under- or outperformance is on the Setup playbook (ADR-0011)." topic="company-events" label="company events" /></h3>
+          @if (cev(); as c) {
+            @if (c.lastYear['CEO_DEPARTURE'] || c.lastYear['CFO_DEPARTURE']) {
+              <span class="badge tone-warn">executive change · last 12 months</span>
+            }
+          }
+        </div>
+        <app-status [res]="companyEvents" what="company events" />
+        @if (cev(); as c) {
+          @if (!c.events.length) {
+            <p class="muted">No 8-K events stored for this company@if (c.since) {<span> since {{ c.since | utc }}</span>}. They arrive with the pipeline; the history comes from Data &amp; pipeline → Advanced → Load 8-K company events.</p>
+          } @else {
+            <div class="table-wrap">
+              <table class="table compact">
+                <thead><tr><th>Accepted</th><th>Event</th><th>Item</th><th>What the filing says</th><th>Filing</th></tr></thead>
+                <tbody>
+                  @for (e of shownEvents(); track e.id) {
+                    <tr>
+                      <td class="nowrap small">{{ e.acceptedAt | utc }}</td>
+                      <td><span class="chip" [class]="'chip tone-' + eventTone(e)">{{ e.label }}</span></td>
+                      <td class="mono small">{{ e.item }}</td>
+                      <td class="small">{{ e.evidence ?? '—' }}</td>
+                      <td class="nowrap small">
+                        @if (e.url) { <a [href]="e.url" target="_blank" rel="noopener" title="Filing on EDGAR">EDGAR ↗</a> }
+                        @if (e.documentUrl) { · <a [href]="e.documentUrl" target="_blank" rel="noopener">stored</a> }
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+            @if (c.events.length > EVENTS_SHOWN) {
+              <button type="button" class="btn btn-link small" (click)="allEvents.set(!allEvents())">
+                {{ allEvents() ? 'Show latest ' + EVENTS_SHOWN : 'Show all ' + c.events.length + ' loaded' }}
+              </button>
+            }
+            <p class="small muted" style="margin-top: 0.4rem">{{ c.note }}</p>
+          }
+        }
+      </div>
+
+      <div class="card">
+        <div class="filters" style="justify-content: space-between; margin-bottom: 0.5rem">
           <h3 style="margin: 0">Dividends</h3>
           @if (dv(); as d) {
             <app-dividend-badge [d]="d" />
@@ -444,6 +487,22 @@ export class CompanyOverview {
   });
 
   protected readonly ins = computed(() => valueOf(this.insiders));
+
+  protected readonly companyEvents = httpResource<CompanyEvents>(() => {
+    const s = this.ctx.apiSymbol();
+    return s ? apiUrl.companyEvents(s) : undefined;
+  });
+  protected readonly cev = computed(() => valueOf(this.companyEvents));
+  protected readonly EVENTS_SHOWN = 8;
+  protected readonly allEvents = signal(false);
+  protected readonly shownEvents = computed(() => {
+    const list = this.cev()?.events ?? [];
+    return this.allEvents() ? list : list.slice(0, this.EVENTS_SHOWN);
+  });
+
+  protected eventTone(e: CompanyEvent): string {
+    return e.distress || e.kind === 'CEO_DEPARTURE' || e.kind === 'CFO_DEPARTURE' || e.kind === 'AGREEMENT_TERMINATED' ? 'warn' : 'neutral';
+  }
 
   protected readonly INSIDERS_SHOWN = 8;
   protected readonly qualityLabel: Record<InsiderQuality, string> = {

@@ -84,6 +84,7 @@ Design decisions with alternatives are written down before they are built, in `d
 | ADR-0008 | Catch up a failed or missed evening pipeline run | Accepted, implemented 2026-10-15 |
 | ADR-0009 | Load seven years of official policy events, and only the material ones | Accepted, implemented and measured 2026-10-24: no help |
 | ADR-0010 | Tell informed insider trades from routine ones, and read them after a policy shock | Accepted, implemented and measured 2026-10-24: no help; shock reaction not testable |
+| ADR-0011 | Company events from 8-K items, stored apart from the filings | Accepted 2026-10-25 |
 
 ## Architecture
 
@@ -239,6 +240,30 @@ years of history (nothing before 2023-07 here, the data start in 2020-07). Since
 counts the classes per window. Two inputs on informed trades only, `insider_informed_net_63d` and
 `insider_exec_buyers_63d`, are measured in signal health and the feature ablation; they are not model inputs: on
 2026-10-24 both graded NOISE (ADR-0010). Tests: `backend/tests/test_insider_quality.py`.
+
+## Company events (SEC Form 8-K, ADR-0011)
+
+A listed company must report certain events on Form 8-K within four business days, under an item number. The SEC's
+filing index lists each 8-K's items and its acceptance time, so most events need no document: 1.01 and 1.02 material
+agreements signed or terminated, 2.01 acquisitions completed, and the distress items 1.03 bankruptcy, 1.05 cybersecurity
+incident, 2.05 restructuring costs, 2.06 impairment, 3.01 listing notice, 4.01 auditor change and 4.02 non-reliance on
+past statements. Item 5.02 (officers and directors) is read by Claude (`claude-opus-5-5`, method `exec-llm-1`): one
+schema-constrained answer per section says whether the company's own CEO or CFO changed (a successor's appointment
+included; a segment CEO, someone reporting to the CEO or a former CEO elsewhere excluded), whether the change was already
+reported, and how the person left. The history went as one Message Batch (**Data & pipeline → Advanced → Read executive
+changes with Claude**, `POST /api/admin/company-events/classify`, about $25 for 4,954 sections at half price); each
+pipeline run collects an ended batch and reads the new 5.02 filings one by one (about 70 a month). The keyword rule
+`exec-1` was right on 16 of 40 CEO departures and stays only where no model is configured (the `method` column says
+which). The rest of 5.02, mostly director elections and pay, is stored as `OFFICER_DIRECTOR_CHANGE` and not measured. Events live in `company_event`,
+apart from `filing`, so the passage rules, the exposure derivation (and its language-model calls) and the
+corporate-action detector see no new 8-Ks. An event counts from the first close at or after its acceptance.
+
+The history comes once from **Data & pipeline → Advanced → Load 8-K company events** (`POST
+/api/admin/company-events/backfill`, the stored filing indexes of the SEC lookback window; only the 5.02 documents are
+fetched); each pipeline run then adds the 8-Ks of the last 30 days. They feed six setups of the playbook (CEO departure,
+CFO departure, distress 8-K, material agreement, acquisition completed, agreement terminated), two inputs measured in
+signal health and the ablation (`exec_departure_63d`, `distress_8k_63d`), and the company page's "Company events (8-K)"
+card. Code: `backend/civalpha/platform/company_events.py`; tests: `backend/tests/test_company_events.py`.
 
 ## Signal health: which inputs carry information, and which are fading
 
@@ -660,6 +685,10 @@ The suite covers:
   fundamentals and the time machine;
 * the platform: SEC parsers (incl. XXE), passage rules, dedup, FOMC parsing, ticker resolution, price providers
   and sync;
+* company events (`test_company_events.py`, ADR-0011): the 5.02 rule on departures, appointments, directors, pay and
+  words too far apart (the item's heading never counts), item sections, events from the stored index with one fetch per
+  5.02 and none for a document already stored, the 30-day window, reruns, a 5.02 read once its document arrives, nothing
+  added to `filing`, the panel counting an 8-K from the first close after acceptance, and the events endpoint;
 * insider trade classes (`test_insider_quality.py`, ADR-0010): the Rule 10b5-1 flag from data-set and XML shapes and
   for rows stored before it was read, the role from the title (NaN-safe), planned / routine / informed / not
   classifiable on a constructed history, that a later trade never changes an earlier class, that the informed inputs are

@@ -13,6 +13,8 @@ import { Tone, VIZ, verdictTone } from '../shared/viz';
 export const FAMILY_LABEL: Record<SetupFamily, string> = {
   EARNINGS: 'Earnings',
   DIVIDEND: 'Dividend',
+  INSIDER: 'Insider',
+  COMPANY_EVENT: '8-K event',
   TREND: 'Trend',
   REVERSAL: 'Reversal',
   VOLUME: 'Volume',

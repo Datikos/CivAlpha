@@ -25,7 +25,7 @@ from ..features import EVENT_FEATURES, INSIDER_FEATURES, DataBundle, build_panel
 from ..fundamentals import FUND_FEATURES
 from ..returns import HORIZON
 from . import backtest, registry, stats
-from .ai import (AI_FEATURE_SET, AI_FEATURES, AI_KEY, AI_SIZED_KEY, EARNINGS_PANEL_FEATURES, INSIDER_PANEL_FEATURES, INSIDER_QUALITY_FEATURES,
+from .ai import (AI_FEATURE_SET, AI_FEATURES, AI_KEY, AI_SIZED_KEY, COMPANY_EVENT_FEATURES, EARNINGS_PANEL_FEATURES, INSIDER_PANEL_FEATURES, INSIDER_QUALITY_FEATURES,
                  TECH_FEATURES, AiConfig, attach_book_features, dataset, decide_positions, size_by_volatility,
                  technical_features, walk_forward_probabilities)
 from .panel import MarketPanel
@@ -39,7 +39,8 @@ GROUPS = {
     "insider": INSIDER_FEATURES + INSIDER_PANEL_FEATURES,
     "earnings": EARNINGS_FEATURES + EARNINGS_PANEL_FEATURES,
 }
-ADDITIONS = {"dividends": DIV_FEATURES, "policy_events": EVENT_FEATURES, "insider_quality": INSIDER_QUALITY_FEATURES}   # ADR-0010
+ADDITIONS = {"dividends": DIV_FEATURES, "policy_events": EVENT_FEATURES, "insider_quality": INSIDER_QUALITY_FEATURES,   # ADR-0010
+             "company_events": COMPANY_EVENT_FEATURES}                                                                    # ADR-0011
 NOT_SKILL = "not a skill metric: one trading rule on one five-year window"
 
 

@@ -49,6 +49,7 @@ export const apiUrl = {
     withQuery(`${BASE}/companies/${enc(symbol)}/financials`, { asOf }),
   dividends: (symbol: string) => `${BASE}/companies/${enc(symbol)}/dividends`,
   insiders: (symbol: string) => `${BASE}/companies/${enc(symbol)}/insiders`,
+  companyEvents: (symbol: string) => `${BASE}/companies/${enc(symbol)}/events`,
   earnings: (symbol: string) => `${BASE}/companies/${enc(symbol)}/earnings`,
   filings: (symbol: string) => `${BASE}/companies/${enc(symbol)}/filings`,
   filing: (id: number | string) => `${BASE}/filings/${enc(String(id))}`,
@@ -117,6 +118,16 @@ export class ApiService {
 
   evaluate(): Observable<Job> {
     return this.http.post<Job>(`${BASE}/admin/evaluate`, {});
+  }
+
+  /** ADR-0011 decision 9: Claude reads the item 5.02 sections not yet read (a Message Batch), or collects it. */
+  classifyCompanyEvents(): Observable<Job> {
+    return this.http.post<Job>(`${BASE}/admin/company-events/classify`, {});
+  }
+
+  /** ADR-0011: company events from every 8-K of the SEC lookback window. */
+  backfillCompanyEvents(): Observable<Job> {
+    return this.http.post<Job>(`${BASE}/admin/company-events/backfill`, {});
   }
 
   /** ADR-0009: the official policy events since `from` (default 2019-01-01). */

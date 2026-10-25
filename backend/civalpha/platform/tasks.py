@@ -157,6 +157,19 @@ def event_backfill(params: dict, log: Log) -> None:
     backfill.run_job(params, log)
 
 
+def company_events_backfill(params: dict, log: Log) -> None:
+    """ADR-0011: company events from every 8-K of the lookback window."""
+    _require_universe()
+    from .company_events import backfill_job
+    backfill_job(params, log)
+
+
+def company_events_classify(params: dict, log: Log) -> None:
+    """ADR-0011 decision 9: Claude reads item 5.02 (collects an ended batch, submits what is left)."""
+    from .exec_changes import classify_job
+    classify_job(params, log)
+
+
 def universe_expand(params: dict, log: Log) -> None:
     sec = SecClientFactory().configured()
     ingest = FilingIngestionService()
@@ -203,4 +216,6 @@ TASKS = {
     "INSIDER_INGEST": insider_ingest,
     "EARNINGS_INGEST": earnings_ingest,
     "EVENT_BACKFILL": event_backfill,
+    "COMPANY_EVENTS_BACKFILL": company_events_backfill,
+    "COMPANY_EVENTS_CLASSIFY": company_events_classify,
 }

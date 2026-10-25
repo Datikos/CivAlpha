@@ -1051,6 +1051,31 @@ export interface InsiderWindow {
   routineTrades: number;
 }
 
+/** ADR-0011: one event from a company's 8-K. */
+export interface CompanyEvent {
+  id: number;
+  accessionNo: string;
+  item: string;
+  kind: string;
+  label: string;
+  distress: boolean;
+  acceptedAt: string;
+  filedDate: string;
+  method: string;
+  evidence: string | null;
+  documentUrl: string | null;
+  url: string | null;
+}
+
+export interface CompanyEvents {
+  symbol: string;
+  events: CompanyEvent[];
+  /** kind -> 8-Ks in the last 365 days */
+  lastYear: Record<string, number>;
+  since: string | null;
+  note: string;
+}
+
 /** ADR-0010: PLANNED (Rule 10b5-1), ROUTINE (same month in each of the three previous years), INFORMED, or not classifiable. */
 export type InsiderQuality = 'PLANNED' | 'ROUTINE' | 'INFORMED' | 'NOT_CLASSIFIABLE';
 
@@ -1209,7 +1234,7 @@ export interface SignalStudyResponse {
 // ---------- Setup playbook ----------
 
 export type SetupGrade = 'SUPPORTED' | 'SUGGESTIVE' | 'NEGATIVE' | 'NOISE' | 'NOT_TESTABLE';
-export type SetupFamily = 'EARNINGS' | 'DIVIDEND' | 'TREND' | 'REVERSAL' | 'VOLUME' | 'EVENT';
+export type SetupFamily = 'EARNINGS' | 'DIVIDEND' | 'INSIDER' | 'COMPANY_EVENT' | 'TREND' | 'REVERSAL' | 'VOLUME' | 'EVENT';
 
 /** Outcome statistics of a setup at one horizon (excess return over the sector ETF from the next close). */
 export interface SetupStats {

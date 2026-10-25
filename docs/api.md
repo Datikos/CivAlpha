@@ -341,6 +341,20 @@ found), a keyword estimate (method `RULE_KEYWORD`) with the matched sentence in 
 announcement that followed the same announcement last year (else 91 days after the latest); `tradingDays` is never negative
 (0 = overdue). The session is decided in New York time: a release accepted after 16:00 trades the next trading day.
 
+`GET /api/companies/{symbol}/events?limit=50&all=false` — ADR-0011, events from the company's 8-Ks, newest first:
+```json
+{ "symbol": "META", "since": "2020-10-26T13:05:00Z", "lastYear": {"CEO_DEPARTURE": 1, "MATERIAL_AGREEMENT": 2},
+  "events": [{"id": 9, "accessionNo": "0001326801-26-000123", "item": "5.02", "kind": "CEO_DEPARTURE", "label": "CEO departure",
+              "distress": false, "acceptedAt": "2026-05-01T20:05:00Z", "filedDate": "2026-05-01", "method": "exec-1",
+              "evidence": "... will retire as Chief Executive Officer ...", "documentUrl": "/api/documents/412",
+              "url": "https://www.sec.gov/Archives/edgar/data/1326801/000132680126000123/"}],
+  "note": "..." }
+```
+`kind`: CEO_DEPARTURE, CFO_DEPARTURE (item 5.02, read by Claude, `method` exec-llm-1; the keyword rule exec-1 without a model), OFFICER_DIRECTOR_CHANGE (other 5.02; listed only with
+`all=true`), MATERIAL_AGREEMENT (1.01), AGREEMENT_TERMINATED (1.02), ACQUISITION_COMPLETED (2.01), and the distress kinds
+BANKRUPTCY (1.03), CYBER_INCIDENT (1.05), RESTRUCTURING (2.05), IMPAIRMENT (2.06), LISTING_NOTICE (3.01), AUDITOR_CHANGE (4.01),
+NON_RELIANCE (4.02). `lastYear` counts the kinds over 365 days; `since` is the first stored event (the backfill's start).
+
 `GET /api/companies/{symbol}/insiders?limit=60` — insider transactions (SEC Forms 4) as of now:
 ```json
 { "symbol": "META", "price": 712.1, "priceDate": "2026-10-02", "transactionCount": 143, "newestAvailableAt": "2026-10-02T03:59:59Z",
@@ -493,6 +507,12 @@ response is `401`. `GET /api/meta` reports `adminTokenRequired`.
 * `POST /api/admin/strategies/backtest` → job — backtest every strategy and store a new run (also part of every pipeline run)
 * `POST /api/admin/earnings/ingest` → job — read the press-release exhibit of every results 8-K not yet read and classify its guidance tone (also part of every pipeline run)
 * `POST /api/admin/insiders/ingest` → job — load insider transactions (Forms 4) for every tracked company (also part of every pipeline run)
+* `POST /api/admin/company-events/backfill` body `{"from": "2020-10-26"}` (optional; default the SEC lookback window) → job
+  `COMPANY_EVENTS_BACKFILL` — ADR-0011, company events from every 8-K in the stored filing indexes; item 5.02 documents are
+  fetched from EDGAR (15 to 25 minutes the first time); safe to rerun
+* `POST /api/admin/company-events/classify` → job `COMPANY_EVENTS_CLASSIFY` — ADR-0011 decision 9, Claude reads the item 5.02
+  sections not yet read: collects an ended Message Batch, then submits the rest as one batch (nothing when all is read);
+  400 without a configured language model
 * `POST /api/admin/events/backfill` body `{"from": "2019-01-01", "to": null}` (both optional) → job `EVENT_BACKFILL` —
   the official policy events of that range (ADR-0009): the material Federal Register streams year by year and the FOMC
   statements of every change in FRED's upper target (needs `FRED_API_KEY`); safe to rerun, 400 when `from` is after `to`

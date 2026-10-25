@@ -60,7 +60,9 @@ def load_bundle(engine: Engine) -> DataBundle:
     if bench.empty:
         raise ValueError("No benchmark ETF prices are loaded. Update prices, or import a prices CSV that includes "
                          "the sector benchmark ETFs of your companies, before evaluating or issuing forecasts.")
-    return DataBundle.build(companies, stock, bench, actions, facts, expo, events, targets, macro, membership, filings, insiders, releases)
+    company_events = _utc(_q(engine, "SELECT company_id, accession_no, kind, accepted_at FROM company_event"), ["accepted_at"])
+    return DataBundle.build(companies, stock, bench, actions, facts, expo, events, targets, macro, membership, filings, insiders, releases,
+                            company_events=company_events)
 
 
 def load_event_sources(engine: Engine) -> pd.DataFrame:

@@ -74,6 +74,7 @@ class DataBundle:
     actions: pd.DataFrame = field(default_factory=pd.DataFrame)  # corporate actions (splits for share counts)
     insiders: pd.DataFrame = field(default_factory=pd.DataFrame)  # company_id, available_at (UTC), trans_code, acquired, shares, price, owner_cik
     releases: pd.DataFrame = field(default_factory=pd.DataFrame)  # earnings releases: company_id, filing_id, accepted_at, guidance_tone
+    company_events: pd.DataFrame = field(default_factory=pd.DataFrame)  # ADR-0011: company_id, accession_no, kind, accepted_at (UTC)
     _fund_snap: dict = field(default_factory=dict)
     _insider_by_company: dict = field(default_factory=dict)
     _insider_quality_by_company: dict = field(default_factory=dict)
@@ -84,7 +85,7 @@ class DataBundle:
 
     @staticmethod
     def build(companies, stock_prices, bench_prices, actions, facts, exposures, events, targets, macro,
-              membership, filings=None, insiders=None, releases=None) -> "DataBundle":
+              membership, filings=None, insiders=None, releases=None, company_events=None) -> "DataBundle":
         cal = pd.DatetimeIndex(sorted(pd.to_datetime(bench_prices["trade_date"]).unique()))
         actions = actions.copy() if actions is not None else pd.DataFrame(columns=["company_id", "symbol", "ex_date", "action_type", "value"])
         if len(actions):
@@ -110,7 +111,9 @@ class DataBundle:
                           events=events, targets=targets, macro=macro, membership=membership,
                           filings=filings if filings is not None else pd.DataFrame(), close=raw, volume=vol, actions=actions,
                           insiders=_insider_frame(insiders),
-                          releases=releases if releases is not None else pd.DataFrame(columns=["company_id", "filing_id", "accepted_at", "guidance_tone"]))
+                          releases=releases if releases is not None else pd.DataFrame(columns=["company_id", "filing_id", "accepted_at", "guidance_tone"]),
+                          company_events=company_events if company_events is not None
+                          else pd.DataFrame(columns=["company_id", "accession_no", "kind", "accepted_at"]))
 
     # ---------------------------------------------------------------- snapshots
     def fundamentals_at(self, company_id: int, as_of: pd.Timestamp) -> dict:

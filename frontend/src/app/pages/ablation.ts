@@ -18,6 +18,8 @@ const VARIANT_LABEL: Record<string, string> = {
   NO_EARNINGS: 'without earnings',
   PLUS_DIVIDENDS: 'plus dividends',
   PLUS_POLICY_EVENTS: 'plus policy events',
+  PLUS_INSIDER_QUALITY: 'plus informed insiders',
+  PLUS_COMPANY_EVENTS: 'plus 8-K company events',
 };
 
 /** One series per label horizon present in a run: the 21-day target, and on runs made before ADR-0001 (2026-10-06) the

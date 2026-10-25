@@ -37,8 +37,10 @@ import { EventForm } from './event-form';
     @if (res.hasValue()) {
       <div class="alert alert-info small">
         <strong>{{ modelled() }}</strong> official events are read by the models@if (firstModelled(); as d) {<span>
-            (from {{ d }})</span>}; {{ notModelled() }} are stored but not read: anti-dumping case notices and other trade documents name a
-        narrow product but would hit every company exposed to the country, and news-only reports are never read.
+            (from {{ d }})</span>}. <strong>{{ notModelled() }}</strong> are not: {{ newsOnly() }} news reports, unconfirmed
+        until the official document arrives (their timestamps come from the feeds, and opinion and threats read like
+        actions), and {{ otherStreams() }} trade documents of other streams (anti-dumping cases name a narrow product but
+        would hit every company exposed to the country).
         @if (!historyLoaded()) {
           Only recent events are loaded: <a routerLink="/admin">Admin → Load official event history</a> adds the
           official ones since 2019 (ADR-0009).
@@ -194,6 +196,8 @@ export class EventsPage {
   private readonly all = computed(() => valueOf(this.res) ?? []);
   protected readonly modelled = computed(() => this.all().filter((e) => this.read(e)).length);
   protected readonly notModelled = computed(() => this.all().length - this.modelled());
+  protected readonly newsOnly = computed(() => this.all().filter((e) => e.evidenceStatus !== 'OFFICIAL').length);
+  protected readonly otherStreams = computed(() => this.notModelled() - this.newsOnly());
   protected readonly firstModelled = computed(
     () =>
       this.all()

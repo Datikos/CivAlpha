@@ -40,6 +40,7 @@ class MarketPanel:
     _div: dict | None = field(default=None, repr=False)
     _ins: dict | None = field(default=None, repr=False)
     _earn: dict | None = field(default=None, repr=False)
+    _cev: dict | None = field(default=None, repr=False)
 
     @staticmethod
     def from_bundle(bundle: DataBundle) -> "MarketPanel":
@@ -134,6 +135,15 @@ class MarketPanel:
             self._ins = _insider_matrices(self)
         return self._ins
 
+    def company_events(self) -> dict[str, pd.DataFrame]:
+        """ADR-0011, 8-K company events at each close (date x company), an 8-K counting from the first close at or after
+        its acceptance: `<group>_21d` (8-Ks of the group in the last 21 trading days, for the setups), exec_departure_63d
+        (1 when a CEO or CFO departure was filed in the last 63 trading days) and distress_8k_63d (distress 8-Ks in the last
+        63 trading days), both NaN before the first stored event. Cached on the panel."""
+        if self._cev is None:
+            self._cev = _company_event_matrices(self)
+        return self._cev
+
     def dividends(self) -> dict[str, pd.DataFrame]:
         """Dividend signals at each close (date x company): div_yield and div_growth from the cash dividends with an
         ex-date on or before that day (dividends.daily_dividend_features), payout_ratio as filed. Cached on the panel."""
@@ -143,6 +153,54 @@ class MarketPanel:
 
 
 INSIDER_SHORT_WINDOW = 21
+
+
+# ADR-0011: the kinds each measured group counts (one 8-K counts once per group)
+COMPANY_EVENT_GROUPS = {
+    "ceo_departure": ("CEO_DEPARTURE",), "cfo_departure": ("CFO_DEPARTURE",), "exec_departure": ("CEO_DEPARTURE", "CFO_DEPARTURE"),
+    "distress_8k": ("BANKRUPTCY", "RESTRUCTURING", "IMPAIRMENT", "LISTING_NOTICE", "AUDITOR_CHANGE", "NON_RELIANCE", "CYBER_INCIDENT"),
+    "material_agreement": ("MATERIAL_AGREEMENT",), "acquisition_completed": ("ACQUISITION_COMPLETED",),
+    "agreement_terminated": ("AGREEMENT_TERMINATED",),
+}
+
+
+def _window_sum(daily: np.ndarray, window: int) -> np.ndarray:
+    cum = np.cumsum(daily, axis=0)
+    out = cum.copy()
+    out[window:] = cum[window:] - cum[:-window]
+    return out
+
+
+def _company_event_matrices(p: "MarketPanel") -> dict[str, pd.DataFrame]:
+    cal = p.calendar
+    cids = list(p.px.columns)
+    T, N = len(cal), len(cids)
+    col = {c: j for j, c in enumerate(cids)}
+    close_ns = np.array([pit.close_ts(d).value for d in cal], dtype=np.int64)
+    ev = p.bundle.company_events
+    daily = {g: np.zeros((T, N)) for g in COMPANY_EVENT_GROUPS}
+    first = T
+    if len(ev):
+        at = np.searchsorted(close_ns, pd.to_datetime(ev["accepted_at"], utc=True).to_numpy("datetime64[ns]").astype(np.int64), side="left")
+        first = int(at.min())
+        seen: set = set()
+        for (cid, acc, kind), t in zip(ev[["company_id", "accession_no", "kind"]].itertuples(index=False, name=None), at):
+            j = col.get(int(cid))
+            if j is None or t >= T:
+                continue
+            for g, kinds in COMPANY_EVENT_GROUPS.items():
+                if kind in kinds and (acc, g) not in seen:
+                    seen.add((acc, g))
+                    daily[g][t, j] += 1
+    mk = lambda a: pd.DataFrame(a, index=cal, columns=cids)  # noqa: E731
+    out = {f"{g}_21d": mk(_window_sum(d, 21)) for g, d in daily.items()}
+    dep = np.minimum(1.0, _window_sum(daily["exec_departure"], INSIDER_WINDOW))
+    dis = _window_sum(daily["distress_8k"], INSIDER_WINDOW)
+    dep[:first] = np.nan                        # before the first stored 8-K event nothing is known
+    dis[:first] = np.nan
+    out["exec_departure_63d"] = mk(dep)
+    out["distress_8k_63d"] = mk(dis)
+    return out
 
 
 def _distinct_in_window(at: np.ndarray, owners: np.ndarray, T: int, window: int) -> np.ndarray:

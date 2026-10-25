@@ -67,6 +67,12 @@ EARNINGS_PANEL_FEATURES = ["days_since_earnings", "days_to_earnings_est"]  # ear
 # ADR-0010: informed trades only (not a Rule 10b5-1 plan, not routine); measured in signal health and the ablation, not in
 # the book's inputs
 INSIDER_QUALITY_FEATURES = ["insider_informed_net_63d", "insider_exec_buyers_63d"]
+# ADR-0011: 8-K company events; measured in signal health and the ablation, not in the book's inputs
+# decision 6's stop rule: distress_8k_63d is not measured (196 distress 8-Ks, fewer than the 300 an input needs); its matrix
+# stays for the company page and a later look
+COMPANY_EVENT_FEATURES = ["exec_departure_63d"]
+COMPANY_EVENT_LABELS = {"exec_departure_63d": "CEO or CFO departure filed on an 8-K in the last 63 trading days (item 5.02)",
+                        "distress_8k_63d": "Distress 8-Ks in the last 63 trading days (restructuring, impairment, listing notice, auditor change, non-reliance, cyber incident, bankruptcy)"}
 INSIDER_LABELS = {"insider_buyers_21d": "Insiders buying in the open market, last 21 days (distinct)",
                   "insider_sellers_21d": "Insiders selling in the open market, last 21 days (distinct)",
                   "insider_informed_net_63d": "Informed insiders' net open-market buying, 63 days / market cap (no plan, not routine)",
@@ -139,7 +145,8 @@ class AiConfig:
 
 
 def feature_label(f: str) -> str:
-    return TECH_LABELS.get(f) or FUND_LABELS.get(f) or DIV_LABELS.get(f) or INSIDER_LABELS.get(f) or EARNINGS_LABELS.get(f) or FEATURE_LABELS.get(f, f)
+    return (TECH_LABELS.get(f) or FUND_LABELS.get(f) or DIV_LABELS.get(f) or INSIDER_LABELS.get(f) or EARNINGS_LABELS.get(f)
+            or COMPANY_EVENT_LABELS.get(f) or FEATURE_LABELS.get(f, f))
 
 
 def feature_kind(f: str) -> str:
@@ -151,6 +158,8 @@ def feature_kind(f: str) -> str:
         return "INSIDER"
     if f in EARNINGS_PANEL_FEATURES:
         return "EARNINGS"
+    if f in COMPANY_EVENT_LABELS:
+        return "COMPANY_EVENT"
     return "FUNDAMENTAL" if f in FUND_LABELS else FEATURE_KIND.get(f, "OTHER")
 
 
@@ -195,6 +204,9 @@ def dataset(p: MarketPanel, cfg: AiConfig) -> pd.DataFrame:
     ins = p.insiders()
     for name in INSIDER_PANEL_FEATURES + INSIDER_QUALITY_FEATURES:
         df[name] = ins[name].to_numpy(float)[cal_pos, col_pos]
+    cev = p.company_events()
+    for name in COMPANY_EVENT_FEATURES:
+        df[name] = cev[name].to_numpy(float)[cal_pos, col_pos]
     earn = p.earnings()
     for name in EARNINGS_PANEL_FEATURES:
         df[name] = earn[name].to_numpy(float)[cal_pos, col_pos]

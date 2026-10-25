@@ -2,6 +2,7 @@
 the owner's holdings (ADR-0004)."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -10,6 +11,7 @@ from .. import service as ml
 from ..strategies import doublers, setups, signals
 from ..strategies import service as strategy_lab
 from ..db import load_bundle
+from .company_events import NIGHTLY_DAYS, CompanyEventService
 from .decisions import DecisionService
 from .errors import Problem
 from .events import EventService, LiveEventSources
@@ -61,7 +63,7 @@ class Pipeline:
             raise Problem("The universe is empty. Add companies on the Universe page first.")
         # progress: imports, prices, one step per company's SEC filings plus insiders (or one skipped step), macro,
         # events, then the after-ingest steps
-        sec_steps = len(companies) + 2 if self.s.sec.configured else 1      # companies, insiders, 8-K corporate actions
+        sec_steps = len(companies) + 3 if self.s.sec.configured else 1      # companies, insiders, 8-K corporate actions, 8-K events
         p = Progress(log, 2 + sec_steps + 2 + AFTER_STEPS, "CSV imports")
         imports = Path(self.s.imports_dir)
         if imports.is_dir():
@@ -109,6 +111,16 @@ class Pipeline:
                 log(f"8-K corporate-action candidates: {r['classified']} new filings read, {r['flagged']} flagged")
             except Exception as e:  # noqa: BLE001 - a detector failure must not stop prices, filings or the models
                 log(f"8-K corporate-action candidates skipped: {e}")
+            p.step("8-K company events")
+            try:   # ADR-0011: the 8-Ks of the last 30 days from the index the SEC step just refreshed
+                CompanyEventService(self.db).update(sec, p.child())
+                if self.s.llm.enabled:   # decision 9: Claude reads item 5.02 (a collected batch, then the new filings)
+                    from .exec_changes import ExecChangeReader
+                    reader = ExecChangeReader(self.db)
+                    reader.collect(log)
+                    reader.read_new(log, since=datetime.now(timezone.utc) - timedelta(days=NIGHTLY_DAYS))
+            except Exception as e:  # noqa: BLE001
+                log(f"8-K company events skipped: {e}")
         else:
             p.step("SEC filings skipped")
             log("SEC_USER_AGENT is not set (your name and contact e-mail, required by the SEC); SEC filings skipped")

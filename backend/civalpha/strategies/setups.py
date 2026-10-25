@@ -35,7 +35,7 @@ N_BOOT = 1000
 SEED = 11
 MIN_TRIGGERS = 30
 FRESH_DAYS = 5
-FAMILIES = ("EARNINGS", "DIVIDEND", "INSIDER", "TREND", "REVERSAL", "VOLUME", "EVENT")
+FAMILIES = ("EARNINGS", "DIVIDEND", "INSIDER", "COMPANY_EVENT", "TREND", "REVERSAL", "VOLUME", "EVENT")
 _N = NormalDist()
 
 
@@ -154,6 +154,11 @@ def _insider_informed_sell(p: MarketPanel, cfg: SetupConfig) -> pd.DataFrame:
     return edge(p.insiders()["insider_informed_sellers_21d"] >= cfg.informed_sellers)
 
 
+def _company_event(group: str):
+    """ADR-0011: the first close at or after an 8-K of the group is accepted (once per 21-trading-day episode)."""
+    return lambda p, cfg: edge(p.company_events()[f"{group}_21d"] >= 1)
+
+
 def _breakout_52w(p: MarketPanel, cfg: SetupConfig) -> pd.DataFrame:
     return edge(p.px > prior_high(p.px, 252))
 
@@ -242,6 +247,26 @@ def setups() -> list[Setup]:
         Setup("INSIDER_INFORMED_SELL", "INSIDER", "Informed insiders sell",
               "Two or more different insiders with informed open-market sales made public within 21 trading days; from 2023-07",
               "The sell side of the same classification: planned and routine sales removed; ADR-0010", _insider_informed_sell),
+        Setup("CEO_DEPARTURE", "COMPANY_EVENT", "The CEO is leaving",
+              "The first close after an 8-K (item 5.02, read by Claude) first reports a change of the company's own chief executive: resignation, retirement, dismissal, or a successor named",
+              "CEO turnover announcements move prices, most of all when forced (Warner, Watts & Wruck 1988; Huson, Malatesta & Parrino 2004); ADR-0011",
+              _company_event("ceo_departure")),
+        Setup("CFO_DEPARTURE", "COMPANY_EVENT", "The CFO is leaving",
+              "The first close after an 8-K (item 5.02, read by Claude) first reports a change of the company's own chief financial officer",
+              "CFO departures as a warning about the numbers (Mian 2001); ADR-0011", _company_event("cfo_departure")),
+        Setup("DISTRESS_8K", "COMPANY_EVENT", "Distress 8-K",
+              "The first close after an 8-K reporting restructuring costs (2.05), an impairment (2.06), a listing notice (3.01), an auditor "
+              "change (4.01), non-reliance on past statements (4.02), a cybersecurity incident (1.05) or bankruptcy (1.03)",
+              "Bad news filed under a deadline; the seven items grouped in ADR-0011 before any outcome was seen", _company_event("distress_8k")),
+        Setup("MATERIAL_AGREEMENT", "COMPANY_EVENT", "Material agreement signed",
+              "The first close after an 8-K reporting a material definitive agreement (item 1.01)",
+              "Contracts, credit agreements and mergers, mixed by construction; ADR-0011", _company_event("material_agreement")),
+        Setup("ACQUISITION_COMPLETED", "COMPANY_EVENT", "Acquisition or disposal completed",
+              "The first close after an 8-K reporting a completed acquisition or disposition of assets (item 2.01)",
+              "The completion, not the announcement; ADR-0011", _company_event("acquisition_completed")),
+        Setup("AGREEMENT_TERMINATED", "COMPANY_EVENT", "Material agreement terminated",
+              "The first close after an 8-K reporting the termination of a material definitive agreement (item 1.02)",
+              "A lost contract or a broken deal; ADR-0011", _company_event("agreement_terminated")),
         Setup("BREAKOUT_52W", "TREND", "New 52-week high",
               "First close above the highest close of the previous 252 trading days", "Breakout and 52-week-high momentum (George & Hwang 2004)", _breakout_52w),
         Setup("NEW_LOW_52W", "REVERSAL", "New 52-week low",

@@ -20,7 +20,7 @@ const GRADE: Record<SignalGrade, { label: string; tone: Tone; glyph: string }> =
 const GRADE_RANK: Record<SignalGrade, number> = { INFORMATIVE: 0, SUGGESTIVE: 1, NOISE: 2, NOT_TESTABLE: 3 };
 const KIND_LABEL: Record<string, string> = {
   PRICE: 'Price', FUNDAMENTAL: 'Filed fundamentals', EVENT_FEATURE: 'Policy events', MACRO: 'Macro', TECHNICAL: 'Technical',
-  DIVIDEND: 'Dividends', INSIDER: 'Insiders', EARNINGS: 'Earnings', OTHER: 'Other',
+  DIVIDEND: 'Dividends', INSIDER: 'Insiders', EARNINGS: 'Earnings', COMPANY_EVENT: '8-K events', OTHER: 'Other',
 };
 
 @Component({
