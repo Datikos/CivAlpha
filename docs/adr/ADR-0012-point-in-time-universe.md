@@ -148,4 +148,25 @@ CYBER_INCIDENT 4; earnings 18,924 results releases read in 3 hours 46 minutes; p
 seven steps as equal and sat at 16% through the filings; it is weighted by these durations now (`STEP_WEIGHT`). The
 owner approved reading the 11,622 item 5.02 sections of the history with Claude as ADR-0011 decision 9 did (job 262,
 one Message Batch, estimate about $59), so the CEO and CFO changes are measured on the model's reading, not the rule's.
-- [ ] Measure again (Decision 8); dated notes in ADR-0009 to ADR-0011, the README and the research report.
+- [x] Measure again (Decision 8); dated notes in ADR-0009 to ADR-0011, the README and the research report.
+
+**Measured again on the 2015 history (2026-10-25/26):**
+
+| Test | 33-company history | 2015 history (this ADR) |
+|---|---|---|
+| Walk-forward predictions per model | 6,094 | 115,547 (37 folds) |
+| BASELINE / AUGMENTED Brier skill (AUC) | −0.006 (0.505) / −0.017 (0.498) | −0.001 (0.504) / −0.001 (0.502); augmented still worse, CI excludes zero |
+| AI_BOOK_21 Brier skill (AUC) | −0.025 (0.512) | −0.003 (0.505) |
+| Signal-health stock-days | 57,728 | 962,175 (629 companies, 11.8 years, 45 inputs, bar \|t\| 3.26) |
+| `exec_departure_63d` (ADR-0011) | NOISE, t −0.51 | **INFORMATIVE**, mean monthly IC −0.0126, t −3.58, 135 months, right sign 63%, negative in 11 of 12 years |
+| Insider inputs (ADR-0010) | NOISE | NOISE: `insider_informed_net_63d` t −0.33, `insider_exec_buyers_63d` t −0.43, `insider_net_63d` t −0.14 |
+| TARIFF_SHOCK / RATE_SHOCK, 21 days (ADR-0009) | NOISE (543 / 104 firings) | NOISE (6,700 / 1,859 firings) |
+| CEO_DEPARTURE / CFO_DEPARTURE, 21 days | 20 / 35 firings | 539 / 860 firings: 42.7% / 46.3% beat the ETF, mean −0.5% / −0.1%; NOISE after 93 tests (63 days: −1.2% / −0.9%) |
+| INSIDER_CLUSTER_SELL, 21 days | NOISE | NEGATIVE: 6,875 firings, mean −0.3% (CI −0.5% to −0.1%) |
+| AGREEMENT_TERMINATED, 21 days | NOISE | SUGGESTIVE: 628 firings, +0.8% (CI +0.1% to +2.0%) |
+
+The walk-forward took 11 minutes; signal health 26, the playbook 27, the ablation's walk-forward part about 35 (jobs 265
+to 267). *Found while measuring:* the worker's 2 GB limit killed the evaluation (job 263; peak 2.83 GB measured in a
+one-off container) and 5 GB killed the ablation's lab part (job 267, sampled peak 4.65 GB): `docker-compose.yml` gives
+the worker 5 GB, and the strategy panel builds its feature table one day at a time without the provenance list columns
+(a list of a million row dicts was the peak).

@@ -192,6 +192,10 @@ Phase 2, the measurement (decision 8):
 The recorded book stays as it is (decision 8). The 2026-10-06 choice of a book model without event inputs stands, on
 evidence it did not have then.
 
+*Again on the 2015 history (ADR-0012, 2026-10-25/26):* the walk-forward on 115,547 predictions per model gives BASELINE
+−0.001 (AUC 0.504) against AUGMENTED −0.001 (0.502), augmented still worse with the interval excluding zero;
+TARIFF_SHOCK fired 6,700 times and RATE_SHOCK 1,859, both NOISE at 21 days. The verdict holds on 19 times the data.
+
 *Found while measuring:*
 * **Signal health never tested the event inputs**: its list is the AI inputs plus dividends (`signals.run_study`),
   which excludes `EVENT_FEATURES`. The two rows above were run with `features=["trade_shock", "rate_shock"]`.

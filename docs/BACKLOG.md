@@ -1,8 +1,8 @@
 # Backlog
 
-State on 2026-10-24: 20 open items (#16 closed; #26 to #29 added the same day; ADR-0009 and ADR-0010 implemented and
-measured, nothing left open in them) across 6 ADRs (ADR-0002, ADR-0003, ADR-0004, ADR-0005, ADR-0008, ADR-0009), the two
-live-test documents and the October 2026 research report. Rows leave when their item is ticked in its ADR; a new item goes into
+State on 2026-10-26: 20 open items (#7 closed by ADR-0012; #30 added) across 6 ADRs (ADR-0002, ADR-0003, ADR-0004,
+ADR-0005, ADR-0008, ADR-0009); ADR-0009 to ADR-0012 are implemented and measured, the two live-test documents and
+the October 2026 research report. Rows leave when their item is ticked in its ADR; a new item goes into
 an ADR first, then here (rows marked "needs an ADR" are proposals that get one when started). Row numbers never move.
 Sizes: S up to a day, M a few days, L a week or more.
 
@@ -21,6 +21,7 @@ Sizes: S up to a day, M a few days, L a week or more.
 |---|---|---|---|---|
 | 3 | Score live-test batch 1 after 2026-11-03, no later than 2026-11-14 (`python -m civalpha.livetest`) | docs/research/live-test-2026-10.md §5 | outcomes resolved | S |
 | 15 | Score live-test batch 2 once its windows have closed: after 2026-11-16, no later than 2026-11-30 (`python -m civalpha.livetest 2`; population pinned, fingerprint `52cf870d…`, confirmed final 2026-10-19) | docs/research/live-test-2026-10-batch2.md §3, §5 | outcomes resolved | S |
+| 30 | Live test of `exec_departure_63d` (a CEO or CFO change filed in the last 63 trading days): INFORMATIVE on the 2015 history (mean monthly IC −0.0126, t −3.58, 135 months, ADR-0011/ADR-0012); pre-register a lab row and a live batch before any book change | ADR-0011 decision 6 (needs an ADR) | — | M |
 | 2 | Thresholds of the book (ADR-0003 in the ADR-0002 plan), once batch 2 resolves and the calibrated lab rows have been looked at | ADR-0002 Phase 3 #2 | #15 | M |
 | 13 | Corporate-action review: done for 118 of the 125 gaps (43 linked to an action, 75 rejected as mentions; CTVA's 8-K of 2026-04-14 linked on 2026-10-24). Left: PRPO's reverse-split 8-K of 2024-05-06 (nothing recorded, no price break), and 6 confirmed pending events to enter when distributed (WBD Global Linear Networks, Eaton mobility ×2, Keurig Dr Pepper coffee) | ADR-0003 phase 3 | owner | S |
 
@@ -30,7 +31,6 @@ Sizes: S up to a day, M a few days, L a week or more.
 |---|---|---|---|---|
 | 29 | Event targets for the products tariffs name but exposures do not: 175 of the 442 trade events the models read have no target (copper, lumber, pharmaceuticals, heavy vehicles have no exposure keyword), so they hit nobody. The next lever for the events after ADR-0009 found no help; needs the exposure extraction re-run | ADR-0009 (Revisit; needs an ADR) | — | M |
 | 27 | The date-block bootstrap of `evaluation.date_block_bootstrap` and `doublers._block_bootstrap_rate` resamples blocks of the dates that have rows; the setup playbook's version collapsed for a setup on 19 dates (ADR-0009). Both run on hundreds of dates today; move them to calendar-day blocks too, or prove they cannot collapse | ADR-0009 (Found while measuring) | — | S |
-| 7 | Backdate universe membership for the 312 companies added on 2026-10-05 | research report §Open | owner's call (survivorship bias) | M |
 | 19 | Corporate-action matching rule v2: count a cash dividend worth at least 2% of the close on the ex-date as a match (Danaher and 3M's feed-adjusted spin-offs show as gaps today), measured on the same evaluation as v1; the dividend inputs see those two distributions as dividends of 11–14% | ADR-0003 (Revisit) | — | S |
 | 20 | Jev classifier for 8-Ks: run the pre-registered comparison against the keyword rule, adopt only if it passes | ADR-0003 phase 2 | `TYPESAFE_API_KEY` (owner) | M |
 | 21 | Short interest (FINRA) and filing-text diffs as model inputs | research roadmap step 4 (needs an ADR) | — | M–L |

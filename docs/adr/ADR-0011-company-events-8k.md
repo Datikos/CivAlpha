@@ -175,6 +175,13 @@ second batch (`msgbatch_01DpAYDLAsCLGFukJDj7d1qh`, submitted 17:58, ended 18:11 
 (seed 99, filings before 2020-10): CEO_DEPARTURE 26 of 30 (87%; the misses: three pay or employment agreements and the
 CEO of a business being spun off), CFO_DEPARTURE 10 of 10.
 
+*Measured again on the 2015 history (ADR-0012, signal study job 265, 2026-10-25):* `exec_departure_63d` is **INFORMATIVE**:
+mean monthly IC −0.0126, t −3.58 over 135 months (bar |t| 3.26 for 45 inputs), right sign in 63% of months, negative in 11
+of 12 calendar years (2024 the exception), not decaying (last 12 months −0.018). A CEO or CFO change in the last 63
+trading days goes with underperforming the sector ETF over the next 21. The setups point the same way without clearing the
+corrected bar (CEO_DEPARTURE 539 firings, 42.7% beat the ETF, −0.5% at 21 days, −1.2% at 63; CFO_DEPARTURE 860, −0.1%,
+−0.9%). By decision 6 the recorded book does not change here; the input goes to a live test (BACKLOG #30).
+
 *Found while measuring:* the same restriction applies to ADR-0009 and ADR-0010: their "no help" verdicts were measured on
 about 33 companies, not the 352 their headlines name (`universeSize` counts any company that was ever a member). How
 to measure on more companies without survivorship bias is the owner's decision (BACKLOG #7, options of 2026-10-25).

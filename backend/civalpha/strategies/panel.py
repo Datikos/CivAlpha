@@ -81,10 +81,15 @@ class MarketPanel:
         ever uses earlier data, so it stays point-in-time. Cached on the panel.
         """
         if self._features is None:
-            rows = []
+            # one small frame per day, without the provenance columns (lists the live forecasts use, not the lab): a list
+            # of every day's row dicts took more than 4.6 GB on the 2015 history (ADR-0012, job 267)
+            frames = []
             for idx in range(MIN_HISTORY, len(self.calendar), step):
-                rows.extend(build_rows(self.bundle, idx, with_labels=False))
-            f = pd.DataFrame(rows)
+                day = build_rows(self.bundle, idx, with_labels=False)
+                if day:
+                    d = pd.DataFrame(day)
+                    frames.append(d[[c for c in d.columns if not c.startswith("_")]])
+            f = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
             if step > 1 and not f.empty:
                 f = _carry_forward(f, len(self.calendar), step)
             self._features = f

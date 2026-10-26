@@ -84,8 +84,8 @@ Design decisions with alternatives are written down before they are built, in `d
 | ADR-0008 | Catch up a failed or missed evening pipeline run | Accepted, implemented 2026-10-15 |
 | ADR-0009 | Load seven years of official policy events, and only the material ones | Accepted, implemented and measured 2026-10-24: no help |
 | ADR-0010 | Tell informed insider trades from routine ones, and read them after a policy shock | Accepted, implemented and measured 2026-10-24: no help; shock reaction not testable |
-| ADR-0011 | Company events from 8-K items, stored apart from the filings | Accepted, implemented and measured 2026-10-25 (33-company history) |
-| ADR-0012 | A point-in-time universe from 2015, so the history holds the companies that mattered then | Accepted 2026-10-25 |
+| ADR-0011 | Company events from 8-K items, stored apart from the filings | Accepted, implemented and measured 2026-10-25; on the 2015 history the CEO/CFO-change input is informative (BACKLOG #30) |
+| ADR-0012 | A point-in-time universe from 2015, so the history holds the companies that mattered then | Accepted, loaded and measured 2026-10-26 |
 
 ## Architecture
 

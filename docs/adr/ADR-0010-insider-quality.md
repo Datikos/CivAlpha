@@ -157,5 +157,10 @@ Phase 3, the screen:
 | Setup playbook, 21 days (job 243) | INSIDER_INFORMED_BUY 17 firings (30 needed); INSIDER_INFORMED_SELL 56 firings, 41% beat the ETF, mean −0.2% (CI −2.4% to +2.2%) | NOT TESTABLE, NOISE |
 | Ablation, book's GBM (job 245, 21-day label) | plus insider quality Brier skill −0.025 (−0.042, −0.014), AUC 0.512; without −0.025 (−0.042, −0.014), AUC 0.512; the trial registry counts 76 trials | no change |
 
+*Again on the 2015 history (ADR-0012, signal study job 265, 962,175 stock-days):* `insider_informed_net_63d` t −0.33 (111
+months), `insider_exec_buyers_63d` t −0.43 (97 months): NOISE; INSIDER_INFORMED_BUY 329 firings, NOISE. One insider setup
+moved: INSIDER_CLUSTER_SELL (three or more sellers, any class) is NEGATIVE at 21 days, 6,875 firings, mean −0.3% (CI −0.5%
+to −0.1%), not significant after 93 tests.
+
 The recorded book and the live models are unchanged (decision 7). Revisit stands: drop the two inputs from the lab
 rather than tune them; the classification stays, since it is what the company page shows.
