@@ -508,8 +508,9 @@ response is `401`. `GET /api/meta` reports `adminTokenRequired`.
 * `POST /api/admin/earnings/ingest` → job — read the press-release exhibit of every results 8-K not yet read and classify its guidance tone (also part of every pipeline run)
 * `POST /api/admin/insiders/ingest` → job — load insider transactions (Forms 4) for every tracked company (also part of every pipeline run)
 * `POST /api/admin/history/backfill` body `{"steps": ["universe", "prices"]}` (optional; default all of universe, prices,
-  filings, insiders, events8k, earnings, policy) → job `HISTORY_BACKFILL` — ADR-0012, the yearly top 350 by public float
-  from 2015 as membership of `history-top350`, and their data from 2015; resumable; 400 for an unknown step
+  listing, filings, insiders, events8k, earnings, policy) → job `HISTORY_BACKFILL` — ADR-0012, the yearly top 350 by public
+  float from 2015 (each float checked against shares times close) as membership of `history-top350`, spans ended after the
+  first close below $1 (`listing`), and their data from 2015; resumable; 400 for an unknown step
 * `POST /api/admin/company-events/backfill` body `{"from": "2020-10-26"}` (optional; default the SEC lookback window) → job
   `COMPANY_EVENTS_BACKFILL` — ADR-0011, company events from every 8-K in the stored filing indexes; item 5.02 documents are
   fetched from EDGAR (15 to 25 minutes the first time); safe to rerun

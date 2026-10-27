@@ -162,7 +162,7 @@ class HistoryIn(BaseModel):
 def history_backfill(body: HistoryIn | None = None):
     """ADR-0012: the yearly top 350 by public float from 2015 as membership of `history-top350`, with prices, filings
     (no language model), insiders, 8-K events, earnings releases and policy events from 2015. Resumable; several hours
-    the first time. `steps`: a subset of universe, prices, filings, insiders, events8k, earnings, policy."""
+    the first time. `steps`: a subset of universe, prices, listing, filings, insiders, events8k, earnings, policy."""
     from ..history_backfill import STEPS
     steps = (body.steps if body and body.steps else None)
     if steps is not None and any(s not in STEPS for s in steps):

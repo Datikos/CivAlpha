@@ -181,9 +181,22 @@ of 12 calendar years (2024 the exception), not decaying (last 12 months −0.018
 trading days goes with underperforming the sector ETF over the next 21. The setups point the same way without clearing the
 corrected bar (CEO_DEPARTURE 539 firings, 42.7% beat the ETF, −0.5% at 21 days, −1.2% at 63; CFO_DEPARTURE 860, −0.1%,
 −0.9%). By decision 6 the recorded book does not change here; the input goes to a live test (BACKLOG #30).
+In the ablation (job 269, 115,547 predictions per variant) "plus company events" gives Brier skill −0.0028 (−0.0038,
+−0.0015), AUC 0.506, against FULL −0.0030 (−0.0040, −0.0017), AUC 0.505: one informative input among 40 does not
+move the GBM's probabilities measurably.
+
+**2026-10-27, pending re-measurement:** the 2015 history universe holds 26 companies whose SEC-frame public float is
+far above their shares times close, most about 1,000 times (scale errors, 50 member-years; Medallion Financial, Party City,
+PEDEVCO, Vintage Wine Estates, FuelCell, ...) and keeps bankrupt companies as members after their stock moved to the
+over-the-counter market (SVB as SIVBQ, 2023-03 to 2024-04, closes of $0.001). The 2015-history numbers here were
+measured on that universe (ADR-0012, Found while measuring).
+*The departure input, checked before the correction (2026-10-27, one-off, nothing stored):* with the 26 companies' member-days and the
+history member-days from the first close below $1 masked out (12,451 of 1,004,929), `exec_departure_63d` stays
+INFORMATIVE: mean monthly IC −0.0127, t −3.58 over 135 months (as stored −0.0125, t −3.56); masking also every
+member-day after a 90% drawdown (2,905 more) gives t −3.54. The 7 replacement companies are not in this check.
 
 *Found while measuring:* the same restriction applies to ADR-0009 and ADR-0010: their "no help" verdicts were measured on
 about 33 companies, not the 352 their headlines name (`universeSize` counts any company that was ever a member). How
-to measure on more companies without survivorship bias is the owner's decision (BACKLOG #7, options of 2026-10-25).
+to measure on more companies without survivorship bias was BACKLOG #7, answered by ADR-0012 (the numbers above).
 Phase 3, the screen:
 - [ ] `GET /api/companies/{symbol}/events`, the company-page card, guide entries, README, `docs/api.md`.

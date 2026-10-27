@@ -256,6 +256,12 @@ the baseline; profitability is still not supported; no live forecast has resolve
   From now on every lab run and ablation registers itself; the historical count is a floor.
 * **Universe history.** 312 of 352 companies have membership since 2026-10-05, so every history-based number above rests
   on the original ~40 names. Backdating membership is survivorship-biased and is the owner's call.
+  *2026-10-26:* answered by ADR-0012, a point-in-time top 350 by public float each April from 2015 (629 companies,
+  delisted ones included). Measured again there: 115,547 walk-forward predictions per model instead of 6,094; BASELINE
+  and AUGMENTED Brier skill −0.001 each (augmented still worse, interval excluding zero); the book's GBM −0.003 (AUC
+  0.505) instead of −0.025 (0.512); the 9 ablation variants −0.003 to −0.002 (job 269). No model or variant beats the
+  base rate on the larger history either; the numbers in the sections above are the 33-company ones.
+  *2026-10-27:* that universe was found to hold float scale errors and bankruptcy stubs; pending re-measurement (ADR-0012).
 * **Decision page feature identifier.** Stored decisions say `features: "no policy-event features"`; new decisions should
   carry `GBM_AI_39`. Not changed, because the decision payload is the recorded book's.
 

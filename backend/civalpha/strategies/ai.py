@@ -234,7 +234,10 @@ class AiModel:
         self.empty = np.zeros(0, dtype=bool)
 
     def _prep(self, X: np.ndarray) -> np.ndarray:
-        X = np.array(X, dtype=float, copy=True)
+        X = np.asarray(X, dtype=float)
+        if not self.empty.any():     # no copy then: a fold's training matrix is a million rows on the 2015 history
+            return X
+        X = X.copy()
         X[:, self.empty] = 0.0
         return X
 
@@ -299,19 +302,23 @@ def walk_forward_probabilities(p: MarketPanel, cfg: AiConfig, data: pd.DataFrame
         raise ValueError("not enough history for the AI strategy")
     ecfg = _eval_cfg(cfg)
     folds = walk_forward_folds(data["idx"].to_numpy(), len(p.calendar), ecfg)
+    # the feature matrix once, sliced per fold: copying the whole frame for every fold's training rows was the strategy
+    # lab's peak on the 2015 history (5.1 GB, ADR-0012)
+    X, y, idx = data[features].to_numpy(float), data["label"].to_numpy(), data["idx"].to_numpy()
+    cols = p.px.columns.get_indexer(data["company_id"].to_numpy())
     out_folds = []
     for fold in folds:
-        test = data[(data["idx"] >= fold["test_start_idx"]) & (data["idx"] <= fold["test_end_idx"])]
-        train = data[train_mask(data, fold, ecfg)]
-        if test.empty or len(train) < 200 or train["label"].nunique() < 2:
+        test = (idx >= fold["test_start_idx"]) & (idx <= fold["test_end_idx"])
+        train = train_mask(data, fold, ecfg).to_numpy()
+        if not test.any() or train.sum() < 200 or pd.Series(y[train]).nunique() < 2:
             continue
-        m = new_model(cfg).fit(train[features].to_numpy(float), train["label"].astype(int).to_numpy())
-        pr = m.predict_proba(test[features].to_numpy(float))[:, 1]
-        prob[test["idx"].to_numpy(), p.px.columns.get_indexer(test["company_id"].to_numpy())] = pr
+        m = new_model(cfg).fit(X[train], y[train].astype(int))
+        prob[idx[test], cols[test]] = m.predict_proba(X[test])[:, 1]
+        last = int(idx[train].max())
         out_folds.append({"fold": fold["fold"], "testStart": str(p.calendar[fold["test_start_idx"]].date()),
                           "testEnd": str(p.calendar[min(fold["test_end_idx"], len(p.calendar) - 1)].date()),
-                          "trainEnd": str(p.calendar[int(train["idx"].max())].date()), "nTrain": int(len(train)),
-                          "maxTrainLabelIdx": int(train["idx"].max()) + ecfg.horizon, "testStartIdx": fold["test_start_idx"]})
+                          "trainEnd": str(p.calendar[last].date()), "nTrain": int(train.sum()),
+                          "maxTrainLabelIdx": last + ecfg.horizon, "testStartIdx": fold["test_start_idx"]})
     if not out_folds:
         raise ValueError("not enough history for the AI strategy's walk-forward training")
     return {"prob": pd.DataFrame(prob, index=p.calendar, columns=p.px.columns), "folds": out_folds,

@@ -75,14 +75,25 @@ class _Sec:
 
 
 class _Tiingo:
-    def __init__(self, meta, dates):
-        self.meta, self.d = meta, dates
+    def __init__(self, meta, dates, closes=None):
+        self.meta, self.d, self.c = meta, dates, closes or {}
 
     def all_meta(self):
         return self.meta
 
+    def closes(self, t, start):
+        return self.c.get(t.lower(), [])
+
     def dates(self, t):
         return self.d.get(t.lower(), (None, None, None))
+
+
+def _rec(members, names, details=None):
+    """A Reconstitution as `reconstitute` returns it: every member ranked, unchecked unless `details` gives a candidate's
+    (float, float date, shares, assets)."""
+    details = details or {}
+    ranked = {y: [up.Candidate(c, *details.get(c, (1e11, None, None, None))) for c in sorted(m)] for y, m in members.items()}
+    return up.Reconstitution(members={y: set(m) for y, m in members.items()}, names=names, ranked=ranked)
 
 
 def _subs(cik, name, tickers, sic):
@@ -95,9 +106,9 @@ def test_the_universe_step_adds_companies_of_the_past_with_their_spans(universe,
     from civalpha.platform.sec.client import submissions_url
     from civalpha.platform.storage import DocumentStore
     meta = tdb.scalar("SELECT company_id FROM cik_mapping WHERE cik = '0001326801'")
-    rec = up.Reconstitution(members={2015: {"0001326801", "0001418091", "0000000777", "0000000888"}, 2016: {"0001326801", "0001418091"},
-                                     2017: {"0001326801"}},
-                            names={"0001418091": "TWITTER, INC.", "0000000777": "Holding Shell", "0000000888": "Ghost Corp"})
+    rec = _rec({2015: {"0001326801", "0001418091", "0000000777", "0000000888"}, 2016: {"0001326801", "0001418091"},
+                2017: {"0001326801"}},
+               {"0001418091": "TWITTER, INC.", "0000000777": "Holding Shell", "0000000888": "Ghost Corp"})
     monkeypatch.setattr("civalpha.platform.history_backfill.reconstitute", lambda get: rec)
     sec = _Sec({submissions_url("0001418091"): _subs("1418091", "Twitter, Inc.", [], "7370"),
                 submissions_url("0000000777"): _subs("777", "Holding Shell", [], ""),           # no SIC code: no sector
@@ -168,8 +179,7 @@ def test_a_predecessor_registrant_counts_for_its_stored_successor(universe, tdb,
     from civalpha.platform.sec.client import submissions_url
     from civalpha.platform.storage import DocumentStore
     meta = tdb.scalar("SELECT company_id FROM cik_mapping WHERE cik = '0001326801'")
-    rec = up.Reconstitution(members={2015: {"0000000555"}, 2016: {"0000000555"}, 2017: {"0001326801"}},
-                            names={"0000000555": "META PLATFORMS HOLDINGS INC"})
+    rec = _rec({2015: {"0000000555"}, 2016: {"0000000555"}, 2017: {"0001326801"}}, {"0000000555": "META PLATFORMS HOLDINGS INC"})
     monkeypatch.setattr("civalpha.platform.history_backfill.reconstitute", lambda get: rec)
     sec = _Sec({submissions_url("0000000555"): _subs("555", "Meta Platforms Holdings Inc", [], "7370")})
     tiingo = _Tiingo(meta=[{"ticker": "meta", "name": "Meta Platforms Inc"}],
@@ -191,3 +201,56 @@ def test_a_rerun_can_be_limited_to_some_companies(universe, tdb, tmp_path):
     h.symbols = {"INTC"}
     assert [c["symbol"] for c in h.companies()] == ["INTC"]
     assert set(STEP_WEIGHT) == set(STEPS) and STEP_WEIGHT["filings"] > sum(v for k, v in STEP_WEIGHT.items() if k != "filings")
+
+
+# ------------------------------------------------------------------------------------------- amendment 1
+
+def test_a_float_far_above_shares_times_close_and_assets_is_a_scale_error():
+    june = date(2022, 6, 30)
+    medallion = up.Candidate("M", 1.83e11, june, 2.42e7, 2.6e9)      # 1,301 times shares x $5.80, 70 times assets
+    resmed = up.Candidate("R", 3.07e10, june, 1.46e5, 4.7e9)         # the shares frame is wrong; the float is 6.5x assets
+    nvidia = up.Candidate("N", 2.7e12, june, 2.46e9, 8.5e10)         # pre-split shares: 9.7 times
+    assert up.scale_error(medallion, 5.80) and not up.scale_error(resmed, 212.56) and not up.scale_error(nvidia, 113.06)
+    assert not up.scale_error(medallion, None)                        # no close: nothing to check against
+    rec = up.Reconstitution(ranked={2023: [up.Candidate("A", 5e11, june, 1e9, 1e11), medallion, up.Candidate("B", 2e10, june, 1e9, 1e10),
+                                           up.Candidate("C", 1e10, june, 1e9, 1e10)]})
+    members, rejected = up.checked_members(rec, lambda cik, day, y: {"A": 500.0, "M": 5.80, "B": 20.0}.get(cik), n=2)
+    assert members == {2023: {"A", "B"}} and rejected == {2023: ["M"]}   # the next-ranked takes the place
+
+
+def test_a_history_span_ends_after_the_first_close_below_a_dollar():
+    span = [(date(2022, 4, 1), date(2024, 4, 1))]
+    svb = [(date(2023, 3, 9), 106.04), (date(2023, 3, 28), 0.4), (date(2023, 3, 29), 0.9), (date(2023, 4, 20), 1.2)]
+    assert up.listing_cut(span, svb) == [(date(2022, 4, 1), date(2023, 3, 29))]    # the -99.6% day counts, then out
+    assert up.listing_cut([(date(2023, 4, 3), date(2024, 4, 1))], svb) == []         # already below $1 before the span
+    assert up.listing_cut(span, [(date(2022, 4, 1), 50.0), (date(2023, 1, 3), 45.0)]) == span
+
+
+def test_the_universe_step_passes_over_a_scale_error_and_the_listing_step_cuts(universe, tdb, tmp_path, monkeypatch):
+    from civalpha.platform.sec.client import submissions_url
+    from civalpha.platform.storage import DocumentStore
+    june = date(2014, 6, 30)
+    rec = _rec({2015: {"0001326801", "0000000901", "0000000902"}}, {"0000000901": "Tiny Bank", "0000000902": "Next Co"},
+               {"0001326801": (2e11, june, 2.5e9, 2e10), "0000000901": (1.5e11, june, 2e7, 1e9), "0000000902": (1e10, june, 4e8, 5e9)})
+    rec.ranked[2015].sort(key=lambda c: -c.float)
+    monkeypatch.setattr("civalpha.platform.history_backfill.reconstitute", lambda get: rec)
+    sec = _Sec({submissions_url("0000000901"): _subs("901", "Tiny Bank", ["TINY"], "6022"),
+                submissions_url("0000000902"): _subs("902", "Next Co", ["NXT"], "7370")})
+    tiingo = _Tiingo(meta=[], dates={"tiny": ("Tiny Bank", date(2010, 1, 4), date(2026, 10, 23)),
+                                     "nxt": ("Next Co", date(2010, 1, 4), date(2026, 10, 23))},
+                     closes={"tiny": [(date(2014, 6, 30), 7.5)], "nxt": [(date(2014, 6, 30), 25.0)]})
+    meta = tdb.scalar("SELECT company_id FROM cik_mapping WHERE cik = '0001326801'")
+    tdb.execute("INSERT INTO price_bar (company_id, symbol, trade_date, close, provider) VALUES (:c, 'META', '2014-06-30', 67, 't')", c=meta)
+    h = HistoryBackfill(tdb, sec=sec, tiingo=tiingo, docs=DocumentStore(tdb, tmp_path))
+    lines = []
+    out = h.step_universe(lines.append)
+    assert out.rejected == {2015: ["0000000901"]} and out.added == 1     # $150B on 20M shares at $7.50: 1,000 times
+    assert tdb.scalar("SELECT count(*) FROM cik_mapping WHERE cik = '0000000901'") == 0
+    nxt = tdb.scalar("SELECT company_id FROM cik_mapping WHERE cik = '0000000902'")
+    assert any("scale errors" in x for x in lines)
+    for d, c in (("2015-04-01", 20.0), ("2019-03-04", 0.6), ("2019-03-05", 0.5)):
+        tdb.execute("INSERT INTO price_bar (company_id, symbol, trade_date, close, provider) VALUES (:c, 'NXT', :d, :p, 't')", c=nxt, d=d, p=c)
+    assert h.step_listing(lambda _l: None) == {"cut": 1, "dropped": 0}
+    assert tdb.all("SELECT valid_from, valid_to FROM universe_membership WHERE company_id = :c AND universe = 'history-top350'", c=nxt) == \
+        [{"valid_from": date(2015, 4, 1), "valid_to": date(2019, 3, 5)}]
+    assert h.step_listing(lambda _l: None) == {"cut": 0, "dropped": 0}  # a rerun changes nothing

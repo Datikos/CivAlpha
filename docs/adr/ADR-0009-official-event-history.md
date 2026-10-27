@@ -194,7 +194,15 @@ evidence it did not have then.
 
 *Again on the 2015 history (ADR-0012, 2026-10-25/26):* the walk-forward on 115,547 predictions per model gives BASELINE
 −0.001 (AUC 0.504) against AUGMENTED −0.001 (0.502), augmented still worse with the interval excluding zero;
-TARIFF_SHOCK fired 6,700 times and RATE_SHOCK 1,859, both NOISE at 21 days. The verdict holds on 19 times the data.
+TARIFF_SHOCK fired 6,700 times and RATE_SHOCK 1,859, both NOISE at 21 days; the ablation's "plus policy events" gives
+Brier skill −0.0032 (−0.0043, −0.0018), AUC 0.505, against FULL −0.0030 (−0.0040, −0.0017), AUC 0.505 (job 269). The
+verdict holds on 19 times the data.
+
+**2026-10-27, pending re-measurement:** the 2015 history universe holds 26 companies whose SEC-frame public float is
+far above their shares times close, most about 1,000 times (scale errors, 50 member-years; Medallion Financial, Party City,
+PEDEVCO, Vintage Wine Estates, FuelCell, ...) and keeps bankrupt companies as members after their stock moved to the
+over-the-counter market (SVB as SIVBQ, 2023-03 to 2024-04, closes of $0.001). The 2015-history numbers here were
+measured on that universe (ADR-0012, Found while measuring).
 
 *Found while measuring:*
 * **Signal health never tested the event inputs**: its list is the AI inputs plus dividends (`signals.run_study`),

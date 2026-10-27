@@ -292,7 +292,8 @@ const JOBS_SHOWN = 10;
             <div class="small muted">
               The 350 largest companies by public float of each year from 2015, as known on 1 April, including those
               acquired or delisted since, with their prices, filings, insider trades, 8-K events and policy events
-              (ADR-0012). Several hours the first time; a rerun resumes. Companies of the past get the tag
+              (ADR-0012). A float far above shares times price is a reporting error and is passed over; a company
+              leaves after its first close below $1. Several hours the first time; a rerun resumes. Companies of the past get the tag
               <span class="mono">history</span> and are never traded, advised or forecast live.
             </div>
           </div>

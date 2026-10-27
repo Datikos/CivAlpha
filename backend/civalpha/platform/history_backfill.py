@@ -1,10 +1,12 @@
 """The HISTORY_BACKFILL job (ADR-0012): the history universe and its data from 2015, once, resumable.
 
 Steps, in order (params `steps` runs a subset; every step skips what is already stored, so a rerun resumes):
-  universe  the yearly top 350 by public float (universe_pit), companies that are not yet in the database added with
-            their ticker, sector and benchmark, and membership spans of the universe `history-top350`;
+  universe  the yearly top 350 by public float (universe_pit), each float checked against shares times the close on
+            its date (stored bars, else Tiingo's), companies that are not yet in the database added with their ticker,
+            sector and benchmark, and membership spans of the universe `history-top350`;
   prices    bars from HISTORY_START for every benchmark ETF and every company with a membership span, up to the first
             stored bar (or to the last trading day of a company that stopped trading);
+  listing   history spans ended after the first close below $1 (universe_pit.listing_cut, ADR-0012 amendment 1);
   filings   10-K, 10-Q and the ingested 8-Ks of the last LOOKBACK_YEARS years, without the language model (ADR-0012
             decision 6: exposures of these filings come from the rules and XBRL only);
   insiders  the SEC insider data sets from 2014 for every company (stored data sets are re-read, not downloaded again);
@@ -40,15 +42,17 @@ from .sql import Db, db
 from .storage import DocumentStore, NewDocument
 from .tickers import TickerResolver, pad_cik
 from .universe import EPOCH, UniverseService
-from .universe_pit import (FIRST_YEAR, HISTORY_UNIVERSE, MIN_NAME_SIMILARITY, OWNER_START, TickerMatch, clip, cover_symbol,
-                           name_similarity, norm_name, reconstitute, spans)
+from .universe_pit import (CLOSE_WINDOW_DAYS, FIRST_YEAR, HISTORY_UNIVERSE, MIN_NAME_SIMILARITY, OWNER_START, TickerMatch,
+                           checked_members, clip, cover_symbol, listing_cut, name_similarity, norm_name, reconstitute,
+                           reconstitution_day, spans)
 
 HISTORY_START = date(2015, 1, 2)
 LOOKBACK_YEARS = 12              # 2026 - 12 = 2014: the first universe (2015-04) has a year of filings behind it
 HISTORY_TAG = "history"
-STEPS = ("universe", "prices", "filings", "insiders", "events8k", "earnings", "policy")
+STEPS = ("universe", "prices", "listing", "filings", "insiders", "events8k", "earnings", "policy")
 # minutes of the first load (job 260, 2026-10-25), rounded: what the progress bar is weighted by
-STEP_WEIGHT = {"universe": 6, "prices": 10, "filings": 640, "insiders": 20, "events8k": 30, "earnings": 120, "policy": 5}
+STEP_WEIGHT = {"universe": 6, "prices": 10, "listing": 1, "filings": 640, "insiders": 20, "events8k": 30, "earnings": 120,
+               "policy": 5}
 TIINGO = "https://api.tiingo.com/tiingo/"
 STALE_DAYS = 10                  # a Tiingo ticker whose last bar is older than this has stopped trading
 MAX_NAME_HITS = 5                # Tiingo tickers tried per name (a name can carry several: share classes, relistings)
@@ -73,6 +77,7 @@ class UniverseSummary:
     tickers: dict[str, int] = field(default_factory=dict)
     skipped: dict[str, list[str]] = field(default_factory=dict)
     spans: int = 0
+    rejected: dict[int, list[str]] = field(default_factory=dict)     # year -> CIKs whose float is a scale error
 
 
 class Tiingo:
@@ -88,6 +93,13 @@ class Tiingo:
             r = self.http.get(TIINGO + "fundamentals/meta", headers=self.h)
             self._meta = r.json() if r.status_code == 200 else []
         return self._meta
+
+    def closes(self, ticker: str, start: date) -> list[tuple[date, float]]:
+        """Unadjusted daily closes from `start`, oldest first; empty when Tiingo has none."""
+        r = self.http.get(TIINGO + f"daily/{ticker.lower()}/prices", headers=self.h,
+                          params={"startDate": start.isoformat(), "columns": "date,close"})
+        rows = r.json() if r.status_code == 200 else []
+        return [(date.fromisoformat(x["date"][:10]), float(x["close"])) for x in rows if x.get("close") is not None]
 
     def dates(self, ticker: str) -> tuple[str | None, date | None, date | None]:
         """(name, first bar, last bar), or Nones when Tiingo does not know the ticker."""
@@ -109,6 +121,8 @@ class HistoryBackfill:
         self.tickers = TickerResolver(self.db)
         self.universe_svc = UniverseService(self.db)
         self.symbols: set[str] = set()
+        self._subs: dict[str, object] = {}                       # CIK -> parsed SEC index, or None when there is none
+        self._tiingo_closes: dict[str, list[tuple[date, float]]] = {}
 
     # ---------------------------------------------------------------- the companies the steps work on
     def companies(self) -> list[dict]:
@@ -137,13 +151,17 @@ class HistoryBackfill:
     def step_universe(self, log: Log) -> UniverseSummary:
         out = UniverseSummary()
         rec = reconstitute(self.sec.get)
-        out.years = {y: len(m) for y, m in sorted(rec.members.items())}
-        log("history universe: members per reconstitution " + ", ".join(f"{y} {n}" for y, n in out.years.items()))
         by_cik = {pad_cik(r["cik"]): int(r["company_id"]) for r in self.db.all("SELECT cik, company_id FROM cik_mapping")}
-        all_spans = spans(rec.members, OWNER_START.year)
         meta_by_name: dict[str, list[dict]] = {}
         for m in self.tiingo.all_meta():
             meta_by_name.setdefault(norm_name(m.get("name")), []).append(m)
+        members, out.rejected = checked_members(rec, lambda cik, day, y: self._close_on(cik, day, y, by_cik, rec, meta_by_name))
+        out.years = {y: len(m) for y, m in sorted(members.items())}
+        log("history universe: members per reconstitution " + ", ".join(f"{y} {n}" for y, n in out.years.items()))
+        if out.rejected:
+            log("history universe: floats rejected as scale errors (more than 20x shares times close and 10x assets): "
+                + "; ".join(f"{y} " + ", ".join(f"{c} {rec.names.get(c, '')}" for c in cs) for y, cs in sorted(out.rejected.items())))
+        all_spans = spans(members, OWNER_START.year)
         by_company: dict[int, list] = {}
         for i, (cik, company_spans) in enumerate(sorted(all_spans.items()), 1):
             if i % 25 == 0:
@@ -158,6 +176,9 @@ class HistoryBackfill:
             else:
                 out.known += 1
             by_company.setdefault(cid, []).extend(clip(company_spans, last_day))
+        stale = set(self.db.scalars("SELECT DISTINCT company_id FROM universe_membership WHERE universe = :u", u=HISTORY_UNIVERSE))
+        for cid in stale - set(by_company):          # a company the checked universe no longer holds (its data stays stored)
+            self.db.execute("DELETE FROM universe_membership WHERE universe = :u AND company_id = :c", u=HISTORY_UNIVERSE, c=cid)
         for cid, company_spans in by_company.items():
             kept = merge_spans(company_spans)
             with self.db.transaction():
@@ -173,14 +194,41 @@ class HistoryBackfill:
             log(f"history universe: skipped ({why}): " + "; ".join(names[:60]) + (" ..." if len(names) > 60 else ""))
         return out
 
+    def _submissions(self, cik: str):
+        if cik not in self._subs:
+            url = submissions_url(cik)
+            body = self.sec.get(url)
+            if body is not None:
+                self.docs.store(NewDocument("SEC_API", "SEC EDGAR", url, None, f"Submissions index CIK{cik}", None,
+                                            "application/json", body))
+            self._subs[cik] = parse_submissions(body) if body is not None else None
+        return self._subs[cik]
+
+    def _close_on(self, cik: str, day: date, year: int, by_cik, rec, meta_by_name) -> float | None:
+        """The close nearest `day` (within CLOSE_WINDOW_DAYS): stored bars for a stored company, else Tiingo's for the
+        ticker the company would be added under for `year`'s reconstitution."""
+        cid = by_cik.get(cik)
+        if cid is not None:
+            r = self.db.one("""SELECT close FROM price_bar WHERE company_id = :c AND trade_date BETWEEN :a AND :b
+                               ORDER BY abs(trade_date - CAST(:d AS date)) LIMIT 1""",
+                            c=cid, d=day, a=day - timedelta(days=CLOSE_WINDOW_DAYS), b=day + timedelta(days=CLOSE_WINDOW_DAYS))
+            return float(r["close"]) if r else None
+        sub = self._submissions(cik)
+        if sub is None:
+            return None
+        m = self._ticker(cik, [sub.name or rec.names.get(cik, ""), *sub.former_names], sub, reconstitution_day(year), meta_by_name)
+        if m.ticker is None:
+            return None
+        if m.ticker not in self._tiingo_closes:
+            self._tiingo_closes[m.ticker] = self.tiingo.closes(m.ticker, date(FIRST_YEAR - 2, 1, 1))
+        near = [(abs((d - day).days), c) for d, c in self._tiingo_closes[m.ticker] if abs((d - day).days) <= CLOSE_WINDOW_DAYS]
+        return min(near)[1] if near else None
+
     def _add_company(self, cik: str, frame_name: str, company_spans, meta_by_name, out: UniverseSummary):
         """(company id, last trading day or None, reason when skipped)."""
-        url = submissions_url(cik)
-        body = self.sec.get(url)
-        if body is None:
+        sub = self._submissions(cik)
+        if sub is None:
             return None, None, "no SEC index"
-        self.docs.store(NewDocument("SEC_API", "SEC EDGAR", url, None, f"Submissions index CIK{cik}", None, "application/json", body))
-        sub = parse_submissions(body)
         name = sub.name or frame_name
         sug = sectors.suggest(sub.sic, sub.sic_description)
         if sug is None:
@@ -256,6 +304,28 @@ class HistoryBackfill:
             end = c["ticker_to"] - timedelta(days=1) if c["ticker_to"] else None
             targets.append((Target(int(c["id"]), c["symbol"]), end))
         return PriceSyncService(self.db).backfill(targets, HISTORY_START, log)
+
+    def step_listing(self, log: Log) -> dict:
+        """History spans ended after the first close below $1 (amendment 1); the owner's spans are not touched."""
+        cut = dropped = 0
+        for cid in self.db.scalars("SELECT DISTINCT company_id FROM universe_membership WHERE universe = :u ORDER BY 1", u=HISTORY_UNIVERSE):
+            rows = self.db.all("SELECT valid_from, valid_to FROM universe_membership WHERE universe = :u AND company_id = :c ORDER BY valid_from",
+                               u=HISTORY_UNIVERSE, c=cid)
+            old = [(r["valid_from"], r["valid_to"]) for r in rows]
+            closes = [(r["trade_date"], float(r["close"])) for r in
+                      self.db.all("SELECT trade_date, close FROM price_bar WHERE company_id = :c ORDER BY trade_date", c=cid)]
+            new = listing_cut(old, closes)
+            if new == old:
+                continue
+            cut += sum(1 for a, b in new if (a, b) not in old)
+            dropped += len(old) - len(new)
+            with self.db.transaction():
+                self.db.execute("DELETE FROM universe_membership WHERE universe = :u AND company_id = :c", u=HISTORY_UNIVERSE, c=cid)
+                for a, b in new:
+                    self.db.execute("""INSERT INTO universe_membership (universe, company_id, valid_from, valid_to)
+                                       VALUES (:u, :c, :f, :t)""", u=HISTORY_UNIVERSE, c=cid, f=a, t=b)
+        log(f"history listing: {cut} spans ended after a close below $1, {dropped} dropped")
+        return {"cut": cut, "dropped": dropped}
 
     def step_filings(self, log: Log):
         svc = FilingIngestionService(self.db, exposures=ExposureService(self.db, llm=LlmProvider()), lookback_years=LOOKBACK_YEARS)

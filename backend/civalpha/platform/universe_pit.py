@@ -10,6 +10,11 @@ touched.
 
 Tickers: the SEC index's current tickers, else the trading symbol on the company's own latest 10-K cover page, else a
 unique Tiingo name match; a ticker is kept only if Tiingo's trading dates cover the company's membership.
+
+Amendment 1 (2026-10-27): two checks the first load lacked. A float is a scale error when it is more than
+SCALE_TO_CAP times shares outstanding times the close on the float date *and* more than SCALE_TO_ASSETS times total
+assets (`scale_error`; the next-ranked company takes the place). A history membership ends after the first close below
+MIN_CLOSE, the exchanges' minimum bid (`listing_cut`): a bankrupt company's stock goes on trading over the counter.
 """
 from __future__ import annotations
 
@@ -27,6 +32,14 @@ FIRST_YEAR = 2015
 HISTORY_UNIVERSE = "history-top350"
 OWNER_START = date(2026, 10, 5)          # the owner's universe of 352 begins; the history universe ends here
 MIN_NAME_SIMILARITY = 0.5
+RESERVE = 60                             # ranks past TOP_N read, to fill the places of floats found to be scale errors
+# Amendment 1. Measured on the first load: the 49 scale-error member-years had a float 81 to 5,952 times shares x close
+# (most about 1,000); the highest legitimate ratio was 9.7 (NVIDIA's pre-split share count). The assets condition keeps
+# a right float whose shares frame is wrong (ResMed 2022, Linde 2019: ratio over 900, float under 7 times assets).
+SCALE_TO_CAP = 20.0
+SCALE_TO_ASSETS = 10.0
+CLOSE_WINDOW_DAYS = 190                  # the close used for the check is the nearest within this of the float date
+MIN_CLOSE = 1.0                          # dollars: the NYSE and Nasdaq minimum bid for continued listing
 
 _STOP = re.compile(r"\b(inc|incorporated|corp|corporation|co|company|companies|ltd|limited|plc|holdings?|group|the|nv|sa|lp|"
                    r"llc|trust|class [a-z]|de|new)\b")
@@ -133,14 +146,65 @@ class TickerMatch:
 
 
 @dataclass
+class Candidate:
+    cik: str
+    float: float
+    end: date | None                # the float's date
+    shares: float | None
+    assets: float | None
+
+
+@dataclass
 class Reconstitution:
-    members: dict[int, set[str]] = field(default_factory=dict)       # year -> CIKs
+    members: dict[int, set[str]] = field(default_factory=dict)       # year -> CIKs (the top n, before the price check)
     names: dict[str, str] = field(default_factory=dict)              # CIK -> entity name in the frames
     floats: dict[int, dict[str, float]] = field(default_factory=dict)
+    ranked: dict[int, list[Candidate]] = field(default_factory=dict)  # year -> the top n + RESERVE, largest first
 
 
-def reconstitute(get, first_year: int = FIRST_YEAR, last_year: int = OWNER_START.year, n: int = TOP_N) -> Reconstitution:
-    """`get(url) -> bytes | None` (the SEC client). Members per reconstitution year."""
+def scale_error(c: Candidate, close: float | None) -> bool:
+    """True when the float cannot be right next to the market value it implies; False when it can or cannot be checked
+    (no shares or no close). Without an assets frame the market-value condition decides alone."""
+    if not c.shares or not close or close <= 0:
+        return False
+    return c.float > SCALE_TO_CAP * c.shares * close and (not c.assets or c.float > SCALE_TO_ASSETS * c.assets)
+
+
+def checked_members(rec: Reconstitution, close_on, n: int = TOP_N) -> tuple[dict[int, set[str]], dict[int, list[str]]]:
+    """Members per year after the price check: `close_on(cik, day, year) -> float | None` is the close nearest the
+    float date; a scale error is passed over and the next-ranked candidate moves up. Returns (members, rejected CIKs)."""
+    members: dict[int, set[str]] = {}
+    rejected: dict[int, list[str]] = {}
+    for y, cands in sorted(rec.ranked.items()):
+        keep: list[str] = []
+        for c in cands:
+            if len(keep) == n:
+                break
+            if scale_error(c, close_on(c.cik, c.end, y) if c.end else None):
+                rejected.setdefault(y, []).append(c.cik)
+            else:
+                keep.append(c.cik)
+        members[y] = set(keep)
+    return members, rejected
+
+
+def listing_cut(company_spans: list[tuple[date, date]], closes: list[tuple[date, float]]) -> list[tuple[date, date]]:
+    """Spans ended after the first session whose close is below MIN_CLOSE (that session's return still counts, as a
+    delisting return would); a span whose last close before it is already below is dropped. `closes` sorted by day."""
+    out = []
+    for a, b in company_spans:
+        before = [c for d, c in closes if d < a]
+        if before and before[-1] < MIN_CLOSE:
+            continue
+        low = next((d for d, c in closes if a <= d < b and c < MIN_CLOSE), None)
+        out.append((a, low + timedelta(days=1)) if low else (a, b))
+    return out
+
+
+def reconstitute(get, first_year: int = FIRST_YEAR, last_year: int = OWNER_START.year, n: int = TOP_N,
+                 reserve: int = RESERVE) -> Reconstitution:
+    """`get(url) -> bytes | None` (the SEC client). Members per reconstitution year, and the ranked candidates with a
+    reserve for `checked_members`."""
     out = Reconstitution()
     cache: dict[str, dict] = {}
 
@@ -159,7 +223,9 @@ def reconstitute(get, first_year: int = FIRST_YEAR, last_year: int = OWNER_START
         floats = newest([frame(f, PUBLIC_FLOAT_FRAME) for f in names])
         assets = newest([frame(f, ASSETS_FRAME) for f in names])
         shares = newest([frame(f, SHARES_FRAME) for f in names])
-        top = top_floats(floats, assets, shares, n)
-        out.members[y] = {c for c, _ in top}
-        out.floats[y] = dict(top)
+        top = top_floats(floats, assets, shares, n + reserve)
+        out.members[y] = {c for c, _ in top[:n]}
+        out.floats[y] = dict(top[:n])
+        out.ranked[y] = [Candidate(c, v, floats[c][1], (shares.get(c) or (None,))[0], (assets.get(c) or (None,))[0])
+                         for c, v in top]
     return out

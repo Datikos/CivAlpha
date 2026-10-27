@@ -150,6 +150,12 @@ owner approved reading the 11,622 item 5.02 sections of the history with Claude 
 one Message Batch, estimate about $59), so the CEO and CFO changes are measured on the model's reading, not the rule's.
 - [x] Measure again (Decision 8); dated notes in ADR-0009 to ADR-0011, the README and the research report.
 
+**2026-10-27, pending re-measurement:** the 2015 history universe holds 26 companies whose SEC-frame public float is
+far above their shares times close, most about 1,000 times (scale errors, 50 member-years; Medallion Financial, Party City,
+PEDEVCO, Vintage Wine Estates, FuelCell, ...) and keeps bankrupt companies as members after their stock moved to the
+over-the-counter market (SVB as SIVBQ, 2023-03 to 2024-04, closes of $0.001). The 2015-history numbers here were
+measured on that universe (ADR-0012, Found while measuring).
+
 **Measured again on the 2015 history (2026-10-25/26):**
 
 | Test | 33-company history | 2015 history (this ADR) |
@@ -164,9 +170,74 @@ one Message Batch, estimate about $59), so the CEO and CFO changes are measured 
 | CEO_DEPARTURE / CFO_DEPARTURE, 21 days | 20 / 35 firings | 539 / 860 firings: 42.7% / 46.3% beat the ETF, mean −0.5% / −0.1%; NOISE after 93 tests (63 days: −1.2% / −0.9%) |
 | INSIDER_CLUSTER_SELL, 21 days | NOISE | NEGATIVE: 6,875 firings, mean −0.3% (CI −0.5% to −0.1%) |
 | AGREEMENT_TERMINATED, 21 days | NOISE | SUGGESTIVE: 628 firings, +0.8% (CI +0.1% to +2.0%) |
+| Ablation, book's GBM, 21 days (job 269, walk-forward only) | FULL −0.025 (−0.042, −0.014), AUC 0.512 | FULL −0.003 (−0.004, −0.002), AUC 0.505; the 9 variants span −0.003 to −0.002; plus policy events −0.0032, plus insider quality −0.0029, plus company events −0.0028: none moves FULL by more than its interval |
 
 The walk-forward took 11 minutes; signal health 26, the playbook 27, the ablation's walk-forward part about 35 (jobs 265
 to 267). *Found while measuring:* the worker's 2 GB limit killed the evaluation (job 263; peak 2.83 GB measured in a
 one-off container) and 5 GB killed the ablation's lab part (job 267, sampled peak 4.65 GB): `docker-compose.yml` gives
 the worker 5 GB, and the strategy panel builds its feature table one day at a time without the provenance list columns
 (a list of a million row dicts was the peak).
+The strategy lab still died twice at 4.7 GB (job 268, the manual run of 10-26, after its forecasts were stored; job 271):
+its four walk-forwards copied the whole dataset frame for every fold's training rows. They now slice one feature matrix
+(`strategies.ai.walk_forward_probabilities`; same probabilities and folds on three test panels), and `AiModel._prep`
+copies only when a column is blanked: job 272 ran in 34 minutes with a sampled peak of 4.45 GB. The 10-26 decisions and
+advice ran on their own (job 270, 351 decisions, 15 advice rows, peak 3.7 GB).
+
+## Amendment 1 (2026-10-27): two checks the first load lacked
+
+*Found:* the first lab run on the history (job 272) gave equal-weight buy & hold a CAGR of +60.1% at a Sharpe of 0.47
+over 2017-07 to 2026-10. The member-days behind it:
+
+* **Float scale errors that passed discovery's checks.** For each of the 4,200 member-years the float was compared with
+  shares outstanding (the same quarter's frame) times the stored close nearest the float date. 49 member-years at 24
+  companies had a float 81 to 5,952 times that (most about 1,000: Medallion Financial, Western New England Bancorp,
+  Party City, Ponce Financial, PEDEVCO, Vintage Wine Estates, FuelCell, Mister Car Wash's $604 billion, ...). The
+  implied-price check misses them because a $5 stock tagged 1,000 times too large implies $5,000 a share, under the
+  $10,000 the check allows for Berkshire. The highest ratio among real floats was 9.7 (NVIDIA's pre-split share count);
+  two right floats over 900 (ResMed 2022, Linde 2019) have a wrong shares frame and are under 7 times assets.
+* **Bankrupt companies stayed members on over-the-counter prices.** `clip` ends a span at the last trading day, but
+  Tiingo serves the bankrupt stock's OTC ticker (SVB as SIVBQ: member until 2024-04-01, closes from $0.0013, daily
+  returns of +8,361% and −98%). Form 25 was looked at as the point-in-time signal and is not one by itself: it is
+  filed per class of security (SVB has one of 2017 for another class) and for exchange transfers (Walmart, 2025-12).
+
+*Decision:*
+
+1. A float is a scale error when it is more than 20 times shares times the close nearest its date (within 190 days)
+   **and** more than 10 times total assets (`universe_pit.scale_error`; 20 sits between the 9.7 and 81 measured, the
+   assets condition keeps ResMed and Linde). The universe step reads RESERVE = 60 ranks past 350, passes over a scale
+   error and takes the next (`checked_members`); closes come from stored bars, or from Tiingo for a company not yet
+   stored, so a scale error is never added. A float that cannot be checked (no shares, no close) is kept, as before.
+2. A history span ends the day after the first close below $1, the NYSE and Nasdaq minimum bid for continued listing
+   (`universe_pit.listing_cut`, new step `listing` after `prices`): that session's return counts, as a delisting return
+   would; a span whose last close before it is already below $1 is dropped. The owner's spans are not touched.
+3. Companies the checked universe no longer holds lose their `history-top350` spans; their stored data stays.
+4. Every 2015-history number above is measured again after the correction.
+
+Measured with the rule on the first load's frames (rank 351 on, stored closes within 190 days): it rejects 50
+member-years at 26 stored companies (the 24, plus Swisher Hygiene 2016 and Vericity 2020, which the first count missed
+because it looked for a close within 10 days before the float date only). 50 places move to the next-ranked company: 43 of them to 41 companies already stored (Henry Schein, Red Hat,
+MSCI, Waters, Fortinet, Kellanova, Northern Trust, ...), 7 to companies not stored (L3 Technologies 2018, Marvell 2019,
+Ulta Beauty 2020, Paycom, Slack and Cooper 2021, Deckers 2026).
+
+*Checked before the correction (2026-10-27, one-off, nothing stored):* with the 26 companies' member-days and the
+history member-days from the first close below $1 masked out (12,451 of 1,004,929), `exec_departure_63d` stays
+INFORMATIVE: mean monthly IC −0.0127, t −3.58 over 135 months (as stored −0.0125, t −3.56); masking also every
+member-day after a 90% drawdown (2,905 more) gives t −3.54. The 7 replacement companies are not in this check.
+
+Phase 3:
+- [x] `scale_error`, `checked_members`, `listing_cut`, the `listing` step; tests (`test_history_universe.py`).
+- [x] Rerun, as two jobs because `symbols` filters a whole job and the 7 tickers are known only after `universe`:
+      (a) `{"steps": ["universe"]}`: the 26 lose their spans, the 50 places get the next-ranked, the 7 are added (their
+      tickers are in the log); (b) `{"steps": ["prices", "listing", "filings", "insiders", "events8k", "earnings"],
+      "symbols": [the 7]}` (`listing` reads every history span, not only `symbols`); then `COMPANY_EVENTS_CLASSIFY` for
+      their item 5.02 sections (ADR-0011, a Message Batch; about 130 sections, about $1 by the last batch's unit price,
+      the exact count after `events8k`). Owner: replacements and the batch.
+      *Done 2026-10-27 (owner: full rerun and the batch if $2 or less):* job 273 (3.5 minutes) rejected the 50
+      member-years, left 350 members in every year, 592 companies, 766 spans; it added 4 companies (Cooper, Deckers,
+      Ulta, Paycom); Marvell's place went to its stored successor; L3 Technologies and Slack have no ticker Tiingo still
+      serves and are left out with the 37 of the first load. Job 274 (7 minutes): 11,884 bars, 509 filings, 5,097
+      insider transactions, 163 8-Ks, 191 results releases; `listing` cut 1 span (SVB, after 2023-03-28). The batch
+      (job 275) was refused: the Anthropic API credit balance is too low. 266 item 5.02 sections wait for it, 132 of
+      the 4 companies and 134 of 67 others (129 filed before 2026-10-20; not looked into), about $1.35 in all.
+- [ ] Submit the 266 sections once the credit balance allows (`POST /api/admin/company-events/classify`).
+- [ ] Measure again (decision 4) and replace the pending numbers in ADR-0009 to ADR-0012, BACKLOG #30, the research report.
