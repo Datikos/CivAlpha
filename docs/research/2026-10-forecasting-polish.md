@@ -261,7 +261,11 @@ the baseline; profitability is still not supported; no live forecast has resolve
   and AUGMENTED Brier skill −0.001 each (augmented still worse, interval excluding zero); the book's GBM −0.003 (AUC
   0.505) instead of −0.025 (0.512); the 9 ablation variants −0.003 to −0.002 (job 269). No model or variant beats the
   base rate on the larger history either; the numbers in the sections above are the 33-company ones.
-  *2026-10-27:* that universe was found to hold float scale errors and bankruptcy stubs; pending re-measurement (ADR-0012).
+  *2026-10-27:* that universe was found to hold float scale errors and bankruptcy stubs (ADR-0012 amendment 1). Measured
+  again on the corrected universe (jobs 276 to 280): 115,403 predictions per model; BASELINE −0.001 (AUC 0.501),
+  AUGMENTED −0.002 (0.499, worse, interval excluding zero); the book's GBM −0.003 (0.504); the 9 ablation variants
+  −0.0035 to −0.0023; equal-weight buy & hold +13.3% CAGR (was +60.1%), no strategy beats it after 78 trials.
+  `exec_departure_63d` stays the one INFORMATIVE input (t −3.52).
 * **Decision page feature identifier.** Stored decisions say `features: "no policy-event features"`; new decisions should
   carry `GBM_AI_39`. Not changed, because the decision payload is the recorded book's.
 

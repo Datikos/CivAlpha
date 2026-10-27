@@ -150,27 +150,29 @@ owner approved reading the 11,622 item 5.02 sections of the history with Claude 
 one Message Batch, estimate about $59), so the CEO and CFO changes are measured on the model's reading, not the rule's.
 - [x] Measure again (Decision 8); dated notes in ADR-0009 to ADR-0011, the README and the research report.
 
-**2026-10-27, pending re-measurement:** the 2015 history universe holds 26 companies whose SEC-frame public float is
-far above their shares times close, most about 1,000 times (scale errors, 50 member-years; Medallion Financial, Party City,
-PEDEVCO, Vintage Wine Estates, FuelCell, ...) and keeps bankrupt companies as members after their stock moved to the
-over-the-counter market (SVB as SIVBQ, 2023-03 to 2024-04, closes of $0.001). The 2015-history numbers here were
-measured on that universe (ADR-0012, Found while measuring).
+**Measured again on the 2015 history (2026-10-25/26), and after amendment 1 (2026-10-27):** the middle column was
+measured on the first load, which held float scale errors and bankruptcy stubs (amendment 1); the right column is the
+corrected universe (jobs 276 to 280), without the 266 item 5.02 sections still unread (amendment 1, Phase 3).
 
-**Measured again on the 2015 history (2026-10-25/26):**
+| Test | 33-company history | 2015 history, first load | 2015 history, amendment 1 |
+|---|---|---|---|
+| Walk-forward predictions per model | 6,094 | 115,547 (37 folds) | 115,403 (37 folds) |
+| BASELINE / AUGMENTED Brier skill (AUC) | −0.006 (0.505) / −0.017 (0.498) | −0.001 (0.504) / −0.001 (0.502); augmented still worse, CI excludes zero | −0.001 (0.501) / −0.002 (0.499); augmented worse, CI excludes zero, better in 16 of 37 folds |
+| AI_BOOK_21 Brier skill (AUC) | −0.025 (0.512) | −0.003 (0.505) | −0.003 (0.504); calibrated −0.001 (0.508) |
+| Signal-health stock-days | 57,728 | 962,175 (629 companies, 11.8 years, 45 inputs, bar \|t\| 3.26) | 961,587 (607 companies, 11.8 years, 45 inputs, bar \|t\| 3.26) |
+| `exec_departure_63d` (ADR-0011) | NOISE, t −0.51 | **INFORMATIVE**, mean monthly IC −0.0126, t −3.58, 135 months, right sign 63%, negative in 11 of 12 years | **INFORMATIVE**, mean monthly IC −0.0123, t −3.52, 135 months, right sign 64%, negative in 10 of 12 years (2017 +0.0009, 2024 +0.0104), last 12 months −0.018 |
+| Insider inputs (ADR-0010) | NOISE | NOISE: `insider_informed_net_63d` t −0.33, `insider_exec_buyers_63d` t −0.43, `insider_net_63d` t −0.14 | NOISE: t −0.07, −0.46, 0.03 |
+| TARIFF_SHOCK / RATE_SHOCK, 21 days (ADR-0009) | NOISE (543 / 104 firings) | NOISE (6,700 / 1,859 firings) | NOISE (6,766 / 1,873 firings; mean +0.1% / −0.3%) |
+| CEO_DEPARTURE / CFO_DEPARTURE, 21 days | 20 / 35 firings | 539 / 860 firings: 42.7% / 46.3% beat the ETF, mean −0.5% / −0.1%; NOISE after 93 tests (63 days: −1.2% / −0.9%) | 532 / 851 firings: 42.7% / 46.7%, mean −0.6% / −0.1%; NOISE (63 days: −1.3% / −0.6%) |
+| INSIDER_CLUSTER_SELL, 21 days | NOISE | NEGATIVE: 6,875 firings, mean −0.3% (CI −0.5% to −0.1%) | NEGATIVE: 6,932 firings, mean −0.3% (CI −0.5% to −0.1%) |
+| AGREEMENT_TERMINATED, 21 days | NOISE | SUGGESTIVE: 628 firings, +0.8% (CI +0.1% to +2.0%) | NOISE: 625 firings, +0.5% (CI −0.1% to +1.1%) |
+| Ablation, book's GBM, 21 days (walk-forward only) | FULL −0.025 (−0.042, −0.014), AUC 0.512 | job 269: FULL −0.003 (−0.004, −0.002), AUC 0.505; the 9 variants span −0.003 to −0.002; plus policy events −0.0032, plus insider quality −0.0029, plus company events −0.0028 | job 279: FULL −0.0031 (−0.0043, −0.0018), AUC 0.504; the 9 variants span −0.0035 to −0.0023; plus policy events −0.0035, plus insider quality −0.0030, plus company events −0.0031: none moves FULL by more than its interval |
+| Strategy lab, 2017-07-07 to 2026-10-26 (job 272 / job 280) | — | equal-weight buy & hold CAGR +60.1%, Sharpe 0.47 | equal-weight buy & hold CAGR +13.3%, Sharpe 0.62, max drawdown −38.6%; recorded book (AI_SIZED) Sharpe 0.41, EW_SIZED 0.57, MOM_12_1_SIZED 0.86; no strategy beats buy & hold after the 78 trials in the registry |
 
-| Test | 33-company history | 2015 history (this ADR) |
-|---|---|---|
-| Walk-forward predictions per model | 6,094 | 115,547 (37 folds) |
-| BASELINE / AUGMENTED Brier skill (AUC) | −0.006 (0.505) / −0.017 (0.498) | −0.001 (0.504) / −0.001 (0.502); augmented still worse, CI excludes zero |
-| AI_BOOK_21 Brier skill (AUC) | −0.025 (0.512) | −0.003 (0.505) |
-| Signal-health stock-days | 57,728 | 962,175 (629 companies, 11.8 years, 45 inputs, bar \|t\| 3.26) |
-| `exec_departure_63d` (ADR-0011) | NOISE, t −0.51 | **INFORMATIVE**, mean monthly IC −0.0126, t −3.58, 135 months, right sign 63%, negative in 11 of 12 years |
-| Insider inputs (ADR-0010) | NOISE | NOISE: `insider_informed_net_63d` t −0.33, `insider_exec_buyers_63d` t −0.43, `insider_net_63d` t −0.14 |
-| TARIFF_SHOCK / RATE_SHOCK, 21 days (ADR-0009) | NOISE (543 / 104 firings) | NOISE (6,700 / 1,859 firings) |
-| CEO_DEPARTURE / CFO_DEPARTURE, 21 days | 20 / 35 firings | 539 / 860 firings: 42.7% / 46.3% beat the ETF, mean −0.5% / −0.1%; NOISE after 93 tests (63 days: −1.2% / −0.9%) |
-| INSIDER_CLUSTER_SELL, 21 days | NOISE | NEGATIVE: 6,875 firings, mean −0.3% (CI −0.5% to −0.1%) |
-| AGREEMENT_TERMINATED, 21 days | NOISE | SUGGESTIVE: 628 firings, +0.8% (CI +0.1% to +2.0%) |
-| Ablation, book's GBM, 21 days (job 269, walk-forward only) | FULL −0.025 (−0.042, −0.014), AUC 0.512 | FULL −0.003 (−0.004, −0.002), AUC 0.505; the 9 variants span −0.003 to −0.002; plus policy events −0.0032, plus insider quality −0.0029, plus company events −0.0028: none moves FULL by more than its interval |
+The corrected universe changes no verdict but AGREEMENT_TERMINATED's (SUGGESTIVE to NOISE) and the lab's equal-weight
+row, which was the symptom. Durations of jobs 277 to 280: signal health 31 minutes, the playbook 30, the ablation 20,
+the lab 39 (sampled peak 4.52 GB of the worker's 5 GB). The evaluation (job 276) took 92 minutes, of which the memory
+sampler saw 81 minutes of gaps: the Mac slept (BACKLOG #18), not a slowdown of the code.
 
 The walk-forward took 11 minutes; signal health 26, the playbook 27, the ablation's walk-forward part about 35 (jobs 265
 to 267). *Found while measuring:* the worker's 2 GB limit killed the evaluation (job 263; peak 2.83 GB measured in a
@@ -240,4 +242,6 @@ Phase 3:
       (job 275) was refused: the Anthropic API credit balance is too low. 266 item 5.02 sections wait for it, 132 of
       the 4 companies and 134 of 67 others (129 filed before 2026-10-20; not looked into), about $1.35 in all.
 - [ ] Submit the 266 sections once the credit balance allows (`POST /api/admin/company-events/classify`).
-- [ ] Measure again (decision 4) and replace the pending numbers in ADR-0009 to ADR-0012, BACKLOG #30, the research report.
+- [x] Measure again (decision 4) and replace the pending numbers in ADR-0009 to ADR-0012, BACKLOG #30, the research report
+      (jobs 276 to 280, 2026-10-27; the table above).
+- [ ] After the 266 sections are read: the weekly studies of 2026-10-30 measure `exec_departure_63d` with them.

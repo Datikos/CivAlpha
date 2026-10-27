@@ -198,11 +198,13 @@ TARIFF_SHOCK fired 6,700 times and RATE_SHOCK 1,859, both NOISE at 21 days; the 
 Brier skill −0.0032 (−0.0043, −0.0018), AUC 0.505, against FULL −0.0030 (−0.0040, −0.0017), AUC 0.505 (job 269). The
 verdict holds on 19 times the data.
 
-**2026-10-27, pending re-measurement:** the 2015 history universe holds 26 companies whose SEC-frame public float is
-far above their shares times close, most about 1,000 times (scale errors, 50 member-years; Medallion Financial, Party City,
-PEDEVCO, Vintage Wine Estates, FuelCell, ...) and keeps bankrupt companies as members after their stock moved to the
-over-the-counter market (SVB as SIVBQ, 2023-03 to 2024-04, closes of $0.001). The 2015-history numbers here were
-measured on that universe (ADR-0012, Found while measuring).
+*After ADR-0012 amendment 1 (2026-10-27, jobs 276 to 279, and a one-off signal health, nothing stored):* the first
+load held float scale errors and bankruptcy stubs; on the corrected universe the walk-forward (115,403 predictions per
+model) gives BASELINE −0.001 (AUC 0.501) against AUGMENTED −0.002 (0.499), augmented worse with the interval excluding
+zero and better in 16 of 37 folds; signal health (2 tests, bar |t| 2.24) `trade_shock` mean monthly IC −0.0056, t −0.97
+(134 months), `rate_shock` −0.0016, t −0.22 (70 months): NOISE, NOISE; TARIFF_SHOCK 6,766 and RATE_SHOCK 1,873 firings,
+NOISE at 21 days; the ablation's "plus policy events" Brier skill −0.0035 (−0.0048, −0.0022), AUC 0.503, against FULL
+−0.0031 (−0.0043, −0.0018), AUC 0.504 (job 279). The verdict holds.
 
 *Found while measuring:*
 * **Signal health never tested the event inputs**: its list is the AI inputs plus dividends (`signals.run_study`),

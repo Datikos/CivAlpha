@@ -163,11 +163,12 @@ moved: INSIDER_CLUSTER_SELL (three or more sellers, any class) is NEGATIVE at 21
 to −0.1%), not significant after 93 tests. Ablation (job 269, 115,547 predictions per variant): plus insider quality Brier
 skill −0.0029 (−0.0039, −0.0017), AUC 0.505; FULL −0.0030 (−0.0040, −0.0017), AUC 0.505: no change.
 
-**2026-10-27, pending re-measurement:** the 2015 history universe holds 26 companies whose SEC-frame public float is
-far above their shares times close, most about 1,000 times (scale errors, 50 member-years; Medallion Financial, Party City,
-PEDEVCO, Vintage Wine Estates, FuelCell, ...) and keeps bankrupt companies as members after their stock moved to the
-over-the-counter market (SVB as SIVBQ, 2023-03 to 2024-04, closes of $0.001). The 2015-history numbers here were
-measured on that universe (ADR-0012, Found while measuring).
+*After ADR-0012 amendment 1 (2026-10-27, jobs 277 to 279):* the first load held float scale errors and bankruptcy stubs;
+on the corrected universe (961,587 stock-days) `insider_informed_net_63d` t −0.07 (111 months), `insider_exec_buyers_63d`
+t −0.46 (97 months), `insider_net_63d` t 0.03: NOISE; INSIDER_INFORMED_BUY 313 firings, NOISE; INSIDER_CLUSTER_SELL still
+NEGATIVE at 21 days (6,932 firings, mean −0.3%, CI −0.5% to −0.1%), not significant after 93 tests. Ablation (job 279,
+115,403 predictions per variant): plus insider quality Brier skill −0.0030 (−0.0043, −0.0017), AUC 0.505; FULL −0.0031
+(−0.0043, −0.0018), AUC 0.504: no change.
 
 The recorded book and the live models are unchanged (decision 7). Revisit stands: drop the two inputs from the lab
 rather than tune them; the classification stays, since it is what the company page shows.

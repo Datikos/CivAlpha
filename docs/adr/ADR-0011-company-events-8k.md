@@ -185,15 +185,19 @@ In the ablation (job 269, 115,547 predictions per variant) "plus company events"
 −0.0015), AUC 0.506, against FULL −0.0030 (−0.0040, −0.0017), AUC 0.505: one informative input among 40 does not
 move the GBM's probabilities measurably.
 
-**2026-10-27, pending re-measurement:** the 2015 history universe holds 26 companies whose SEC-frame public float is
-far above their shares times close, most about 1,000 times (scale errors, 50 member-years; Medallion Financial, Party City,
-PEDEVCO, Vintage Wine Estates, FuelCell, ...) and keeps bankrupt companies as members after their stock moved to the
-over-the-counter market (SVB as SIVBQ, 2023-03 to 2024-04, closes of $0.001). The 2015-history numbers here were
-measured on that universe (ADR-0012, Found while measuring).
 *The departure input, checked before the correction (2026-10-27, one-off, nothing stored):* with the 26 companies' member-days and the
 history member-days from the first close below $1 masked out (12,451 of 1,004,929), `exec_departure_63d` stays
 INFORMATIVE: mean monthly IC −0.0127, t −3.58 over 135 months (as stored −0.0125, t −3.56); masking also every
 member-day after a 90% drawdown (2,905 more) gives t −3.54. The 7 replacement companies are not in this check.
+
+*After ADR-0012 amendment 1 (2026-10-27, jobs 277 to 279):* on the corrected universe (961,587 stock-days, 607
+companies) `exec_departure_63d` stays **INFORMATIVE**: mean monthly IC −0.0123, t −3.52 over 135 months (bar |t| 3.26),
+right sign in 64% of months, negative in 10 of 12 calendar years (2017 +0.0009, 2024 +0.0104), last 12 months −0.018.
+CEO_DEPARTURE 532 firings, 42.7% beat the ETF, −0.6% at 21 days, −1.3% at 63; CFO_DEPARTURE 851, −0.1%, −0.6%: NOISE
+after 93 tests. Ablation (job 279): plus company events −0.0031 (−0.0043, −0.0017), AUC 0.505, against FULL −0.0031
+(−0.0043, −0.0018), AUC 0.504. AGREEMENT_TERMINATED, SUGGESTIVE on the first load, is NOISE (625 firings, +0.5%, CI
+−0.1% to +1.1%). The 266 item 5.02 sections of the replacement companies and others are not read yet (ADR-0012
+amendment 1, Phase 3); the weekly studies after the batch give the number with them.
 
 *Found while measuring:* the same restriction applies to ADR-0009 and ADR-0010: their "no help" verdicts were measured on
 about 33 companies, not the 352 their headlines name (`universeSize` counts any company that was ever a member). How
